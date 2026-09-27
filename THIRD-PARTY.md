@@ -3,6 +3,31 @@
 Diatom's own code is intended to be permissively licensed (see ADR-0002 for why
 that matters - escaping GPL inheritance is a founding goal of the project).
 
+## `src/rewind.c`
+
+The fast-forward and rewind concept (`src/rewind.c`, plus the `SPEED`/
+`SETSPEED`/`REWIND`/`SETREWIND` protocol verbs in `src/proto.c` and
+`src/diatom.h`) is **ported from NextUI** (`ma_runframe.c`'s
+`setFastForward`/`limitFF`, `ma_rewind.c`'s savestate ring buffer) rather than
+implemented clean-room. NextUI is licensed **PolyForm Noncommercial 1.0.0**.
+
+This is safe here and would NOT be safe in Diatom's own upstream: this fork
+exists as a permanently-diverged, personal, noncommercial fork consumed by a
+sibling fork of TortOS (`github.com/thwonp/TortOS`, see that repo's own
+`THIRD-PARTY-LICENSES.md`), with no upstreaming intent to
+`github.com/ericreinsmidt/diatom`. `src/rewind.c` is therefore
+**noncommercial-only**, the same restriction the sibling TortOS fork already
+carries for the same reason and, on that fork, for two libretro cores besides.
+Every other file in this repo, including the rest of `src/proto.c` and
+`src/diatom.h`, remains under the root `LICENSE` (MIT), unchanged - the new
+protocol verbs are a straightforward extension of ADR-0020's existing state
+plane and carry nothing NextUI-derived in their own text.
+
+See [ADR-0034](docs/decisions/0034-fast-forward-and-rewind.md) for what was
+ported, what had to be adapted for this frontend's different architecture
+(the launcher/Diatom process split NextUI has no equivalent of), and what
+remains genuinely unverified pending real hardware.
+
 ## `src/libretro.h`
 
 The libretro API header, vendored so the build is self-contained.

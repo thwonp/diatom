@@ -21,6 +21,7 @@
 
 #include "cheevos.h"
 #include "diatom.h"
+#include "rewind.h"
 
 /* --- the frame the core last handed us ----------------------------------- */
 static void       *g_frame;
@@ -537,6 +538,25 @@ static void report_slot(int mode, diatom_filter filter)
  * launcher that sends it twice gets one menu. */
 static bool g_pause_requested;
 
+/* Fast-forward and rewind - ported from NextUI's frontend-side approach
+ * (ma_runframe.c setFastForward/limitFF, ma_rewind.c), not libretro's
+ * fast-forward-ratio API. See src/rewind.c and THIRD-PARTY.md.
+ *
+ * g_ff_speed is a divisor on the per-frame sleep target, same shape as
+ * NextUI's ff_frame_time = 1e6/(fps*(max_ff_speed+1)) - it runs the loop
+ * faster, it does not ask the core for more frames per retro_run call. */
+#define DIATOM_MAX_FF_SPEED 8
+static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
+static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
+/* A core still emits one frame's worth of audio per retro_run() call while
+ * fast-forwarding - nothing skips samples, only the sleep between frames
+ * shrinks - so unthrottled output would play sped-up and garbled. Quieted
+ * for the duration through the SAME switch SETQUIET already uses (ADR-0032),
+ * restored on the way out ONLY if fast-forward is what quieted it - a
+ * launcher that quieted the game itself for an unrelated reason keeps that
+ * choice across a speed change. */
+static bool g_ff_quieted_us;
+
 /* Idleness, for the launcher's auto-off.
  *
  * Reported rather than acted on: Diatom does not decide that a device should
@@ -996,6 +1016,36 @@ static bool state_plane_msg(const diatom_msg *m)
 		diatom_cheevos_load(m->path);
 		diatom_cheevos_emit();
 		return true;
+	case DIATOM_MSG_SPEED:
+		diatom_proto_send("SPEED\tspeed=%d", g_ff_speed);
+		return true;
+	case DIATOM_MSG_SETSPEED: {
+		int old = g_ff_speed;
+		g_ff_speed = m->speed < 1 ? 1
+		           : m->speed > DIATOM_MAX_FF_SPEED ? DIATOM_MAX_FF_SPEED
+		           : m->speed;
+		if (g_ff_speed > 1 && old == 1) {
+			g_ff_quieted_us = !diatom_audio_quiet_get();
+			if (g_ff_quieted_us) diatom_audio_quiet(true);
+		} else if (g_ff_speed == 1 && old > 1 && g_ff_quieted_us) {
+			diatom_audio_quiet(false);
+			g_ff_quieted_us = false;
+		}
+		/* Answered either way, same reasoning as SETMAP: a launcher that sent
+		 * an out-of-range value learns what actually took effect. */
+		diatom_proto_send("SPEED\tspeed=%d", g_ff_speed);
+		return true;
+	}
+	case DIATOM_MSG_REWIND:
+		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
+		return true;
+	case DIATOM_MSG_SETREWIND:
+		/* Only meaningful mid-game - the ring is per-session (see rewind.c) -
+		 * but harmless to accept idle, the same as SETMUTE/SETQUIET already
+		 * are: it just has nothing to step through yet. */
+		g_rewind_active = m->on != 0;
+		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
+		return true;
 	default: return false;
 	}
 }
@@ -1181,6 +1231,17 @@ static int run_session_inner(const diatom_session *sn)
 	 * because no panel and no core will ever agree on a rate. */
 	frame_us = 1000000.0 / (av.timing.fps > 0 ? av.timing.fps : 60.0);
 
+	/* Sized against THIS core's current serialize_size(), after load_game -
+	 * a core with no savestate support gets a depth-0 ring and rewind is
+	 * simply unavailable this session, discovered the same way SAVE/LOAD
+	 * already discover it (serialize_size() returning 0). Also resets any
+	 * previous session's ring, wrong core or not: state from one core
+	 * restored into another is not a smaller rewind, it is a crash. */
+	diatom_rewind_reset(g_core);
+	g_ff_speed = 1;
+	g_rewind_active = false;
+	g_ff_quieted_us = false;
+
 	/* The display handover, and the reason ADR-0009 separates ERROR from EXIT:
 	 * from here the launcher must stop drawing. Announced before the warmup,
 	 * because the warmup already puts frames on the panel. */
@@ -1257,7 +1318,17 @@ static int run_session_inner(const diatom_session *sn)
 		uint64_t now;
 
 		g_frame_fresh = false;
-		g_core->run();
+		/* Rewind steps the ring backward and then runs the core once to
+		 * render the frame the restore corresponds to - see rewind.c's
+		 * header comment on the one-frame forward nudge this costs, judged
+		 * imperceptible against the granularity a ring slot represents.
+		 * An exhausted ring (nothing left to step back through) falls
+		 * through to ordinary forward play instead of freezing, which needs
+		 * no special case here: capture is simply skipped while rewinding,
+		 * so history stops growing at exactly the point it stops shrinking. */
+		if (g_rewind_active) diatom_rewind_step_back(g_core);
+		g_core->run();   /* renders forward play, or the frame a restore left us at */
+		if (!g_rewind_active) diatom_rewind_capture(g_core);
 		frames++;
 
 		/* Immediately after the frame the core produced, and before anything
@@ -1472,26 +1543,36 @@ static int run_session_inner(const diatom_session *sn)
 		}
 		diatom_audio_sync();
 
-		next_us += frame_us;
-		now = diatom_port_now_us();
+		/* Fast-forward: a shorter deadline, not fewer frames - ported from
+		 * NextUI's setFastForward/limitFF, which computes exactly this
+		 * ratio (ff_frame_time = 1e6/(fps*(max_ff_speed+1))) against SDL_Delay
+		 * rather than this loop's absolute-schedule nanosleep. Recomputed
+		 * every iteration rather than once before the loop, unlike frame_us
+		 * itself, because g_ff_speed can change mid-session via SETSPEED. */
+		{
+			double target_us = frame_us / g_ff_speed;
 
-		if (next_us > (double)now) {
-			struct timespec ts;
-			double d = next_us - (double)now;
-			ts.tv_sec  = (time_t)(d / 1000000.0);
-			ts.tv_nsec = (long)(fmod(d, 1000000.0) * 1000.0);
-			nanosleep(&ts, NULL);
-		} else if ((double)now - next_us > frame_us * 4.0) {
-			/* More than four frames behind. Something stalled - the scheduler,
-			 * a page fault, a slow core - and trying to catch up would just run
-			 * fast for a while, which looks worse than dropping the debt.
-			 * Counted, because a loop that resyncs often is a loop that is
-			 * lying about its frame rate. */
-			next_us = (double)now;
-			resyncs++;
-			g_stat[SLOT(g_mode, g_filter)].resyncs++;
+			next_us += target_us;
+			now = diatom_port_now_us();
+
+			if (next_us > (double)now) {
+				struct timespec ts;
+				double d = next_us - (double)now;
+				ts.tv_sec  = (time_t)(d / 1000000.0);
+				ts.tv_nsec = (long)(fmod(d, 1000000.0) * 1000.0);
+				nanosleep(&ts, NULL);
+			} else if ((double)now - next_us > target_us * 4.0) {
+				/* More than four frames behind. Something stalled - the
+				 * scheduler, a page fault, a slow core - and trying to catch
+				 * up would just run fast for a while, which looks worse than
+				 * dropping the debt. Counted, because a loop that resyncs
+				 * often is a loop that is lying about its frame rate. */
+				next_us = (double)now;
+				resyncs++;
+				g_stat[SLOT(g_mode, g_filter)].resyncs++;
+			}
+			/* Otherwise keep the debt and let the next short sleep repay it. */
 		}
-		/* Otherwise keep the debt and let the next short sleep repay it. */
 	}
 
 	/* Read the clock before the capture: converting and writing a full-screen
@@ -1506,6 +1587,8 @@ static int run_session_inner(const diatom_session *sn)
 	 * it is a defect, then the state, which is a convenience. */
 	diatom_save_shutdown();
 	if (sn->state_exit) diatom_state_save(g_core, sn->state_exit);
+	diatom_rewind_shutdown();
+	if (g_ff_quieted_us) { diatom_audio_quiet(false); g_ff_quieted_us = false; }
 
 	/* The frame the player was looking at, for the launcher's card - written
 	 * with the exit state so a card that shows a preview always has a state

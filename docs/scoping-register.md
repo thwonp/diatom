@@ -1251,7 +1251,11 @@ pad attached, which is why the real pad has a Mode switch.
       frame (172 KB, not 2.3 MB of panel), written at pause and exit, announced
       before EXIT. Verified on hardware: two Contra sessions, the second
       resuming the first's state, artifacts at TortOS's exact paths.
-- [ ] **[LB]** Rewind: support or drop? Real RAM cost on a 1GB device.
+- [x] **[LB]** Rewind: support or drop? Real RAM cost on a 1GB device →
+      **[ADR-0034](decisions/0034-fast-forward-and-rewind.md)** *(Accepted)*.
+      Support it. RAM cost is a budgeted placeholder (8 MiB, uncompressed,
+      re-sized against the live core's `serialize_size()`), not a measured
+      one - no per-core state size exists yet for the actual target device.
 - [ ] **[OPEN]** **NGPC has no battery saves, only states.** Measured
       2026-09-01 on Dark Arms and Metal Slug - 1st Mission, both of which save
       on real hardware: `mednafen_ngp` reports `retro_get_memory_size(SAVE_RAM)`
