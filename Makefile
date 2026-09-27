@@ -64,7 +64,7 @@ ifeq ($(PORT),desktop)
     $(error SDL2 not found: install it, or put sdl2-config/pkg-config on PATH)
   endif
   CFLAGS  += $(SDL_CFLAGS)
-  LDFLAGS += $(SDL_LIBS)
+  LDFLAGS += $(SDL_LIBS) -lm
   # dlopen lives in libc on macOS and on modern glibc; -ldl is harmless where
   # it exists and absent where it does not.
   ifeq ($(shell uname -s),Linux)
@@ -221,7 +221,7 @@ $(CHEEVOS_TEST): test/cheevos_test.c src/cheevos.c $(RC_OBJ)
 	@mkdir -p $(BUILD)
 	$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -O2 \
 	      -Iinclude -Isrc -I$(RC_DIR)/include -DRC_DISABLE_LUA \
-	      -o $@ test/cheevos_test.c src/cheevos.c $(RC_OBJ)
+	      -o $@ test/cheevos_test.c src/cheevos.c $(RC_OBJ) -lm
 
 # Deliberately NOT part of `check`. It needs a build and it runs in real time -
 # Diatom paces to the core's frame rate, so 300 frames costs five seconds of
