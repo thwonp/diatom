@@ -1431,9 +1431,17 @@ static int run_session_inner(const diatom_session *sn)
 		 * through to ordinary forward play instead of freezing, which needs
 		 * no special case here: capture is simply skipped while rewinding,
 		 * so history stops growing at exactly the point it stops shrinking. */
-		if (g_rewind_active) diatom_rewind_step_back(g_core);
-		g_core->run();   /* renders forward play, or the frame a restore left us at */
-		if (!g_rewind_active) diatom_rewind_capture(g_core);
+		if (g_rewind_active) {
+			if (diatom_rewind_step_back(g_core))
+				g_core->run();   /* renders the frame the restore left us at */
+			/* else: ring exhausted. diatom_rewind_step_back()'s own contract
+			 * is to hold here, not to be called again - skipping run() keeps
+			 * g_frame exactly as it was instead of quietly resuming forward
+			 * play the player never un-paused. */
+		} else {
+			g_core->run();   /* renders forward play */
+			diatom_rewind_capture(g_core);
+		}
 		frames++;
 
 		/* Immediately after the frame the core produced, and before anything
