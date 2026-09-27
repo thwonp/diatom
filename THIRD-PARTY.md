@@ -28,6 +28,28 @@ ported, what had to be adapted for this frontend's different architecture
 (the launcher/Diatom process split NextUI has no equivalent of), and what
 remains genuinely unverified pending real hardware.
 
+## `src/hotkeys.c`, `src/hotkeys.h`
+
+The hotkey submenu concept - a SELECT-held chord binding fast-forward,
+rewind, quicksave and quickload to a player-chosen button - is **ported
+from NextUI** (`ma_frontend_opts.c`'s `OptionShortcuts_*`), same terms as
+`src/rewind.c` above: PolyForm Noncommercial 1.0.0, noncommercial-only,
+consumed only by the sibling personal fork of TortOS, never upstreamed.
+The `hotkey_chord()` dispatch function in `src/main.c` that actually checks
+these bindings each frame is the same NextUI-derived concept and carries the
+same restriction, even though it lives outside `hotkeys.c` itself (next to
+the pre-existing, unrelated, MIT `display_chord()` it is modeled on - see
+[ADR-0035](docs/decisions/0035-hotkey-submenu-lives-on-select.md)).
+
+The `HOTKEYS`/`SETHOTKEYS` protocol verbs (`src/proto.c`, `src/diatom.h`)
+are, like `SPEED`/`SETSPEED`/`REWIND`/`SETREWIND` before them, a plain
+extension of ADR-0020's state plane and carry nothing NextUI-derived in
+their own text - MIT, unchanged.
+
+See [ADR-0035](docs/decisions/0035-hotkey-submenu-lives-on-select.md) for
+what was ported, why NextUI's own MENU-held convention specifically was NOT
+(fact 3 there), and the verification ceiling this was written against.
+
 ## `src/libretro.h`
 
 The libretro API header, vendored so the build is self-contained.

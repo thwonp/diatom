@@ -192,6 +192,8 @@ static void parse_line(char *line, diatom_msg *out)
 	else if (!strcmp(field, "SETSPEED"))   out->kind = DIATOM_MSG_SETSPEED;
 	else if (!strcmp(field, "REWIND"))     out->kind = DIATOM_MSG_REWIND;
 	else if (!strcmp(field, "SETREWIND"))  out->kind = DIATOM_MSG_SETREWIND;
+	else if (!strcmp(field, "HOTKEYS"))    out->kind = DIATOM_MSG_HOTKEYS;
+	else if (!strcmp(field, "SETHOTKEYS")) out->kind = DIATOM_MSG_SETHOTKEYS;
 	else {
 		log_(DIATOM_LOG_WARN, "proto: ignoring unknown verb '%s'", field);
 		out->kind = DIATOM_MSG_NONE;
@@ -247,6 +249,8 @@ static void parse_line(char *line, diatom_msg *out)
 		else if (!strcmp(field, "mode"))  snprintf(out->dmode,  sizeof out->dmode,  "%s", v);
 		else if (!strcmp(field, "filter"))snprintf(out->dfilter,sizeof out->dfilter,"%s", v);
 		else if (!strcmp(field, "speed")) out->speed = (int)strtol(v, NULL, 10);
+		else if (!strcmp(field, "hotkeys"))
+			snprintf(out->hotkeys, sizeof out->hotkeys, "%s", v);
 		/* anything else: forward compatibility, ignore */
 	}
 }

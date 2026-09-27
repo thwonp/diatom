@@ -168,6 +168,13 @@ typedef enum {
 	DIATOM_MSG_SETSPEED,   /* set it, 1..DIATOM_MAX_FF_SPEED: `speed` */
 	DIATOM_MSG_REWIND,     /* report whether rewind is engaged */
 	DIATOM_MSG_SETREWIND,  /* engage/disengage stepping backward: `on` = 1 | 0 */
+	/* The hotkey submenu (sibling TortOS feature, ported from NextUI's
+	 * OptionShortcuts_* alongside the same rewind/FF port). A SELECT-held
+	 * chord, on SELECT's own terms - display_chord already claims SELECT as
+	 * the frontend modifier for L1/R1/A, this claims a few more buttons for
+	 * a few more frontend actions. See hotkey_chord() in main.c. */
+	DIATOM_MSG_HOTKEYS,    /* report the current bindings: `hotkeys` */
+	DIATOM_MSG_SETHOTKEYS, /* replace them whole: `hotkeys` = "l2:ff,x:savestate" */
 	/* The launcher went away - or was displaced by a newer one, ADR-0033,
 	 * which means the same thing. The game keeps running. */
 	DIATOM_MSG_HANGUP
@@ -211,6 +218,7 @@ typedef struct {
 	int  speed;            /* SETSPEED: 1 = normal. Its own field rather than
 	                        * `index`/`count` - see the warning on those two
 	                        * about one slot serving verbs that disagree. */
+	char hotkeys[128];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
 } diatom_msg;
 
 /* Input mapping and labels live in env.c, the one layer a remap touches. */

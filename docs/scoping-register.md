@@ -928,6 +928,12 @@ Two levers the spike discovered:
       the launcher it hands over the display (ADR-0016). The L3/R3 worry is
       handled in the port - the Brick's front keys report as
       `BTN_THUMBL`/`THUMBR` and stay unmapped.
+- [x] **[OPEN]** Where frontend hotkeys (not gameplay remapping) live →
+      **[ADR-0035](decisions/0035-hotkey-submenu-lives-on-select.md)**
+      *(Accepted)*. SELECT, held, extending `display_chord`'s existing
+      convention - not MENU, which ADR-0014 left open and this rejects to
+      avoid a latency regression on MENU's existing instant-open behavior.
+      `hotkeys.c`/`.h` hold the table; `hotkey_chord()` checks it.
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,

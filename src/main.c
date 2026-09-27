@@ -21,6 +21,7 @@
 
 #include "cheevos.h"
 #include "diatom.h"
+#include "hotkeys.h"
 #include "rewind.h"
 
 /* --- the frame the core last handed us ----------------------------------- */
@@ -778,6 +779,94 @@ static uint32_t display_chord(uint32_t buttons, uint32_t prev)
 	return mask;
 }
 
+/* ---- hotkeys: sibling TortOS feature, ported from NextUI's OptionShortcuts_*
+ * (ma_frontend_opts.c) alongside the fast-forward/rewind port above - see
+ * THIRD-PARTY.md. SELECT-held chord, on SELECT's own terms: display_chord
+ * above already claims SELECT as the frontend modifier for L1/R1/A, so this
+ * claims a few more buttons (L2/R2/X/Y) for a few more frontend actions
+ * rather than introducing a second modifier key with its own edge cases.
+ *
+ * FF and rewind are level-triggered - the bound button's own hold state
+ * drives g_ff_speed/g_rewind_active for as long as it is held, mirroring
+ * NextUI's HOLD_FF/HOLD_REWIND rather than the TOGGLE_* variants, which
+ * would need persistent on/off state this does not track. Save/load state
+ * are edge-triggered, firing once per press against sn->state_exit - the
+ * same Auto-slot path the launcher already hands over at RUN, autosaves to,
+ * and the pause menu's own Save/Load-to-Auto row already targets.
+ *
+ * g_hotkey_ff_active/g_hotkey_rewind_active track whether THIS mechanism is
+ * what currently has g_ff_speed/g_rewind_active raised, so releasing a
+ * hotkey only ever undoes what a hotkey itself set - never a value some
+ * other caller (the launcher-driven SETSPEED/SETREWIND above) raised for
+ * an unrelated reason. Nothing in this fork drives both at once today, but
+ * cheap to keep separate rather than to assume that stays true. */
+#define DIATOM_HOTKEY_FF_SPEED 4   /* within DIATOM_MAX_FF_SPEED; see rewind.c */
+
+/* Whether THIS mechanism is what currently has g_ff_speed/g_rewind_active
+ * raised, so releasing a hotkey only ever undoes what a hotkey itself set -
+ * never a value some other caller (the launcher-driven SETSPEED/SETREWIND
+ * above) raised for an unrelated reason. Nothing in this fork drives both
+ * at once today, but cheap to keep separate rather than to assume that
+ * stays true. */
+static bool g_hotkey_ff_active, g_hotkey_rewind_active;
+
+/* Checked every frame, on the same terms as display_chord. Returns what the
+ * core must not see - SELECT plus every currently-bound button, whether or
+ * not any of them changed anything this frame, because a bound button must
+ * disappear from the core for as long as it is held, not only on the frame
+ * this function acted on it. The binding table itself (parsing, validation,
+ * storage) is hotkeys.c/.h - SDL-free and tested there; this is the part
+ * that touches g_ff_speed/g_rewind_active/g_core and stays here for the
+ * same reason display_chord does. */
+static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
+{
+	static const uint32_t sel_bit = DIATOM_BIT(DIATOM_BTN_SELECT);
+	uint32_t pressed = buttons & ~prev;
+	uint32_t mask = sel_bit;
+	int i, n = hotkeys_count();
+	bool ff_held = false, rewind_held = false;
+
+	if (!(buttons & sel_bit)) {
+		/* SELECT released: a still-held FF/rewind hotkey must let go too -
+		 * releasing SELECT first while still holding, say, L2 would
+		 * otherwise leave fast-forward stuck on with nothing left held to
+		 * notice it should stop. */
+		if (g_hotkey_ff_active)     { g_ff_speed = 1;      g_hotkey_ff_active = false; }
+		if (g_hotkey_rewind_active) { g_rewind_active = false; g_hotkey_rewind_active = false; }
+		return 0;
+	}
+
+	for (i = 0; i < n; i++) {
+		int btn;
+		hk_action action;
+		uint32_t bit;
+
+		hotkeys_at(i, &btn, &action);
+		bit = DIATOM_BIT(btn);
+		mask |= bit;
+		switch (action) {
+		case HK_FF:     if (buttons & bit) ff_held = true;     break;
+		case HK_REWIND: if (buttons & bit) rewind_held = true; break;
+		case HK_SAVESTATE:
+			if ((pressed & bit) && sn->state_exit)
+				diatom_state_save(g_core, sn->state_exit);
+			break;
+		case HK_LOADSTATE:
+			if ((pressed & bit) && sn->state_exit)
+				diatom_state_load(g_core, sn->state_exit);
+			break;
+		default: break;
+		}
+	}
+
+	if (ff_held)                          { g_ff_speed = DIATOM_HOTKEY_FF_SPEED; g_hotkey_ff_active = true; }
+	else if (g_hotkey_ff_active)          { g_ff_speed = 1; g_hotkey_ff_active = false; }
+	if (rewind_held)                      { g_rewind_active = true;  g_hotkey_rewind_active = true; }
+	else if (g_hotkey_rewind_active)      { g_rewind_active = false; g_hotkey_rewind_active = false; }
+
+	return mask;
+}
+
 /* One game, start to finish. Extracted so the protocol loop (ADR-0009) can run
  * it repeatedly in a process that never exits - which is what makes a warm
  * launch ~35 ms instead of ~700 ms, measured. Standalone mode calls it once.
@@ -1036,6 +1125,16 @@ static bool state_plane_msg(const diatom_msg *m)
 		diatom_proto_send("SPEED\tspeed=%d", g_ff_speed);
 		return true;
 	}
+	case DIATOM_MSG_HOTKEYS:
+		diatom_proto_send("HOTKEYS\thotkeys=%s", hotkeys_spec());
+		return true;
+	case DIATOM_MSG_SETHOTKEYS:
+		if (!hotkeys_set(m->hotkeys))
+			diatom_proto_send("ERROR\tcode=bad_hotkeys\tmsg=%s", m->hotkeys);
+		/* Answered either way, same reasoning as SETMAP: a refusal cannot
+		 * leave the launcher believing bindings it does not have. */
+		diatom_proto_send("HOTKEYS\thotkeys=%s", hotkeys_spec());
+		return true;
 	case DIATOM_MSG_REWIND:
 		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
 		return true;
@@ -1241,6 +1340,12 @@ static int run_session_inner(const diatom_session *sn)
 	g_ff_speed = 1;
 	g_rewind_active = false;
 	g_ff_quieted_us = false;
+	/* Reset to no bindings, the same reason SETMAP is reset to identity on
+	 * every RUN (ADR-0020): a table sent for a different game must not
+	 * silently keep governing this one. The launcher re-sends SETHOTKEYS
+	 * after RUN, on the same terms turbo's SETMAP already is. */
+	hotkeys_reset();
+	g_hotkey_ff_active = g_hotkey_rewind_active = false;
 
 	/* The display handover, and the reason ADR-0009 separates ERROR from EXIT:
 	 * from here the launcher must stop drawing. Announced before the warmup,
@@ -1463,9 +1568,10 @@ static int run_session_inner(const diatom_session *sn)
 		 * physically down stays latched. */
 		held_at_entry &= buttons;
 
-		/* The single writer. Both reasons to hide a button end up here, so
-		 * neither can clear the other. */
+		/* The single writer. All three reasons to hide a button end up here,
+		 * so none of them can clear another. */
 		diatom_env_suppress(display_chord(buttons, prev_buttons)
+		                    | hotkey_chord(buttons, prev_buttons, sn)
 		                    | held_at_entry);
 
 		/* MENU is Diatom's own key and the ports no longer act on it, because

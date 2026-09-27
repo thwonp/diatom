@@ -83,3 +83,4 @@ never started.
 | [0032](0032-quiet-the-game-in-its-own-stream.md) | Quiet the game in its own stream, when the launcher says so | Accepted |
 | [0033](0033-the-newest-connection-wins.md) | The newest connection wins, because a dead launcher's socket can outlive it | Accepted |
 | [0034](0034-fast-forward-and-rewind.md) | Fast-forward and rewind, ported from NextUI, budgeted rather than measured | Accepted |
+| [0035](0035-hotkey-submenu-lives-on-select.md) | The hotkey submenu is a SELECT-held chord Diatom checks itself | Accepted |

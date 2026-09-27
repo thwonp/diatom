@@ -1,0 +1,42 @@
+/* NextUI-derived: PolyForm Noncommercial 1.0.0, NOT this repo's root MIT
+ * license - see THIRD-PARTY.md before touching this file. */
+/* The hotkey submenu's binding table (sibling TortOS feature), ported from
+ * NextUI's OptionShortcuts_* (ma_frontend_opts.c). Parsing and storage only -
+ * see hotkey_chord() in main.c for the per-frame dispatch that actually
+ * checks these against SELECT-held input each frame.
+ *
+ * No SDL, no port header, no diatom_core - deliberately, so a test can drive
+ * the real parser with no display and no core, the way rewind.c's ring is
+ * tested against a fake one. */
+#ifndef DIATOM_HOTKEYS_H
+#define DIATOM_HOTKEYS_H
+
+#include <stdbool.h>
+
+typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE } hk_action;
+
+#define HK_MAX 4
+
+/* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
+ * a spec that is half garbage is refused whole rather than applying the good
+ * half - see hotkeys.c for why. On success, replaces the current bindings
+ * and what hotkeys_emit()/hotkeys_spec() report; on failure, changes
+ * nothing. An empty string is valid and means "no bindings." */
+bool hotkeys_set(const char *spec);
+
+/* How many bindings are currently active (0..HK_MAX), and the i'th one -
+ * for hotkey_chord() to iterate without reaching into this file's storage
+ * directly. */
+int  hotkeys_count(void);
+void hotkeys_at(int i, int *btn_out, hk_action *action_out);
+
+/* The exact string last accepted by hotkeys_set(), echoed back verbatim by
+ * HOTKEYS rather than reserialized from the parsed table - see hotkeys.c. */
+const char *hotkeys_spec(void);
+
+/* Back to no bindings - called on every RUN, the same reason SETMAP is reset
+ * to identity on every RUN (ADR-0020): a table sent for a different game
+ * must not silently keep governing this one. */
+void hotkeys_reset(void);
+
+#endif
