@@ -1555,8 +1555,8 @@ static const struct { int idx; int btn; } joymap[] = {
  * BTN_TL2/TR2, the ABS mask advertises X Y Z RX RY RZ). Measured 2026-08-24:
  * L2 is SDL axis 2 (ABS_Z), R2 is axis 5 (ABS_RZ), resting at -32768 and
  * slamming to +32767 when pressed - a digital switch in axis clothing, so
- * half travel is a comfortable threshold. The other four axes belong to the
- * stick-bearing siblings this driver also serves. */
+ * half travel is a comfortable threshold. The other four axes are the Brick
+ * Pro's sticks; the left one is read below as a dpad. */
 /* Volume, from the same measured table: SDL indices 13 and 14 are VOL_DN and
  * VOL_UP. Absent from joymap[] on purpose - they are not game inputs. */
 #define JOY_VOL_DN 13
@@ -1568,6 +1568,49 @@ static const struct { int idx; int btn; } joymap[] = {
  * them would send every brightness press to the core. */
 #define JOY_FN_L   9
 #define JOY_FN_R   10
+
+/* The Brick Pro (TG4040) is this machine with two sticks. There 9/10 are the
+ * stick clicks - unmapped, no shipped core has L3/R3 - and its function keys
+ * are KEY_F1/KEY_F2, indices 11 and 12 in the table above. Pressed and logged
+ * on the device 2026-09-28. */
+#define JOY_PRO_FN_L 11
+#define JOY_PRO_FN_R 12
+
+/* Which one, from cpuinfo's hwserial - the line the boot script checks. */
+static bool is_brick_pro(void)
+{
+	static int pro = -1;
+	if (pro < 0) {
+		char line[256];
+		FILE *f = fopen("/proc/cpuinfo", "r");
+		pro = 0;
+		while (f && fgets(line, sizeof line, f))
+			if (strncmp(line, "hwserial", 8) == 0 && strstr(line, "TG4040"))
+				pro = 1;
+		if (f) fclose(f);
+	}
+	return pro;
+}
+
+/* The Pro's left stick is a second dpad: all the shipped cores are digital.
+ * Its bits are kept apart from the hat's so releasing one does not drop a
+ * direction the other still holds. Half travel to press, a third to let go,
+ * so a stick resting near the line cannot chatter. */
+#define AXIS_LX 0
+#define AXIS_LY 1
+#define STICK_PRESS   16384
+#define STICK_RELEASE 10923
+#define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
+                 | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT))
+static uint32_t g_hat_bits, g_stick_bits;
+
+static void stick_axis(int value, int neg_btn, int pos_btn)
+{
+	uint32_t neg = DIATOM_BIT(neg_btn), pos = DIATOM_BIT(pos_btn);
+	bool n = value < -((g_stick_bits & neg) ? STICK_RELEASE : STICK_PRESS);
+	bool p = value >  ((g_stick_bits & pos) ? STICK_RELEASE : STICK_PRESS);
+	g_stick_bits = (g_stick_bits & ~(neg | pos)) | (n ? neg : 0) | (p ? pos : 0);
+}
 
 #define AXIS_L2 2
 #define AXIS_R2 5
@@ -1614,11 +1657,11 @@ void diatom_port_input_poll(void)
 				if (down) gain_nudge(-1);
 				break;
 			}
-			if (ev.jbutton.button == JOY_FN_R) {
+			if (ev.jbutton.button == (is_brick_pro() ? JOY_PRO_FN_R : JOY_FN_R)) {
 				if (down) bright_nudge(+1);
 				break;
 			}
-			if (ev.jbutton.button == JOY_FN_L) {
+			if (ev.jbutton.button == (is_brick_pro() ? JOY_PRO_FN_L : JOY_FN_L)) {
 				if (down) bright_nudge(-1);
 				break;
 			}
@@ -1638,10 +1681,8 @@ void diatom_port_input_poll(void)
 			if (ev.jhat.value & SDL_HAT_DOWN)  dpad |= DIATOM_BIT(DIATOM_BTN_DOWN);
 			if (ev.jhat.value & SDL_HAT_LEFT)  dpad |= DIATOM_BIT(DIATOM_BTN_LEFT);
 			if (ev.jhat.value & SDL_HAT_RIGHT) dpad |= DIATOM_BIT(DIATOM_BTN_RIGHT);
-			g_buttons = (g_buttons
-			             & ~(DIATOM_BIT(DIATOM_BTN_UP)   | DIATOM_BIT(DIATOM_BTN_DOWN)
-			               | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT)))
-			            | dpad;
+			g_hat_bits = dpad;
+			g_buttons = (g_buttons & ~DPAD_BITS) | g_hat_bits | g_stick_bits;
 			break;
 		}
 
@@ -1654,6 +1695,12 @@ void diatom_port_input_poll(void)
 			} else if (ev.jaxis.axis == AXIS_R2) {
 				if (pressed) g_buttons |=  DIATOM_BIT(DIATOM_BTN_R2);
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_R2);
+			} else if (ev.jaxis.axis == AXIS_LX || ev.jaxis.axis == AXIS_LY) {
+				if (ev.jaxis.axis == AXIS_LX)
+					stick_axis(ev.jaxis.value, DIATOM_BTN_LEFT, DIATOM_BTN_RIGHT);
+				else
+					stick_axis(ev.jaxis.value, DIATOM_BTN_UP, DIATOM_BTN_DOWN);
+				g_buttons = (g_buttons & ~DPAD_BITS) | g_hat_bits | g_stick_bits;
 			}
 			break;
 		}
