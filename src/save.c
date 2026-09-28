@@ -79,9 +79,16 @@ static void logf_(diatom_log_level lvl, const char *fmt, ...)
 	diatom_port_log(lvl, buf);
 }
 
-/* write, fsync, rename. The rename is what makes it atomic: a power cut can
- * lose the new save but can never corrupt the old one. fsync measured free on
- * this filesystem, so there is no argument for skipping it. */
+/* write, fsync, rename, sync. The rename is what makes it atomic: a power cut
+ * can lose the new save but can never corrupt the old one. fsync measured free
+ * on this filesystem, so there is no argument for skipping it. The sync is for
+ * the rename: without it the new directory entry reaches the card only with
+ * writeback, up to 30 s later, and a hard power-off inside that window brings
+ * back the previous save. Measured on the Brick Pro: a state saved 2 s before
+ * an unsynced power cut survived. It likely also narrows the window in which
+ * a reset mid-writeback can leave exFAT's bitmap and directory disagreeing,
+ * the suspected cause of cross-linked files (TortOS-pq0). About 25 ms on the
+ * card, on the writer thread for SRAM, so never in a frame. */
 static bool write_atomic(const char *path, const void *data, size_t n)
 {
 	char tmp[1088];
@@ -106,6 +113,7 @@ static bool write_atomic(const char *path, const void *data, size_t n)
 		unlink(tmp);
 		return false;
 	}
+	sync();
 	return true;
 }
 
