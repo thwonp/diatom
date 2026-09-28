@@ -21,6 +21,8 @@
 
 #include "cheevos.h"
 #include "diatom.h"
+#include "hotkeys.h"
+#include "rewind.h"
 
 /* --- the frame the core last handed us ----------------------------------- */
 static void       *g_frame;
@@ -537,6 +539,25 @@ static void report_slot(int mode, diatom_filter filter)
  * launcher that sends it twice gets one menu. */
 static bool g_pause_requested;
 
+/* Fast-forward and rewind - ported from NextUI's frontend-side approach
+ * (ma_runframe.c setFastForward/limitFF, ma_rewind.c), not libretro's
+ * fast-forward-ratio API. See src/rewind.c and THIRD-PARTY.md.
+ *
+ * g_ff_speed is a divisor on the per-frame sleep target, same shape as
+ * NextUI's ff_frame_time = 1e6/(fps*(max_ff_speed+1)) - it runs the loop
+ * faster, it does not ask the core for more frames per retro_run call. */
+#define DIATOM_MAX_FF_SPEED 8
+static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
+static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
+/* A core still emits one frame's worth of audio per retro_run() call while
+ * fast-forwarding - nothing skips samples, only the sleep between frames
+ * shrinks - so unthrottled output would play sped-up and garbled. Quieted
+ * for the duration through the SAME switch SETQUIET already uses (ADR-0032),
+ * restored on the way out ONLY if fast-forward is what quieted it - a
+ * launcher that quieted the game itself for an unrelated reason keeps that
+ * choice across a speed change. */
+static bool g_ff_quieted_us;
+
 /* Idleness, for the launcher's auto-off.
  *
  * Reported rather than acted on: Diatom does not decide that a device should
@@ -755,6 +776,94 @@ static uint32_t display_chord(uint32_t buttons, uint32_t prev)
 		                    ? DIATOM_FILTER_NEAREST : DIATOM_FILTER_SHARP);
 		return mask;
 	}
+	return mask;
+}
+
+/* ---- hotkeys: sibling TortOS feature, ported from NextUI's OptionShortcuts_*
+ * (ma_frontend_opts.c) alongside the fast-forward/rewind port above - see
+ * THIRD-PARTY.md. SELECT-held chord, on SELECT's own terms: display_chord
+ * above already claims SELECT as the frontend modifier for L1/R1/A, so this
+ * claims a few more buttons (L2/R2/X/Y) for a few more frontend actions
+ * rather than introducing a second modifier key with its own edge cases.
+ *
+ * FF and rewind are level-triggered - the bound button's own hold state
+ * drives g_ff_speed/g_rewind_active for as long as it is held, mirroring
+ * NextUI's HOLD_FF/HOLD_REWIND rather than the TOGGLE_* variants, which
+ * would need persistent on/off state this does not track. Save/load state
+ * are edge-triggered, firing once per press against sn->state_exit - the
+ * same Auto-slot path the launcher already hands over at RUN, autosaves to,
+ * and the pause menu's own Save/Load-to-Auto row already targets.
+ *
+ * g_hotkey_ff_active/g_hotkey_rewind_active track whether THIS mechanism is
+ * what currently has g_ff_speed/g_rewind_active raised, so releasing a
+ * hotkey only ever undoes what a hotkey itself set - never a value some
+ * other caller (the launcher-driven SETSPEED/SETREWIND above) raised for
+ * an unrelated reason. Nothing in this fork drives both at once today, but
+ * cheap to keep separate rather than to assume that stays true. */
+#define DIATOM_HOTKEY_FF_SPEED 4   /* within DIATOM_MAX_FF_SPEED; see rewind.c */
+
+/* Whether THIS mechanism is what currently has g_ff_speed/g_rewind_active
+ * raised, so releasing a hotkey only ever undoes what a hotkey itself set -
+ * never a value some other caller (the launcher-driven SETSPEED/SETREWIND
+ * above) raised for an unrelated reason. Nothing in this fork drives both
+ * at once today, but cheap to keep separate rather than to assume that
+ * stays true. */
+static bool g_hotkey_ff_active, g_hotkey_rewind_active;
+
+/* Checked every frame, on the same terms as display_chord. Returns what the
+ * core must not see - SELECT plus every currently-bound button, whether or
+ * not any of them changed anything this frame, because a bound button must
+ * disappear from the core for as long as it is held, not only on the frame
+ * this function acted on it. The binding table itself (parsing, validation,
+ * storage) is hotkeys.c/.h - SDL-free and tested there; this is the part
+ * that touches g_ff_speed/g_rewind_active/g_core and stays here for the
+ * same reason display_chord does. */
+static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
+{
+	static const uint32_t sel_bit = DIATOM_BIT(DIATOM_BTN_SELECT);
+	uint32_t pressed = buttons & ~prev;
+	uint32_t mask = sel_bit;
+	int i, n = hotkeys_count();
+	bool ff_held = false, rewind_held = false;
+
+	if (!(buttons & sel_bit)) {
+		/* SELECT released: a still-held FF/rewind hotkey must let go too -
+		 * releasing SELECT first while still holding, say, L2 would
+		 * otherwise leave fast-forward stuck on with nothing left held to
+		 * notice it should stop. */
+		if (g_hotkey_ff_active)     { g_ff_speed = 1;      g_hotkey_ff_active = false; }
+		if (g_hotkey_rewind_active) { g_rewind_active = false; g_hotkey_rewind_active = false; }
+		return 0;
+	}
+
+	for (i = 0; i < n; i++) {
+		int btn;
+		hk_action action;
+		uint32_t bit;
+
+		hotkeys_at(i, &btn, &action);
+		bit = DIATOM_BIT(btn);
+		mask |= bit;
+		switch (action) {
+		case HK_FF:     if (buttons & bit) ff_held = true;     break;
+		case HK_REWIND: if (buttons & bit) rewind_held = true; break;
+		case HK_SAVESTATE:
+			if ((pressed & bit) && sn->state_exit)
+				diatom_state_save(g_core, sn->state_exit);
+			break;
+		case HK_LOADSTATE:
+			if ((pressed & bit) && sn->state_exit)
+				diatom_state_load(g_core, sn->state_exit);
+			break;
+		default: break;
+		}
+	}
+
+	if (ff_held)                          { g_ff_speed = DIATOM_HOTKEY_FF_SPEED; g_hotkey_ff_active = true; }
+	else if (g_hotkey_ff_active)          { g_ff_speed = 1; g_hotkey_ff_active = false; }
+	if (rewind_held)                      { g_rewind_active = true;  g_hotkey_rewind_active = true; }
+	else if (g_hotkey_rewind_active)      { g_rewind_active = false; g_hotkey_rewind_active = false; }
+
 	return mask;
 }
 
@@ -996,6 +1105,46 @@ static bool state_plane_msg(const diatom_msg *m)
 		diatom_cheevos_load(m->path);
 		diatom_cheevos_emit();
 		return true;
+	case DIATOM_MSG_SPEED:
+		diatom_proto_send("SPEED\tspeed=%d", g_ff_speed);
+		return true;
+	case DIATOM_MSG_SETSPEED: {
+		int old = g_ff_speed;
+		g_ff_speed = m->speed < 1 ? 1
+		           : m->speed > DIATOM_MAX_FF_SPEED ? DIATOM_MAX_FF_SPEED
+		           : m->speed;
+		if (g_ff_speed > 1 && old == 1) {
+			g_ff_quieted_us = !diatom_audio_quiet_get();
+			if (g_ff_quieted_us) diatom_audio_quiet(true);
+		} else if (g_ff_speed == 1 && old > 1 && g_ff_quieted_us) {
+			diatom_audio_quiet(false);
+			g_ff_quieted_us = false;
+		}
+		/* Answered either way, same reasoning as SETMAP: a launcher that sent
+		 * an out-of-range value learns what actually took effect. */
+		diatom_proto_send("SPEED\tspeed=%d", g_ff_speed);
+		return true;
+	}
+	case DIATOM_MSG_HOTKEYS:
+		diatom_proto_send("HOTKEYS\thotkeys=%s", hotkeys_spec());
+		return true;
+	case DIATOM_MSG_SETHOTKEYS:
+		if (!hotkeys_set(m->hotkeys))
+			diatom_proto_send("ERROR\tcode=bad_hotkeys\tmsg=%s", m->hotkeys);
+		/* Answered either way, same reasoning as SETMAP: a refusal cannot
+		 * leave the launcher believing bindings it does not have. */
+		diatom_proto_send("HOTKEYS\thotkeys=%s", hotkeys_spec());
+		return true;
+	case DIATOM_MSG_REWIND:
+		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
+		return true;
+	case DIATOM_MSG_SETREWIND:
+		/* Only meaningful mid-game - the ring is per-session (see rewind.c) -
+		 * but harmless to accept idle, the same as SETMUTE/SETQUIET already
+		 * are: it just has nothing to step through yet. */
+		g_rewind_active = m->on != 0;
+		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
+		return true;
 	default: return false;
 	}
 }
@@ -1181,6 +1330,23 @@ static int run_session_inner(const diatom_session *sn)
 	 * because no panel and no core will ever agree on a rate. */
 	frame_us = 1000000.0 / (av.timing.fps > 0 ? av.timing.fps : 60.0);
 
+	/* Sized against THIS core's current serialize_size(), after load_game -
+	 * a core with no savestate support gets a depth-0 ring and rewind is
+	 * simply unavailable this session, discovered the same way SAVE/LOAD
+	 * already discover it (serialize_size() returning 0). Also resets any
+	 * previous session's ring, wrong core or not: state from one core
+	 * restored into another is not a smaller rewind, it is a crash. */
+	diatom_rewind_reset(g_core);
+	g_ff_speed = 1;
+	g_rewind_active = false;
+	g_ff_quieted_us = false;
+	/* Reset to no bindings, the same reason SETMAP is reset to identity on
+	 * every RUN (ADR-0020): a table sent for a different game must not
+	 * silently keep governing this one. The launcher re-sends SETHOTKEYS
+	 * after RUN, on the same terms turbo's SETMAP already is. */
+	hotkeys_reset();
+	g_hotkey_ff_active = g_hotkey_rewind_active = false;
+
 	/* The display handover, and the reason ADR-0009 separates ERROR from EXIT:
 	 * from here the launcher must stop drawing. Announced before the warmup,
 	 * because the warmup already puts frames on the panel. */
@@ -1257,7 +1423,25 @@ static int run_session_inner(const diatom_session *sn)
 		uint64_t now;
 
 		g_frame_fresh = false;
-		g_core->run();
+		/* Rewind steps the ring backward and then runs the core once to
+		 * render the frame the restore corresponds to - see rewind.c's
+		 * header comment on the one-frame forward nudge this costs, judged
+		 * imperceptible against the granularity a ring slot represents.
+		 * An exhausted ring (nothing left to step back through) falls
+		 * through to ordinary forward play instead of freezing, which needs
+		 * no special case here: capture is simply skipped while rewinding,
+		 * so history stops growing at exactly the point it stops shrinking. */
+		if (g_rewind_active) {
+			if (diatom_rewind_step_back(g_core))
+				g_core->run();   /* renders the frame the restore left us at */
+			/* else: ring exhausted. diatom_rewind_step_back()'s own contract
+			 * is to hold here, not to be called again - skipping run() keeps
+			 * g_frame exactly as it was instead of quietly resuming forward
+			 * play the player never un-paused. */
+		} else {
+			g_core->run();   /* renders forward play */
+			diatom_rewind_capture(g_core);
+		}
 		frames++;
 
 		/* Immediately after the frame the core produced, and before anything
@@ -1392,9 +1576,10 @@ static int run_session_inner(const diatom_session *sn)
 		 * physically down stays latched. */
 		held_at_entry &= buttons;
 
-		/* The single writer. Both reasons to hide a button end up here, so
-		 * neither can clear the other. */
+		/* The single writer. All three reasons to hide a button end up here,
+		 * so none of them can clear another. */
 		diatom_env_suppress(display_chord(buttons, prev_buttons)
+		                    | hotkey_chord(buttons, prev_buttons, sn)
 		                    | held_at_entry);
 
 		/* MENU is Diatom's own key and the ports no longer act on it, because
@@ -1472,26 +1657,36 @@ static int run_session_inner(const diatom_session *sn)
 		}
 		diatom_audio_sync();
 
-		next_us += frame_us;
-		now = diatom_port_now_us();
+		/* Fast-forward: a shorter deadline, not fewer frames - ported from
+		 * NextUI's setFastForward/limitFF, which computes exactly this
+		 * ratio (ff_frame_time = 1e6/(fps*(max_ff_speed+1))) against SDL_Delay
+		 * rather than this loop's absolute-schedule nanosleep. Recomputed
+		 * every iteration rather than once before the loop, unlike frame_us
+		 * itself, because g_ff_speed can change mid-session via SETSPEED. */
+		{
+			double target_us = frame_us / g_ff_speed;
 
-		if (next_us > (double)now) {
-			struct timespec ts;
-			double d = next_us - (double)now;
-			ts.tv_sec  = (time_t)(d / 1000000.0);
-			ts.tv_nsec = (long)(fmod(d, 1000000.0) * 1000.0);
-			nanosleep(&ts, NULL);
-		} else if ((double)now - next_us > frame_us * 4.0) {
-			/* More than four frames behind. Something stalled - the scheduler,
-			 * a page fault, a slow core - and trying to catch up would just run
-			 * fast for a while, which looks worse than dropping the debt.
-			 * Counted, because a loop that resyncs often is a loop that is
-			 * lying about its frame rate. */
-			next_us = (double)now;
-			resyncs++;
-			g_stat[SLOT(g_mode, g_filter)].resyncs++;
+			next_us += target_us;
+			now = diatom_port_now_us();
+
+			if (next_us > (double)now) {
+				struct timespec ts;
+				double d = next_us - (double)now;
+				ts.tv_sec  = (time_t)(d / 1000000.0);
+				ts.tv_nsec = (long)(fmod(d, 1000000.0) * 1000.0);
+				nanosleep(&ts, NULL);
+			} else if ((double)now - next_us > target_us * 4.0) {
+				/* More than four frames behind. Something stalled - the
+				 * scheduler, a page fault, a slow core - and trying to catch
+				 * up would just run fast for a while, which looks worse than
+				 * dropping the debt. Counted, because a loop that resyncs
+				 * often is a loop that is lying about its frame rate. */
+				next_us = (double)now;
+				resyncs++;
+				g_stat[SLOT(g_mode, g_filter)].resyncs++;
+			}
+			/* Otherwise keep the debt and let the next short sleep repay it. */
 		}
-		/* Otherwise keep the debt and let the next short sleep repay it. */
 	}
 
 	/* Read the clock before the capture: converting and writing a full-screen
@@ -1506,6 +1701,8 @@ static int run_session_inner(const diatom_session *sn)
 	 * it is a defect, then the state, which is a convenience. */
 	diatom_save_shutdown();
 	if (sn->state_exit) diatom_state_save(g_core, sn->state_exit);
+	diatom_rewind_shutdown();
+	if (g_ff_quieted_us) { diatom_audio_quiet(false); g_ff_quieted_us = false; }
 
 	/* The frame the player was looking at, for the launcher's card - written
 	 * with the exit state so a card that shows a preview always has a state

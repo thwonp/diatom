@@ -161,6 +161,20 @@ typedef enum {
 	DIATOM_MSG_SETMUTE,    /* hold it off, or release it: `on` = 1 | 0 */
 	DIATOM_MSG_QUIET,      /* report whether the game's own sound is held silent */
 	DIATOM_MSG_SETQUIET,   /* hold it silent, or let it play: `on` = 1 | 0 */
+	/* Fast-forward and rewind. Ported from NextUI's frontend-side approach
+	 * (ma_runframe.c / ma_rewind.c), not libretro's fast-forward-ratio API -
+	 * see src/rewind.c and THIRD-PARTY.md. */
+	DIATOM_MSG_SPEED,      /* report the playback speed multiplier: `speed` */
+	DIATOM_MSG_SETSPEED,   /* set it, 1..DIATOM_MAX_FF_SPEED: `speed` */
+	DIATOM_MSG_REWIND,     /* report whether rewind is engaged */
+	DIATOM_MSG_SETREWIND,  /* engage/disengage stepping backward: `on` = 1 | 0 */
+	/* The hotkey submenu (sibling TortOS feature, ported from NextUI's
+	 * OptionShortcuts_* alongside the same rewind/FF port). A SELECT-held
+	 * chord, on SELECT's own terms - display_chord already claims SELECT as
+	 * the frontend modifier for L1/R1/A, this claims a few more buttons for
+	 * a few more frontend actions. See hotkey_chord() in main.c. */
+	DIATOM_MSG_HOTKEYS,    /* report the current bindings: `hotkeys` */
+	DIATOM_MSG_SETHOTKEYS, /* replace them whole: `hotkeys` = "l2:ff,x:savestate" */
 	/* The launcher went away - or was displaced by a newer one, ADR-0033,
 	 * which means the same thing. The game keeps running. */
 	DIATOM_MSG_HANGUP
@@ -201,6 +215,10 @@ typedef struct {
 	int  index, count;     /* SETLEVEL: `count` is POSITIONS, not a max index.
 	                        * OVERLAY: `count` is the duration in ms, sent as
 	                        * `ms=`. One slot, two verbs, no second name. */
+	int  speed;            /* SETSPEED: 1 = normal. Its own field rather than
+	                        * `index`/`count` - see the warning on those two
+	                        * about one slot serving verbs that disagree. */
+	char hotkeys[128];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
 } diatom_msg;
 
 /* Input mapping and labels live in env.c, the one layer a remap touches. */
