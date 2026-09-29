@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* Achievements: the address space, and reading from it.
  *
  * See cheevos.h for why this is Diatom's job and not the launcher's, and

@@ -2,14 +2,16 @@
   <img src="docs/diatom-card.png" alt="diatom: a minimal libretro frontend" width="100%">
 </p>
 
-A minimal libretro frontend for low-power ARM Linux handhelds (~1GB RAM). It is
-the emulator behind [TortOS](https://github.com/ericreinsmidt/TortOS), which
-drives it over a Unix socket, and a permissively licensed base for any other
-firmware that wants one.
+A minimal libretro frontend for low-power ARM Linux handhelds (~1GB RAM). This
+fork is the emulator behind plorpOS (working name), a fork of
+[TortOS](https://github.com/ericreinsmidt/TortOS), which drives it over a Unix
+socket.
 
-**MIT licensed.** Diatom loads whatever core it is handed and ships none of
-them, so a permissive frontend can host cores under any license - which is
-what `libretro.h` is permissive for.
+**PolyForm Noncommercial 1.0.0.** Free to use, change and share, not for
+commercial use; see [LICENSE](LICENSE). It is a fork of Eric Reinsmidt's diatom,
+whose MIT notice is kept in [NOTICE](NOTICE). Diatom loads whatever core it is
+handed and ships none of them; the cores keep their own licenses. Why the
+license changed, and what it costs: [ADR-0036](docs/decisions/0036-relicense-polyform-noncommercial.md).
 
 **Status: running on hardware, shipping in TortOS.** Eleven systems across six
 cores on a TrimUI Brick (TG3040): NES · SNES · Genesis · Master System ·

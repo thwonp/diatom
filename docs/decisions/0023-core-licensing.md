@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-08-26
 - **Supersedes:** -
-- **Superseded by:** -
+- **Superseded by:** [ADR-0036](0036-relicense-polyform-noncommercial.md), in part (the "MIT is GPL-compatible" premise; the three rules stand)
 
 Settles the §1 register item open since 2026-08-23. Relates to
 [ADR-0002](0002-separate-repository.md) and [ADR-0006](0006-resident-core-model.md).

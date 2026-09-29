@@ -1,7 +1,11 @@
 # Third-party notices
 
-Diatom's own code is intended to be permissively licensed (see ADR-0002 for why
-that matters - escaping GPL inheritance is a founding goal of the project).
+This fork's own code is licensed PolyForm Noncommercial 1.0.0 (root `LICENSE`)
+since 2026-09-28; Eric Reinsmidt's original code keeps its MIT notice in
+`NOTICE`. See [ADR-0036](docs/decisions/0036-relicense-polyform-noncommercial.md)
+for why, and for what that changed about ADR-0002's and ADR-0023's permissive
+premise. The per-file NextUI sections below predate the relicense; they now
+record provenance, not the only noncommercial code.
 
 ## `src/rewind.c`
 
@@ -19,7 +23,7 @@ sibling fork of TortOS (`github.com/thwonp/TortOS`, see that repo's own
 **noncommercial-only**, the same restriction the sibling TortOS fork already
 carries for the same reason and, on that fork, for two libretro cores besides.
 Every other file in this repo, including the rest of `src/proto.c` and
-`src/diatom.h`, remains under the root `LICENSE` (MIT), unchanged - the new
+`src/diatom.h`, carries no NextUI provenance - the new
 protocol verbs are a straightforward extension of ADR-0020's existing state
 plane and carry nothing NextUI-derived in their own text.
 
@@ -38,13 +42,13 @@ consumed only by the sibling personal fork of TortOS, never upstreamed.
 The `hotkey_chord()` dispatch function in `src/main.c` that actually checks
 these bindings each frame is the same NextUI-derived concept and carries the
 same restriction, even though it lives outside `hotkeys.c` itself (next to
-the pre-existing, unrelated, MIT `display_chord()` it is modeled on - see
+the pre-existing, unrelated `display_chord()` it is modeled on - see
 [ADR-0035](docs/decisions/0035-hotkey-submenu-lives-on-select.md)).
 
 The `HOTKEYS`/`SETHOTKEYS` protocol verbs (`src/proto.c`, `src/diatom.h`)
 are, like `SPEED`/`SETSPEED`/`REWIND`/`SETREWIND` before them, a plain
 extension of ADR-0020's state plane and carry nothing NextUI-derived in
-their own text - MIT, unchanged.
+their own text - no NextUI provenance.
 
 See [ADR-0035](docs/decisions/0035-hotkey-submenu-lives-on-select.md) for
 what was ported, why NextUI's own MENU-held convention specifically was NOT
@@ -72,9 +76,9 @@ vendored under ADR-0025 so the build stays self-contained.
 - **Copyright (c) 2018 RetroAchievements.org**
 - **MIT licensed**, full text in `vendor/rcheevos/LICENSE`.
 
-MIT is the whole reason this is possible rather than a problem: it is diatom's
-own license, so ADR-0002's founding goal - escaping GPL inheritance - is
-untouched. The networking halves (`rc_client`, `rapi`, `rurl`) are deliberately
+MIT is the whole reason this is possible rather than a problem: it is
+compatible with diatom's own license (MIT upstream, PolyForm Noncommercial in
+this fork), and brings no GPL code in. The networking halves (`rc_client`, `rapi`, `rurl`) are deliberately
 not vendored; `vendor/rcheevos/README.md` lists every omission and why.
 
 ## Cores

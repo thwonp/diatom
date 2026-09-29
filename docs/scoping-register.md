@@ -142,6 +142,11 @@ verified rather than assumed.
       and Diatom ships no cores. **GPL was the easy half**: two of five pinned
       cores are *non-commercial*, covering four of nine systems, which the
       question never contemplated. Licenses now recorded by `fetch-cores.sh`.
+- [x] **[LB]** Fork relicensed → **PolyForm Noncommercial 1.0.0**, 2026-09-28 →
+      **[ADR-0036](decisions/0036-relicense-polyform-noncommercial.md)** *(Accepted)*.
+      Supersedes the MIT item above for this fork; Eric Reinsmidt's MIT notice
+      is kept in `NOTICE`. It voids ADR-0023's "MIT is GPL-compatible" premise:
+      a distributed card with GPL cores is the exposure, not this repo.
 - [x] **[LB]** Standalone repository → **[ADR-0002](decisions/0002-separate-repository.md)** *(Accepted)*
 - [x] **[LB]** Decision-recording practice: ADRs → **[ADR-0001](decisions/0001-record-architecture-decisions.md)** *(Accepted)*
 - [x] **[OPEN]** **A real launcher drives Diatom in production.** TortOS
