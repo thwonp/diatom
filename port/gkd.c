@@ -211,6 +211,14 @@ bool diatom_port_init(diatom_port_caps *out)
 		diatom_port_log(DIATOM_LOG_INFO, msg);
 	}
 
+	/* Unmapped until the first frame, now the size is known. A resident that
+	 * is only waiting would otherwise hold a black fullscreen window over the
+	 * launcher's, and sway picks between the two unreliably (2026-09-29). The
+	 * first present maps it again, standalone included. */
+	SDL_HideWindow(g_window);
+	SDL_PumpEvents();
+	g_hidden = true;
+
 	g_pad_fd = evdev_open("gkd_atom_joypad");
 	g_keys_fd = evdev_open("gpio-keys");
 	if (g_pad_fd < 0)
@@ -850,8 +858,19 @@ bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 /* The launcher owns levels while Diatom is not presenting; forget ours. */
 void diatom_port_level_invalidate(void)
 {
+	struct input_event ev[16];
+
 	g_level  = -1;
 	g_bright = -1;
+
+	/* Called at every handover back to a game, so it is also where the volume
+	 * keys pressed while the launcher had the screen - on the shelf, in its
+	 * menu - are thrown away. Nothing reads this fd meanwhile, and keys_read
+	 * acts on every press it finds: a Vol+ on the shelf replayed as a volume
+	 * step and a bar at the next game's start (seen 2026-09-29). The pad fd is
+	 * left alone - pad_read tracks held buttons, which draining would lose. */
+	if (g_keys_fd >= 0)
+		while (read(g_keys_fd, ev, sizeof ev) > 0) { }
 }
 
 /* The handover. The launcher is another Wayland client under the same sway,
