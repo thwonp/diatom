@@ -58,6 +58,7 @@ static int           g_pad_fd = -1, g_keys_fd = -1;
 static bool          g_home;
 
 static int evdev_open(const char *want);
+static bool g_hidden;
 static void draw_osd(void);
 static void levels_init(void);
 
@@ -365,6 +366,11 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 {
 	SDL_Rect r;
 
+	/* Back from a handover (present_stop): map again before drawing. */
+	if (g_hidden) {
+		SDL_ShowWindow(g_window);
+		g_hidden = false;
+	}
 	if (w > 0 && h > 0 && !ensure_texture(w, h, fmt, filter)) return;
 	if (src && g_texture) SDL_UpdateTexture(g_texture, NULL, src, (int)pitch);
 
@@ -845,12 +851,28 @@ void diatom_port_level_invalidate(void)
 	g_bright = -1;
 }
 
-/* Nothing to drain: this port presents synchronously inside
- * diatom_port_present - SDL_RenderPresent has returned by the time it does,
- * so there is never a flip in flight to wait for. The definition exists
- * because the seam is part of the port interface, and a port that silently
- * lacked it would fail at link time on the day someone needed it. */
-void diatom_port_present_stop(diatom_park park) { (void)park; }
+/* The handover. The launcher is another Wayland client under the same sway,
+ * so giving it the display means getting out of its way: unmap this window
+ * and let the compositor show what is behind it. The next present() maps it
+ * again. Design: plorpos design.md "Display"; latency is gkd.5's to measure.
+ *
+ * `park` does not change what happens here. Both answers are about what
+ * stays on glass for the launcher, and under a compositor nothing of this
+ * window stays: at a pause the launcher draws its menu over the PREVIEW
+ * image the host wrote first, not over this window.
+ *
+ * Nothing is in flight to drain - present() is synchronous here - but the
+ * unmap has to REACH sway before the host sends PAUSED or EXIT, or both
+ * windows are up at once. Pumping flushes the Wayland connection. */
+
+void diatom_port_present_stop(diatom_park park)
+{
+	(void)park;
+	if (!g_window || g_hidden) return;
+	SDL_HideWindow(g_window);
+	SDL_PumpEvents();
+	g_hidden = true;
+}
 
 /* No mute switch and no analog stage to hold off on the GKD (ADR-0031): the
  * port answers what it was told, as the desktop port does. */
