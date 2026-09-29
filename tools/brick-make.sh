@@ -1,5 +1,6 @@
 #!/bin/sh
 # Runs make for the Brick inside the toolchain container - ADR-0012.
+# PORT=gkd builds for the GKD 350H Ultra instead; the toolchain is the same.
 #
 #   tools/brick-make.sh            builds the frontend
 #   tools/brick-make.sh stub       cross-builds the stub core
@@ -11,6 +12,7 @@ set -eu
 
 IMAGE=diatom-brick-toolchain
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PORT=${PORT:-brick}
 
 docker image inspect "$IMAGE" >/dev/null 2>&1 || {
     printf 'brick-make: toolchain image missing; build it first:\n' >&2
@@ -21,7 +23,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || {
 # Run as the invoking user so build/ is not root-owned on Linux hosts. The
 # user has no passwd entry inside the container, which gcc and make tolerate.
 docker run --rm -u "$(id -u):$(id -g)" \
-    -v "$ROOT":/work -w /work "$IMAGE" make PORT=brick "$@"
+    -v "$ROOT":/work -w /work "$IMAGE" make PORT="$PORT" "$@"
 rc=$?
 
 # Staleness check, because make has silently skipped rebuilds here twice.
@@ -50,15 +52,15 @@ check() {   # check <output> <source>...
     fi
 }
 
-check "$ROOT/build/brick/diatom" \
-      "$ROOT"/src/*.c "$ROOT"/src/*.h "$ROOT"/include/*.h "$ROOT"/port/brick.c \
+check "$ROOT/build/$PORT/diatom" \
+      "$ROOT"/src/*.c "$ROOT"/src/*.h "$ROOT"/include/*.h "$ROOT"/port/$PORT.c \
       "$ROOT"/port/port_clock.h
 # The stub was missed the first time round and cost an hour on 2026-08-25: a
 # source change did not rebuild, so a fixture that had been fixed was still the
 # broken one on the device, and the device disagreeing with the desktop looked
 # like a platform difference.
-check "$ROOT/build/brick/stubcore.so" "$ROOT/test/stubcore.c"
-for out in "$ROOT"/build/brick/tools/*; do
+check "$ROOT/build/$PORT/stubcore.so" "$ROOT/test/stubcore.c"
+for out in "$ROOT"/build/$PORT/tools/*; do
     [ -f "$out" ] || continue
     check "$out" "$ROOT/tools/$(basename "$out").c"
 done

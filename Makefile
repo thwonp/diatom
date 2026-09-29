@@ -5,6 +5,7 @@
 # and an abstraction with no consumer is a tax (register §0).
 #
 #   make                 desktop build (SDL2), the development target
+#   make PORT=gkd        device build for the GKD 350H Ultra (tools/fetch-gkd-sysroot.sh)
 #   make PORT=brick      device build for the TrimUI Brick (TG3040); needs the
 #                        cross toolchain, so run it as  tools/brick-make.sh
 
@@ -86,6 +87,26 @@ ifeq ($(PORT),brick)
   LDFLAGS += -L$(SYSROOT)/usr/trimui/lib -Wl,-rpath-link,$(SYSROOT)/usr/trimui/lib
   # Explicit -ldl/-lpthread: the toolchain's glibc 2.31 predates their merge
   # into libc proper (2.34).
+  LDFLAGS += -lSDL2 -lm -ldl -lpthread
+endif
+
+ifeq ($(PORT),gkd)
+  # GKD 350H Ultra on vendor ROCKNIX. Same toolchain as the Brick (its glibc
+  # 2.31 is the floor; the device runs 2.40); SDL2 2.32.6 from the device via
+  # tools/fetch-gkd-sysroot.sh. Built with tools/brick-make.sh, PORT=gkd.
+  CROSS   ?= aarch64-linux-gnu-
+  CC       = $(CROSS)gcc
+  SYSROOT ?= sysroot/gkd
+  ifeq ($(wildcard $(SYSROOT)/usr/lib/libSDL2.so),)
+    $(error gkd sysroot missing: run tools/fetch-gkd-sysroot.sh)
+  endif
+  CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
+  LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
+  # The device's libSDL2 was built against glibc 2.40 and references 2.34+
+  # symbols (dlerror@GLIBC_2.34) that this toolchain's 2.31 cannot resolve.
+  # Those are SDL's own needs, met by the device at runtime; diatom's own
+  # references are still checked against 2.31.
+  LDFLAGS += -Wl,--allow-shlib-undefined
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
 endif
 
