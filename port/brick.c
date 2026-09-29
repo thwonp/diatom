@@ -1723,6 +1723,18 @@ static int rescale(int index, int from, int to)
 	return (index * (to - 1) + (from - 1) / 2) / (from - 1);
 }
 
+/* A level-key press, for dropping the ones queued while the launcher drove. */
+static int not_level_press(void *u, SDL_Event *e)
+{
+	int b = e->jbutton.button;
+
+	(void)u;
+	if (e->type != SDL_JOYBUTTONDOWN) return 1;
+	return !(b == JOY_VOL_UP || b == JOY_VOL_DN ||
+	         b == (is_brick_pro() ? JOY_PRO_FN_L : JOY_FN_L) ||
+	         b == (is_brick_pro() ? JOY_PRO_FN_R : JOY_FN_R));
+}
+
 void diatom_port_level_invalidate(void)
 {
 	g_level  = -1;
@@ -1731,6 +1743,14 @@ void diatom_port_level_invalidate(void)
 	 * while the launcher was driving is invisible here, so the remembered
 	 * state is a memory of a world this process was not watching. */
 	g_jack_was = -1;
+
+	/* And the level keys pressed meanwhile - on the shelf, in the launcher's
+	 * menu. Nothing pumped SDL's queue then, so they are all still in it, and
+	 * the first poll acted on each: a Vol+ on the shelf came back as a volume
+	 * step and a bar at the next game's start (seen 2026-09-29). Only those
+	 * presses go; the pad's releases stay, or a button would be left held. */
+	SDL_PumpEvents();
+	SDL_FilterEvents(not_level_press, NULL);
 }
 
 /* `*count` is positions, not a maximum index, so it is one MORE than the
