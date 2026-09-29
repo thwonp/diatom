@@ -745,15 +745,19 @@ static bool menu_pause(const diatom_session *sn)
  * runs every frame, so `suppress(0)` on the first frame SELECT was not held
  * silently cleared the other. Composing them is now the caller's job, which is
  * also the only place that can see both. */
+/* The frontend modifier: SELECT, or HOTKEY on a device with a key to spare for
+ * it (ADR-0037). Either one held opens both chords below; there is no chord
+ * only one of them opens. */
+#define MODIFIER_BITS (DIATOM_BIT(DIATOM_BTN_SELECT) | DIATOM_BIT(DIATOM_BTN_HOTKEY))
+
 static uint32_t display_chord(uint32_t buttons, uint32_t prev)
 {
-	static const uint32_t chord = DIATOM_BIT(DIATOM_BTN_SELECT);
 	uint32_t pressed = buttons & ~prev;
 	uint32_t mask;
 
-	if (!(buttons & chord)) return 0;
+	if (!(buttons & MODIFIER_BITS)) return 0;
 
-	mask = chord | DIATOM_BIT(DIATOM_BTN_L1)
+	mask = MODIFIER_BITS | DIATOM_BIT(DIATOM_BTN_L1)
 	             | DIATOM_BIT(DIATOM_BTN_R1)
 	             | DIATOM_BIT(DIATOM_BTN_A);
 
@@ -785,6 +789,8 @@ static uint32_t display_chord(uint32_t buttons, uint32_t prev)
  * above already claims SELECT as the frontend modifier for L1/R1/A, so this
  * claims a few more buttons (L2/R2/X/Y) for a few more frontend actions
  * rather than introducing a second modifier key with its own edge cases.
+ * (ADR-0037 later let HOTKEY stand in for SELECT, for both chords at once -
+ * an alias for the one modifier, not a second one with its own chords.)
  *
  * FF and rewind are level-triggered - the bound button's own hold state
  * drives g_ff_speed/g_rewind_active for as long as it is held, mirroring
@@ -811,7 +817,7 @@ static uint32_t display_chord(uint32_t buttons, uint32_t prev)
 static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 
 /* Checked every frame, on the same terms as display_chord. Returns what the
- * core must not see - SELECT plus every currently-bound button, whether or
+ * core must not see - the modifier plus every currently-bound button, whether or
  * not any of them changed anything this frame, because a bound button must
  * disappear from the core for as long as it is held, not only on the frame
  * this function acted on it. The binding table itself (parsing, validation,
@@ -820,14 +826,13 @@ static bool g_hotkey_ff_active, g_hotkey_rewind_active;
  * same reason display_chord does. */
 static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
 {
-	static const uint32_t sel_bit = DIATOM_BIT(DIATOM_BTN_SELECT);
 	uint32_t pressed = buttons & ~prev;
-	uint32_t mask = sel_bit;
+	uint32_t mask = MODIFIER_BITS;
 	int i, n = hotkeys_count();
 	bool ff_held = false, rewind_held = false;
 
-	if (!(buttons & sel_bit)) {
-		/* SELECT released: a still-held FF/rewind hotkey must let go too -
+	if (!(buttons & MODIFIER_BITS)) {
+		/* Modifier released: a still-held FF/rewind hotkey must let go too -
 		 * releasing SELECT first while still holding, say, L2 would
 		 * otherwise leave fast-forward stuck on with nothing left held to
 		 * notice it should stop. */

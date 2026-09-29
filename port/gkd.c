@@ -459,6 +459,9 @@ static const struct { int code; int btn; } padmap[] = {
 	{ BTN_SELECT,     DIATOM_BTN_SELECT },
 	{ BTN_START,      DIATOM_BTN_START  },
 	{ BTN_MODE,       DIATOM_BTN_MENU   },
+	/* Home: the second frontend modifier (ADR-0037), and also - port-side,
+	 * via g_home - what turns the volume keys into brightness keys. */
+	{ BTN_TRIGGER_HAPPY1, DIATOM_BTN_HOTKEY },
 };
 
 /* The stick reads as the dpad (as on the Brick Pro). Range -900..899, right

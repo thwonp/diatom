@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-27 (accepted 2026-09-27)
 - **Supersedes:** -
-- **Superseded by:** -
+- **Superseded by:** [ADR-0037](0037-home-is-a-second-modifier-key.md), in part (the modifier is SELECT or HOTKEY; MENU is still not a modifier)
 
 Extends [ADR-0020](0020-shared-state-plane.md) and sits directly beside
 [ADR-0034](0034-fast-forward-and-rewind.md), whose `g_ff_speed`/

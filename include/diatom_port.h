@@ -78,6 +78,11 @@ enum {
 	 * the launcher protocol it hands the display over for a menu. A port that
 	 * decided this itself would make that impossible. */
 	DIATOM_BTN_MENU,
+	/* Diatom's own too: a second frontend modifier, held like SELECT for the
+	 * display and hotkey chords (ADR-0037). Never forwarded to a core and
+	 * unmappable, like MENU. A port reports it only if the device has a spare
+	 * key for it (the GKD's Home); on the Brick it simply never appears. */
+	DIATOM_BTN_HOTKEY,
 	DIATOM_BTN_COUNT
 };
 #define DIATOM_BIT(b) (1u << (b))

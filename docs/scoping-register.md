@@ -939,6 +939,10 @@ Two levers the spike discovered:
       convention - not MENU, which ADR-0014 left open and this rejects to
       avoid a latency regression on MENU's existing instant-open behavior.
       `hotkeys.c`/`.h` hold the table; `hotkey_chord()` checks it.
+- [x] **[OPEN]** A device with a spare key (the GKD's Home) gets a second
+      modifier → **[ADR-0037](decisions/0037-home-is-a-second-modifier-key.md)**
+      *(Accepted)*. `DIATOM_BTN_HOTKEY` is an alias of SELECT-as-modifier for
+      both chords; never reaches a core, unmappable. MENU still is not one.
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,
