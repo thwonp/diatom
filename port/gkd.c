@@ -29,8 +29,11 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <spawn.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 
 #include "diatom_port.h"
 #include "port_clock.h"
@@ -51,8 +54,12 @@ static SDL_AudioDeviceID g_audio;
 static bool          g_quit;
 static uint32_t      g_buttons;
 static int           g_pad_fd = -1, g_keys_fd = -1;
+/* Home held, from the pad: it turns the volume keys into brightness keys. */
+static bool          g_home;
 
 static int evdev_open(const char *want);
+static void draw_osd(void);
+static void levels_init(void);
 
 /* ---------- the audio sink (ADR-0029) ------------------------------------- */
 
@@ -207,6 +214,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	g_keys_fd = evdev_open("gpio-keys");
 	if (g_pad_fd < 0)
 		diatom_port_log(DIATOM_LOG_WARN, "input: gkd_atom_joypad not found; no buttons");
+	levels_init();
 
 	/* Vsync OFF, deliberately.
 	 *
@@ -366,6 +374,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		SDL_RenderCopy(g_renderer, g_texture, NULL, &r);
 	}
 	draw_overlay();
+	draw_osd();
 	SDL_RenderPresent(g_renderer);
 }
 
@@ -485,6 +494,7 @@ static void pad_read(void)
 				continue;
 			}
 			if (ev[i].type != EV_KEY || ev[i].value == 2) continue;
+			if (ev[i].code == BTN_TRIGGER_HAPPY1) g_home = ev[i].value;
 			for (k = 0; k < sizeof padmap / sizeof padmap[0]; k++) {
 				if (padmap[k].code != ev[i].code) continue;
 				if (ev[i].value) g_pad_buttons |=  DIATOM_BIT(padmap[k].btn);
@@ -494,14 +504,30 @@ static void pad_read(void)
 	}
 }
 
-/* The volume keys are drained so the fd never fills; acting on them is the
- * levels work. */
+static void gain_nudge(int dir);
+static void bright_nudge(int dir);
+
+/* The volume keys are the port's and stop here - never reported upward, never
+ * a core's - because nothing else is watching them while a game runs. Presses
+ * only; a held key does not repeat, as on the Brick. */
 static void keys_read(void)
 {
 	struct input_event ev[16];
+	ssize_t n;
+	size_t i;
 
-	while (read(g_keys_fd, ev, sizeof ev) > 0)
-		;
+	while ((n = read(g_keys_fd, ev, sizeof ev)) > 0) {
+		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
+			int dir;
+
+			if (ev[i].type != EV_KEY || ev[i].value != 1) continue;
+			if      (ev[i].code == KEY_VOLUMEUP)   dir = +1;
+			else if (ev[i].code == KEY_VOLUMEDOWN) dir = -1;
+			else continue;
+			if (g_home) bright_nudge(dir);
+			else        gain_nudge(dir);
+		}
+	}
 }
 
 void diatom_port_input_poll(void)
@@ -570,23 +596,254 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
 	fprintf(stderr, "[%s] %s\n", tag[lvl], msg);
 }
 
-/* No volume or brightness control here: the desktop backend is for iteration,
- * and the machine's own mixer and display already own both. Reporting false
- * makes `LEVELS count=0` the answer to a launcher's query, which tells it not
- * to expect events rather than leaving it to infer that from silence. */
+/* ---------- levels: volume and brightness (ADR-0020) ---------------------- */
+
+/* Volume is the default PipeWire sink's, in the same 5% steps ROCKNIX's own
+ * /usr/bin/volume uses and the Brick's GAIN_LEVELS: 21 positions. The ALSA
+ * DAC stays at 100% underneath (design: PipeWire owns the level). */
+#define GAIN_LEVELS 20
+
+/* NOT the Brick's ratio ladder. This backlight reports scale=non-linear: the
+ * driver already curves raw values toward perceptual, so the Brick's ladder
+ * put five of its twelve rungs where they could not be told apart. Measured
+ * 2026-09-29 with a test ladder stepped by hand: raw 24, 32 and 40 look
+ * identical, 48 is the first visibly brighter, and every 8-unit step above it
+ * is visible. So: evenly spaced from the floor (40) to 255, keeping the
+ * Brick's twelve positions. The launcher's GKD ladder must match (gkd.3). */
+static const unsigned char bright_ladder[] = {
+	40, 60, 79, 99, 118, 138, 157, 177, 196, 216, 235, 255
+};
+#define BRIGHT_LEVELS ((int)(sizeof bright_ladder / sizeof bright_ladder[0]) - 1)
+
+static int  g_level  = -1;      /* 0..GAIN_LEVELS, -1 unread */
+static int  g_bright = -1;      /* index into bright_ladder, -1 unread */
+static char g_bl_path[300];     /* .../brightness, empty if none */
+
+/* wpctl is a process, ~tens of ms: far too slow for the frame loop, so sets go
+ * to a worker. Latest wins - a burst of presses is one write of where they
+ * ended, not a queue of stale ones. */
+static pthread_t       g_vol_thread;
+static pthread_mutex_t g_vol_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_vol_cv = PTHREAD_COND_INITIALIZER;
+static int             g_vol_want = -1;
+
+static void run_wait(char *const argv[])
+{
+	extern char **environ;
+	pid_t pid;
+	int st;
+
+	if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) == 0)
+		waitpid(pid, &st, 0);
+}
+
+static void *vol_worker(void *arg)
+{
+	(void)arg;
+	for (;;) {
+		char pct[16];
+		char *argv[] = { "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", pct, NULL };
+		int want;
+
+		pthread_mutex_lock(&g_vol_mu);
+		while (g_vol_want < 0) pthread_cond_wait(&g_vol_cv, &g_vol_mu);
+		want = g_vol_want;
+		g_vol_want = -1;
+		pthread_mutex_unlock(&g_vol_mu);
+
+		snprintf(pct, sizeof pct, "%d%%", want * 100 / GAIN_LEVELS);
+		run_wait(argv);
+	}
+	return NULL;
+}
+
+/* Read synchronously, but only at start and after a handover (invalidate),
+ * never per frame: the one wpctl run lands where a menu is already up. */
+static void gain_ensure(void)
+{
+	FILE *f;
+	float v;
+
+	if (g_level >= 0) return;
+	f = popen("wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null", "r");
+	if (!f) return;
+	if (fscanf(f, "Volume: %f", &v) == 1) {
+		int lv = (int)(v * GAIN_LEVELS + 0.5f);
+		g_level = lv < 0 ? 0 : lv > GAIN_LEVELS ? GAIN_LEVELS : lv;
+	}
+	pclose(f);
+}
+
+static void gain_apply(void)
+{
+	pthread_mutex_lock(&g_vol_mu);
+	g_vol_want = g_level;
+	pthread_cond_signal(&g_vol_cv);
+	pthread_mutex_unlock(&g_vol_mu);
+}
+
+static void bright_ensure(void)
+{
+	FILE *f;
+	int raw, i;
+
+	if (g_bright >= 0 || !g_bl_path[0]) return;
+	f = fopen(g_bl_path, "r");
+	if (!f) return;
+	if (fscanf(f, "%d", &raw) == 1) {
+		/* Nearest rung, so the first press steps from where the launcher
+		 * left the panel rather than jumping. */
+		g_bright = 0;
+		for (i = 1; i <= BRIGHT_LEVELS; i++)
+			if (abs(bright_ladder[i] - raw) < abs(bright_ladder[g_bright] - raw))
+				g_bright = i;
+	}
+	fclose(f);
+}
+
+static void bright_apply(void)
+{
+	FILE *f = fopen(g_bl_path, "w");
+
+	if (!f) return;
+	fprintf(f, "%d\n", bright_ladder[g_bright]);
+	fclose(f);
+}
+
+/* The bar: shown 1.5s from the last press, so holding the keys keeps it up. */
+static uint64_t g_osd_until;
+static int      g_osd_kind;     /* 0 volume, 1 brightness */
+static int      g_osd_level, g_osd_max;
+
+static void osd_show(int kind, int level, int max)
+{
+	g_osd_kind  = kind;
+	g_osd_level = level;
+	g_osd_max   = max;
+	g_osd_until = diatom_port_now_us() + 1500000ull;
+}
+
+static void gain_nudge(int dir)
+{
+	gain_ensure();
+	if (g_level < 0) return;
+	g_level += dir;
+	if (g_level < 0)           g_level = 0;
+	if (g_level > GAIN_LEVELS) g_level = GAIN_LEVELS;
+	gain_apply();
+	osd_show(0, g_level, GAIN_LEVELS);
+}
+
+static void bright_nudge(int dir)
+{
+	bright_ensure();
+	if (g_bright < 0) return;
+	g_bright += dir;
+	if (g_bright < 0)             g_bright = 0;
+	if (g_bright > BRIGHT_LEVELS) g_bright = BRIGHT_LEVELS;
+	bright_apply();
+	osd_show(1, g_bright, BRIGHT_LEVELS);
+}
+
+/* The Brick's indicator (port/brick.c draw_gain_bar), scaled from its 768
+ * rows to this panel's: a scrim across the top with a bar in it, in the
+ * launcher's two colors, so the tint says which key was pressed. */
+static void draw_osd(void)
+{
+	int sw = 0, sh = 0, pad, bar, fill;
+	SDL_Rect r;
+
+	if (diatom_port_now_us() >= g_osd_until) return;
+	SDL_GetRendererOutputSize(g_renderer, &sw, &sh);
+	pad = 3 * sh / 768;
+	bar = 6 * sh / 768;
+	fill = g_osd_max > 0 ? sw * g_osd_level / g_osd_max : 0;
+
+	SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 128);
+	r.x = 0; r.y = 0; r.w = sw; r.h = pad * 2 + bar;
+	SDL_RenderFillRect(g_renderer, &r);
+	SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_NONE);
+
+	SDL_SetRenderDrawColor(g_renderer, 60, 62, 72, 255);
+	r.y = pad; r.h = bar;
+	SDL_RenderFillRect(g_renderer, &r);
+	if (g_osd_kind) SDL_SetRenderDrawColor(g_renderer, 255, 206, 128, 255);
+	else            SDL_SetRenderDrawColor(g_renderer,  61, 214, 255, 255);
+	r.w = fill;
+	SDL_RenderFillRect(g_renderer, &r);
+
+	SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);   /* RenderClear's */
+}
+
+static void levels_init(void)
+{
+	DIR *d = opendir("/sys/class/backlight");
+	struct dirent *e;
+
+	while (d && (e = readdir(d)))
+		if (e->d_name[0] != '.') {
+			snprintf(g_bl_path, sizeof g_bl_path,
+			         "/sys/class/backlight/%s/brightness", e->d_name);
+			break;
+		}
+	if (d) closedir(d);
+	if (pthread_create(&g_vol_thread, NULL, vol_worker, NULL) == 0)
+		pthread_detach(g_vol_thread);
+}
+
+/* ADR-0020's rescale: round-to-nearest, endpoints exact. */
+static int rescale(int index, int from, int to)
+{
+	if (from <= 1 || to <= 1) return 0;
+	if (index < 0)        index = 0;
+	if (index > from - 1) index = from - 1;
+	return (index * (to - 1) + (from - 1) / 2) / (from - 1);
+}
+
 bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 {
-	(void)kind; (void)index; (void)count;
-	return false;
+	switch (kind) {
+	case DIATOM_LEVEL_VOLUME:
+		gain_ensure();
+		if (g_level < 0) return false;
+		*index = g_level;
+		*count = GAIN_LEVELS + 1;
+		return true;
+	case DIATOM_LEVEL_BRIGHTNESS:
+		bright_ensure();
+		if (g_bright < 0) return false;
+		*index = g_bright;
+		*count = BRIGHT_LEVELS + 1;
+		return true;
+	default:
+		return false;
+	}
 }
 
 bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 {
-	(void)kind; (void)index; (void)count;
-	return false;
+	switch (kind) {
+	case DIATOM_LEVEL_VOLUME:
+		g_level = rescale(index, count, GAIN_LEVELS + 1);
+		gain_apply();
+		return true;
+	case DIATOM_LEVEL_BRIGHTNESS:
+		if (!g_bl_path[0]) return false;
+		g_bright = rescale(index, count, BRIGHT_LEVELS + 1);
+		bright_apply();
+		return true;
+	default:
+		return false;
+	}
 }
 
-void diatom_port_level_invalidate(void) { }
+/* The launcher owns levels while Diatom is not presenting; forget ours. */
+void diatom_port_level_invalidate(void)
+{
+	g_level  = -1;
+	g_bright = -1;
+}
 
 /* Nothing to drain: this port presents synchronously inside
  * diatom_port_present - SDL_RenderPresent has returned by the time it does,
@@ -595,9 +852,8 @@ void diatom_port_level_invalidate(void) { }
  * lacked it would fail at link time on the day someone needed it. */
 void diatom_port_present_stop(diatom_park park) { (void)park; }
 
-/* No analog stage on a desktop, so there is nothing to hold off. Kept as state
- * so the host half can be exercised without hardware: a port that answers what
- * it was told is enough for test/stateplane.py. */
+/* No mute switch and no analog stage to hold off on the GKD (ADR-0031): the
+ * port answers what it was told, as the desktop port does. */
 static bool g_muted;
 void diatom_port_mute_set(bool on) { g_muted = on; }
 bool diatom_port_mute_get(void) { return g_muted; }
