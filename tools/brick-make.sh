@@ -20,7 +20,13 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || {
 
 # Run as the invoking user so build/ is not root-owned on Linux hosts. The
 # user has no passwd entry inside the container, which gcc and make tolerate.
-docker run --rm -u "$(id -u):$(id -g)" \
+# Not under a rootless engine (podman here, reporting itself as "docker"): there
+# the container's root already IS the host user, and -u would map to a subuid
+# that cannot write the user's own build/.
+user="-u $(id -u):$(id -g)"
+docker info 2>/dev/null | grep -Eqi 'rootless: true|name=rootless' && user=
+# $user is deliberately unquoted: empty must vanish, not become "".
+docker run --rm $user \
     -v "$ROOT":/work -w /work "$IMAGE" make PORT=brick "$@"
 rc=$?
 
