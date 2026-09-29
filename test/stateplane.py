@@ -28,8 +28,12 @@ if os.path.exists(SOCK): os.unlink(SOCK)
 TAP = "/tmp/diatom-stateplane-tap"
 for ext in (".in.raw", ".out.raw"):
     if os.path.exists(TAP + ext): os.unlink(TAP + ext)
+# Headless and silent, as in proto.py: otherwise a window opens and the stub
+# core's tone plays through the speakers. --tap-audio still sees every sample.
+ENV = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_RENDER_DRIVER="software",
+           SDL_AUDIODRIVER="dummy")
 p = subprocess.Popen([f"{ROOT}/build/desktop/diatom", "--socket", SOCK,
-                      "--tap-audio", TAP],
+                      "--tap-audio", TAP], env=ENV,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(100):
     if os.path.exists(SOCK): break

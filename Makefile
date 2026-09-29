@@ -250,8 +250,9 @@ check-proto:
 # IT WAS NOT IN `check` UNTIL 2026-09-17, and the cost of that showed the day it
 # was added: it had been asserting `proto=3` since the audio state bumped the
 # number to 4, and nothing noticed because nothing ran it. A test outside the
-# suite is a test that rots while looking like coverage.
-check-stateplane:
+# suite is a test that rots while looking like coverage. It drives the stub
+# core, so it builds it: nothing else in `check` does.
+check-stateplane: $(BIN) $(STUB)
 	@python3 test/stateplane.py
 
 # The port's audio contract: falls back, is idempotent, and ALWAYS returns.
