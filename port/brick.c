@@ -1570,7 +1570,8 @@ static const struct { int idx; int btn; } joymap[] = {
 #define JOY_FN_R   10
 
 /* The Brick Pro (TG4040) is this machine with two sticks. There 9/10 are the
- * stick clicks - unmapped, no shipped core has L3/R3 - and its function keys
+ * stick clicks - 9 reports DIATOM_BTN_L3 (a hotkey-modifier choice, never a
+ * core input), 10 is unmapped - and its function keys
  * are KEY_F1/KEY_F2, indices 11 and 12 in the table above. Pressed and logged
  * on the device 2026-09-28. */
 #define JOY_PRO_FN_L 11
@@ -1663,6 +1664,15 @@ void diatom_port_input_poll(void)
 			}
 			if (ev.jbutton.button == (is_brick_pro() ? JOY_PRO_FN_L : JOY_FN_L)) {
 				if (down) bright_nudge(-1);
+				break;
+			}
+
+			/* The Pro's left stick click: L3, the hotkey-modifier candidate
+			 * (plorpos-gkd.43.1). The same index is the plain Brick's front
+			 * brightness key, handled above. */
+			if (is_brick_pro() && ev.jbutton.button == JOY_FN_L) {
+				if (down) g_buttons |=  DIATOM_BIT(DIATOM_BTN_L3);
+				else      g_buttons &= ~DIATOM_BIT(DIATOM_BTN_L3);
 				break;
 			}
 

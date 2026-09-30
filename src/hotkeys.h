@@ -40,4 +40,12 @@ const char *hotkeys_spec(void);
  * must not silently keep governing this one. */
 void hotkeys_reset(void);
 
+/* The key held for every binding above - one, chosen by the player, MENU by
+ * default (plorpos-gkd.43.1, ADR-0038). By name: "menu", "select", "l3".
+ * Returns the DIATOM_BTN_* index, or -1 for a name that is not a modifier. */
+int  hotkeys_modifier_from_name(const char *name);
+void hotkeys_set_modifier(int btn);        /* a value from _from_name */
+int  hotkeys_modifier(void);               /* DIATOM_BTN_* */
+const char *hotkeys_modifier_name(void);
+
 #endif

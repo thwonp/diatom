@@ -78,6 +78,11 @@ enum {
 	 * the launcher protocol it hands the display over for a menu. A port that
 	 * decided this itself would make that impossible. */
 	DIATOM_BTN_MENU,
+	/* A stick click, where the device has a stick (Brick Pro, GKD). Diatom's
+	 * own like MENU: never forwarded to a core (no shipped core wants L3) and
+	 * unmappable; it exists to be chosen as the hotkey modifier
+	 * (plorpos-gkd.43.1). */
+	DIATOM_BTN_L3,
 	DIATOM_BTN_COUNT
 };
 #define DIATOM_BIT(b) (1u << (b))

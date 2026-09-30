@@ -158,16 +158,32 @@ def main():
 
         # Hotkeys (ADR-0035): display mode and filter are bindable actions on
         # L1/R1/A/B too since plorpos-gkd.22 retired the fixed display chord.
+        # The modifier is chosen, MENU by default (plorpos-gkd.43.1, ADR-0038).
+        d.send("HOTKEYS")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=\tmodifier=menu",
+           "no bindings, and MENU is the default modifier")
         spec = "l1:ff,r1:rewind,a:savestate,b:loadstate,x:display,y:filter"
+        want = "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu"
         d.send("SETHOTKEYS\thotkeys=" + spec)
-        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec,
-           "every action and every new button binds")
+        ck(d.line("HOTKEYS") == want,
+           "every action and every new button binds; no modifier field keeps MENU")
         d.send("SETHOTKEYS\thotkeys=l2:display,r2:display")
         ck((d.line() or "").startswith("ERROR"), "one action on two buttons is refused")
-        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec, "leaving the bindings as they were")
+        ck(d.line("HOTKEYS") == want, "leaving the bindings as they were")
         d.send("SETHOTKEYS\thotkeys=start:display")
         ck((d.line() or "").startswith("ERROR"), "START is not bindable")
-        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec, "and nothing changed")
+        ck(d.line("HOTKEYS") == want, "and nothing changed")
+        d.send("SETHOTKEYS\thotkeys=x:ff\tmodifier=select")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=x:ff\tmodifier=select",
+           "the modifier can be chosen with the bindings")
+        d.send("SETHOTKEYS\thotkeys=y:ff\tmodifier=start")
+        ck((d.line() or "").startswith("ERROR"), "START is not a modifier")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=x:ff\tmodifier=select",
+           "and a refused modifier leaves the bindings alone too")
+        d.send("SETHOTKEYS\thotkeys=start:ff\tmodifier=l3")
+        ck((d.line() or "").startswith("ERROR"), "a bad binding with a good modifier is refused")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=x:ff\tmodifier=select",
+           "without taking the modifier")
 
         d.send("NOSUCHVERB\tdevice=x")
         d.send("AUDIO")

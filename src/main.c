@@ -477,7 +477,7 @@ static void usage(void)
 		"\nSRAM is automatic: read at load, written when it changes, flushed on\n"
 		"exit and on SIGTERM. Save states take paths, never slot numbers - slots\n"
 		"belong to the launcher (ADR-0016).\n"
-		"\non device: display mode and filter are SELECT+button hotkeys the launcher\n"
+		"\non device: display mode and filter are MENU+button hotkeys the launcher\n"
 		"binds (SETHOTKEYS display/filter); standalone has none\n\n");
 	for (i = 0; i < diatom_mode_count; i++)
 		fprintf(stderr, "  %-10s %s\n",
@@ -738,9 +738,10 @@ static bool menu_pause(const diatom_session *sn)
 
 /* ---- hotkeys: sibling TortOS feature, ported from NextUI's OptionShortcuts_*
  * (ma_frontend_opts.c) alongside the fast-forward/rewind port above - see
- * THIRD-PARTY.md. SELECT-held chord: SELECT is the frontend modifier and
- * every frontend action under it is a binding here (plorpos-gkd.22 retired
- * the fixed SELECT+L1/R1/A display chord into the display/filter actions).
+ * THIRD-PARTY.md. Modifier-held chord: one key, chosen by the player and MENU
+ * by default (hotkeys_modifier, ADR-0038), is the frontend modifier, and every
+ * frontend action under it is a binding here (plorpos-gkd.22 retired the fixed
+ * SELECT+L1/R1/A display chord into the display/filter actions).
  * The very first frame of a press still reaches the core, which reads input
  * inside retro_run before this runs - harmless, not worth a pre-run poll.
  *
@@ -772,7 +773,7 @@ static bool menu_pause(const diatom_session *sn)
 static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 
 /* Checked every frame. Returns what the
- * core must not see - SELECT plus every currently-bound button, whether or
+ * core must not see - the modifier plus every currently-bound button, whether or
  * not any of them changed anything this frame, because a bound button must
  * disappear from the core for as long as it is held, not only on the frame
  * this function acted on it. The binding table itself (parsing, validation,
@@ -781,15 +782,15 @@ static bool g_hotkey_ff_active, g_hotkey_rewind_active;
  * here, next to them. */
 static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
 {
-	static const uint32_t sel_bit = DIATOM_BIT(DIATOM_BTN_SELECT);
+	const uint32_t mod_bit = DIATOM_BIT(hotkeys_modifier());
 	uint32_t pressed = buttons & ~prev;
-	uint32_t mask = sel_bit;
+	uint32_t mask = mod_bit;
 	int i, n = hotkeys_count();
 	bool ff_held = false, rewind_held = false;
 
-	if (!(buttons & sel_bit)) {
-		/* SELECT released: a still-held FF/rewind hotkey must let go too -
-		 * releasing SELECT first while still holding, say, L2 would
+	if (!(buttons & mod_bit)) {
+		/* Modifier released: a still-held FF/rewind hotkey must let go too -
+		 * releasing the modifier first while still holding, say, L2 would
 		 * otherwise leave fast-forward stuck on with nothing left held to
 		 * notice it should stop. */
 		if (g_hotkey_ff_active)     { g_ff_speed = 1;      g_hotkey_ff_active = false; }
@@ -1100,14 +1101,24 @@ static bool state_plane_msg(const diatom_msg *m)
 		return true;
 	}
 	case DIATOM_MSG_HOTKEYS:
-		diatom_proto_send("HOTKEYS\thotkeys=%s", hotkeys_spec());
+		diatom_proto_send("HOTKEYS\thotkeys=%s\tmodifier=%s",
+		                  hotkeys_spec(), hotkeys_modifier_name());
 		return true;
-	case DIATOM_MSG_SETHOTKEYS:
-		if (!hotkeys_set(m->hotkeys))
+	case DIATOM_MSG_SETHOTKEYS: {
+		/* Whole line or nothing: the modifier is checked before the bindings
+		 * are applied, and applied only after they were accepted. An absent
+		 * modifier keeps the current one. */
+		int mod = m->modifier[0] ? hotkeys_modifier_from_name(m->modifier) : -1;
+
+		if ((m->modifier[0] && mod < 0) || !hotkeys_set(m->hotkeys))
 			diatom_proto_send("ERROR\tcode=bad_hotkeys\tmsg=%s", m->hotkeys);
+		else
+			hotkeys_set_modifier(mod);
 		/* Answered either way, same reasoning as SETMAP: a refusal cannot
 		 * leave the launcher believing bindings it does not have. */
-		diatom_proto_send("HOTKEYS\thotkeys=%s", hotkeys_spec());
+		diatom_proto_send("HOTKEYS\thotkeys=%s\tmodifier=%s",
+		                  hotkeys_spec(), hotkeys_modifier_name());
+	}
 		return true;
 	case DIATOM_MSG_REWIND:
 		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
@@ -1141,6 +1152,8 @@ static int run_session_inner(const diatom_session *sn)
 	double   frame_us, next_us;
 	uint64_t t_start, paused_us = 0;   /* menu time, excluded from the rate */
 	uint32_t buttons = 0, prev_buttons = 0, held_at_entry = 0;
+	bool menu_tap = false;   /* MENU down with nothing else pressed yet */
+	bool menu_now;
 	long     locked_at = 0;     /* frame the current rect was computed on */
 
 	/* Every game starts from identity and from an unknown level, so a launcher
@@ -1580,9 +1593,26 @@ static int run_session_inner(const diatom_session *sn)
 		/* MENU is Diatom's own key and the ports no longer act on it, because
 		 * what it means is host policy: standalone it ends the session, under
 		 * the launcher it opens the launcher's menu. Edge-triggered, or holding
-		 * it would re-enter the menu every frame. */
-		if (((buttons & ~prev_buttons) & DIATOM_BIT(DIATOM_BTN_MENU)) ||
-		    take_pause_request()) {
+		 * it would re-enter the menu every frame.
+		 *
+		 * When MENU is also the hotkey modifier (the default, ADR-0038) it
+		 * acts on the RELEASE, and only for a tap: any other button pressed
+		 * while it was down made it a chord, and a chord is not a menu. */
+		{
+			const uint32_t menu_bit = DIATOM_BIT(DIATOM_BTN_MENU);
+			uint32_t pressed = buttons & ~prev_buttons;
+
+			if (hotkeys_modifier() == DIATOM_BTN_MENU) {
+				if (pressed & menu_bit)
+					menu_tap = !(pressed & ~menu_bit);
+				else if ((buttons & menu_bit) && (pressed & ~menu_bit))
+					menu_tap = false;
+				menu_now = (prev_buttons & ~buttons & menu_bit) && menu_tap;
+			} else {
+				menu_now = (pressed & menu_bit) != 0;
+			}
+		}
+		if (menu_now || take_pause_request()) {
 			if (!diatom_proto_active()) {
 				stop = true;
 			} else {

@@ -85,3 +85,4 @@ never started.
 | [0034](0034-fast-forward-and-rewind.md) | Fast-forward and rewind, ported from NextUI, budgeted rather than measured | Accepted |
 | [0035](0035-hotkey-submenu-lives-on-select.md) | The hotkey submenu is a SELECT-held chord Diatom checks itself | Accepted |
 | [0036](0036-relicense-polyform-noncommercial.md) | Relicense this fork under PolyForm Noncommercial 1.0.0 | Accepted |
+| [0038](0038-the-hotkey-modifier-is-chosen-default-menu.md) | Let the player choose the hotkey modifier, default MENU, menu on release | Accepted |

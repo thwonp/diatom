@@ -264,7 +264,7 @@ static void cb_input_poll(void)
  * (ADR-0007, ADR-0020). Order matches the enum. */
 static const char *const button_names[DIATOM_BTN_COUNT] = {
 	"up", "down", "left", "right", "a", "b", "x", "y",
-	"l1", "r1", "l2", "r2", "select", "start", "menu"
+	"l1", "r1", "l2", "r2", "select", "start", "menu", "l3"
 };
 
 /* Canonical Diatom buttons -> retropad. Near-identity by design; its purpose is
@@ -289,6 +289,7 @@ static int button_map[DIATOM_BTN_COUNT] = {
 	[DIATOM_BTN_SELECT] = RETRO_DEVICE_ID_JOYPAD_SELECT,
 	[DIATOM_BTN_START]  = RETRO_DEVICE_ID_JOYPAD_START,
 	[DIATOM_BTN_MENU]   = -1,          /* Diatom's own; never reaches a core */
+	[DIATOM_BTN_L3]     = -1,          /* likewise - a modifier candidate */
 };
 
 static int identity_map[DIATOM_BTN_COUNT];
@@ -430,7 +431,7 @@ bool diatom_input_set_map(const char *spec)
 		 * fourth rule. Refusing it on either side is the only place that rule
 		 * can actually be enforced, and letting it through would let a user
 		 * map away the button that opens the screen which would undo it. */
-		if (from < 0 || from == DIATOM_BTN_MENU) return false;
+		if (from < 0 || from == DIATOM_BTN_MENU || from == DIATOM_BTN_L3) return false;
 
 		/* ADR-0028's pulse. Split the target from its period BEFORE naming the
 		 * target, so `a~3` reads as the button `a` at period 3 rather than as a
@@ -458,7 +459,7 @@ bool diatom_input_set_map(const char *spec)
 			continue;
 		}
 		to = button_by_name(colon + 1);
-		if (to < 0 || to == DIATOM_BTN_MENU) return false;
+		if (to < 0 || to == DIATOM_BTN_MENU || to == DIATOM_BTN_L3) return false;
 		next[from] = identity_map[to];
 		next_period[from] = period;
 	}

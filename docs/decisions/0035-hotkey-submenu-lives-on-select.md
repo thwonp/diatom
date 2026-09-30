@@ -208,3 +208,8 @@ three fixed chords became two bindable actions in the same table.
   Revisit-if predicted: this table is SELECT's only chord source.
 - No `proto=` bump: `display`/`filter` are new values of an existing
   field, and the launcher and Diatom ship together.
+
+## Revisited 2026-09-30 (plorpos-gkd.43.1)
+
+SELECT is no longer the fixed modifier. The player chooses it, and the default is MENU.
+See [ADR-0038](0038-the-hotkey-modifier-is-chosen-default-menu.md).

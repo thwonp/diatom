@@ -939,6 +939,12 @@ Two levers the spike discovered:
       convention - not MENU, which ADR-0014 left open and this rejects to
       avoid a latency regression on MENU's existing instant-open behavior.
       `hotkeys.c`/`.h` hold the table; `hotkey_chord()` checks it.
+- [x] **[OPEN]** Which key is the hotkey modifier →
+      **[ADR-0038](decisions/0038-the-hotkey-modifier-is-chosen-default-menu.md)**
+      *(Accepted)*. The player chooses, and the default is MENU. That reverses
+      ADR-0035's rejection of MENU: SELECT as the modifier cost every game a
+      holdable SELECT, and the menu opening on release is the accepted price
+      (plorpos-gkd.43.1).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,
