@@ -101,6 +101,11 @@ ifeq ($(PORT),gkd)
     $(error gkd sysroot missing: run tools/fetch-gkd-sysroot.sh)
   endif
   CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
+  # Rewind (ADR-0034, revisited): 256 MiB against ~1.5 GB free in a game
+  # (plorpos-gkd.38), a snapshot every 5 frames so rewind plays at 5x, and a
+  # cap that lets small-state cores use the budget. ~47 s of GBA.
+  CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
+             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   # The device's libSDL2 was built against glibc 2.40 and references 2.34+
   # symbols (dlerror@GLIBC_2.34) that this toolchain's 2.31 cannot resolve.
