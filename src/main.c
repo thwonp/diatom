@@ -477,8 +477,8 @@ static void usage(void)
 		"\nSRAM is automatic: read at load, written when it changes, flushed on\n"
 		"exit and on SIGTERM. Save states take paths, never slot numbers - slots\n"
 		"belong to the launcher (ADR-0016).\n"
-		"\non device: display mode and filter are MENU+button hotkeys the launcher\n"
-		"binds (SETHOTKEYS display/filter); standalone has none\n\n");
+		"\non device: display mode and filter are hotkeys the launcher binds\n"
+		"(SETHOTKEYS display/filter); standalone has none\n\n");
 	for (i = 0; i < diatom_mode_count; i++)
 		fprintf(stderr, "  %-10s %s\n",
 		        diatom_modes[i].name, diatom_modes[i].note);
@@ -738,12 +738,15 @@ static bool menu_pause(const diatom_session *sn)
 
 /* ---- hotkeys: sibling TortOS feature, ported from NextUI's OptionShortcuts_*
  * (ma_frontend_opts.c) alongside the fast-forward/rewind port above - see
- * THIRD-PARTY.md. Modifier-held chord: one key, chosen by the player and MENU
- * by default (hotkeys_modifier, ADR-0038), is the frontend modifier, and every
- * frontend action under it is a binding here (plorpos-gkd.22 retired the fixed
- * SELECT+L1/R1/A display chord into the display/filter actions).
- * The very first frame of a press still reaches the core, which reads input
- * inside retro_run before this runs - harmless, not worth a pre-run poll.
+ * THIRD-PARTY.md. One key, chosen by the player and MENU by default
+ * (hotkeys_modifier, ADR-0038), is the frontend modifier; a binding fires with
+ * it held, or - a direct binding (ADR-0039) - on its own button alone
+ * (plorpos-gkd.22 retired the fixed SELECT+L1/R1/A display chord into the
+ * display/filter actions). The modifier layer wins while the modifier is held.
+ * The very first frame of a modifier chord still reaches the core, which reads
+ * input inside retro_run before this runs - harmless, not worth a pre-run
+ * poll. A direct binding's button is hidden on every frame instead, so it
+ * never leaks.
  *
  * Display and filter are edge-triggered like save/load: display steps to
  * the next mode and wraps, filter flips sharp/nearest.
@@ -772,8 +775,9 @@ static bool menu_pause(const diatom_session *sn)
  * stays true. */
 static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 
-/* Checked every frame. Returns what the
- * core must not see - the modifier plus every currently-bound button, whether or
+/* Checked every frame. Returns what the core must not see: every direct-bound
+ * button, always - that system's game has given it up - and, while the
+ * modifier is held, the modifier plus every modifier-bound input. Whether or
  * not any of them changed anything this frame, because a bound button must
  * disappear from the core for as long as it is held, not only on the frame
  * this function acted on it. The binding table itself (parsing, validation,
@@ -783,28 +787,27 @@ static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
 {
 	const uint32_t mod_bit = DIATOM_BIT(hotkeys_modifier());
+	const bool mod_held = (buttons & mod_bit) != 0;
 	uint32_t pressed = buttons & ~prev;
-	uint32_t mask = mod_bit;
+	uint32_t mask = mod_held ? mod_bit : 0;
 	int i, n = hotkeys_count();
 	bool ff_held = false, rewind_held = false;
-
-	if (!(buttons & mod_bit)) {
-		/* Modifier released: a still-held FF/rewind hotkey must let go too -
-		 * releasing the modifier first while still holding, say, L2 would
-		 * otherwise leave fast-forward stuck on with nothing left held to
-		 * notice it should stop. */
-		if (g_hotkey_ff_active)     { g_ff_speed = 1;      g_hotkey_ff_active = false; }
-		if (g_hotkey_rewind_active) { g_rewind_active = false; g_hotkey_rewind_active = false; }
-		return 0;
-	}
 
 	for (i = 0; i < n; i++) {
 		int btn;
 		hk_action action;
+		bool direct;
 		uint32_t bit;
 
-		hotkeys_at(i, &btn, &action);
+		hotkeys_at(i, &btn, &action, &direct);
 		bit = DIATOM_BIT(btn);
+		if (direct) mask |= bit;
+		/* One layer at a time: the modifier's while it is held, the direct
+		 * one otherwise. Switching layers mid-hold therefore lets go of an
+		 * FF/rewind the other layer was holding - ff_held stays false and
+		 * the release below runs - so neither is left stuck on with nothing
+		 * held to notice it should stop. */
+		if (direct == mod_held) continue;
 		mask |= bit;
 		switch (action) {
 		case HK_FF:     if (buttons & bit) ff_held = true;     break;

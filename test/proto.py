@@ -173,6 +173,21 @@ def main():
         d.send("SETHOTKEYS\thotkeys=start:display")
         ck((d.line() or "").startswith("ERROR"), "START is not bindable")
         ck(d.line("HOTKEYS") == want, "and nothing changed")
+        # Direct triggers and directions (plorpos-gkd.43.2, ADR-0039).
+        spec = "d.x:ff,x:rewind,sright:savestate,up:loadstate,d.l2:display"
+        want = "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu"
+        d.send("SETHOTKEYS\thotkeys=" + spec)
+        ck(d.line("HOTKEYS") == want,
+           "a button holds a direct and a modifier binding; directions bind with the modifier")
+        for bad, why in (("d.up:ff", "a direct d-pad direction is refused"),
+                         ("d.sleft:ff", "a direct stick direction is refused"),
+                         ("x:ff,x:rewind", "one trigger twice on the modifier layer is refused"),
+                         ("d.x:ff,d.x:rewind", "one trigger twice on the direct layer is refused"),
+                         ("d.x:ff,x:ff", "one action on two layers is refused"),
+                         ("d.select:ff", "SELECT is not a direct trigger either")):
+            d.send("SETHOTKEYS\thotkeys=" + bad)
+            ck((d.line() or "").startswith("ERROR"), why)
+            ck(d.line("HOTKEYS") == want, "leaving the bindings as they were")
         d.send("SETHOTKEYS\thotkeys=x:ff\tmodifier=select")
         ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=x:ff\tmodifier=select",
            "the modifier can be chosen with the bindings")

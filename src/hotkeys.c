@@ -6,18 +6,20 @@
  * turbo.md), applied over the state plane (SETHOTKEYS) the way turbo's map
  * already rides SETMAP after every RUN.
  *
- * The face buttons and shoulders only (L1/R1/L2/R2/A/B/X/Y): SELECT is held
- * for every one of these, and START, the d-pad and SELECT itself stay the
- * game's. L1/R1/A joined when plorpos-gkd.22 retired the fixed display
- * chord that used to own them, and display mode and filter became two more
- * bindable actions here. */
+ * Triggers: the face buttons and shoulders (L1/R1/L2/R2/A/B/X/Y) on either
+ * layer, and the d-pad's and stick's directions with the modifier only
+ * (ADR-0039). START and the modifier itself stay out. L1/R1/A joined when
+ * plorpos-gkd.22 retired the fixed display chord that used to own them, and
+ * display mode and filter became two more bindable actions here. */
 #include <stdio.h>
 #include <string.h>
 
 #include "hotkeys.h"
 #include "diatom_port.h"
 
-static struct { int btn; hk_action action; } g_hotkeys[HK_MAX];
+typedef struct { int btn; hk_action action; bool direct; } hk_binding;
+
+static hk_binding g_hotkeys[HK_MAX];
 static int  g_nhotkeys;
 static char g_hotkeys_spec[128];
 static int  g_modifier = DIATOM_BTN_MENU;
@@ -28,16 +30,27 @@ static const struct { const char *name; int btn; } g_modifiers[] = {
 	{ "l3",     DIATOM_BTN_L3     },
 };
 
-static int hk_btn_from_name(const char *s)
+/* `direct` says whether the input may be a direct trigger. Directions may
+ * not: a direct binding hides its input from the game, and the d-pad (the
+ * stick folds onto it) must never stop working. */
+static const struct { const char *name; int btn; bool direct; } g_inputs[] = {
+	{ "l1", DIATOM_BTN_L1, true }, { "r1", DIATOM_BTN_R1, true },
+	{ "l2", DIATOM_BTN_L2, true }, { "r2", DIATOM_BTN_R2, true },
+	{ "a",  DIATOM_BTN_A,  true }, { "b",  DIATOM_BTN_B,  true },
+	{ "x",  DIATOM_BTN_X,  true }, { "y",  DIATOM_BTN_Y,  true },
+	{ "up",     DIATOM_BTN_UP,     false }, { "down",   DIATOM_BTN_DOWN,   false },
+	{ "left",   DIATOM_BTN_LEFT,   false }, { "right",  DIATOM_BTN_RIGHT,  false },
+	{ "sup",    DIATOM_BTN_SUP,    false }, { "sdown",  DIATOM_BTN_SDOWN,  false },
+	{ "sleft",  DIATOM_BTN_SLEFT,  false }, { "sright", DIATOM_BTN_SRIGHT, false },
+};
+
+static int hk_btn_from_name(const char *s, bool direct)
 {
-	if (!strcmp(s, "l1")) return DIATOM_BTN_L1;
-	if (!strcmp(s, "r1")) return DIATOM_BTN_R1;
-	if (!strcmp(s, "l2")) return DIATOM_BTN_L2;
-	if (!strcmp(s, "r2")) return DIATOM_BTN_R2;
-	if (!strcmp(s, "a"))  return DIATOM_BTN_A;
-	if (!strcmp(s, "b"))  return DIATOM_BTN_B;
-	if (!strcmp(s, "x"))  return DIATOM_BTN_X;
-	if (!strcmp(s, "y"))  return DIATOM_BTN_Y;
+	size_t i;
+
+	for (i = 0; i < sizeof g_inputs / sizeof g_inputs[0]; i++)
+		if (!strcmp(s, g_inputs[i].name))
+			return direct && !g_inputs[i].direct ? -1 : g_inputs[i].btn;
 	return -1;
 }
 
@@ -54,7 +67,7 @@ static hk_action hk_action_from_name(const char *s)
 
 bool hotkeys_set(const char *spec)
 {
-	struct { int btn; hk_action action; } parsed[HK_MAX];
+	hk_binding parsed[HK_MAX];
 	int n = 0;
 	char buf[128], *save = NULL, *tok;
 
@@ -69,24 +82,28 @@ bool hotkeys_set(const char *spec)
 
 	for (tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
 		char *colon = strchr(tok, ':');
+		bool direct = !strncmp(tok, "d.", 2);
 		int btn;
 		hk_action action;
 		int i;
 
 		if (!colon || n >= HK_MAX) return false;
 		*colon = '\0';
-		btn = hk_btn_from_name(tok);
+		btn = hk_btn_from_name(direct ? tok + 2 : tok, direct);
 		action = hk_action_from_name(colon + 1);
 		if (btn < 0 || action == HK_NONE) return false;
-		/* Each button and each action at most once - two rows racing to
-		 * drive the same button, or the same action from two buttons, is
+		/* Each trigger and each action at most once - two rows racing to
+		 * drive the same trigger, or the same action from two triggers, is
 		 * exactly the ambiguity turbo.md's button-budget accounting exists
-		 * to avoid, just one layer up. */
+		 * to avoid, just one layer up. X and d.X are two triggers: a button
+		 * may hold one binding on each layer. */
 		for (i = 0; i < n; i++)
-			if (parsed[i].btn == btn || parsed[i].action == action)
+			if ((parsed[i].btn == btn && parsed[i].direct == direct)
+			    || parsed[i].action == action)
 				return false;
 		parsed[n].btn = btn;
 		parsed[n].action = action;
+		parsed[n].direct = direct;
 		n++;
 	}
 
@@ -98,11 +115,15 @@ bool hotkeys_set(const char *spec)
 
 int hotkeys_count(void) { return g_nhotkeys; }
 
-void hotkeys_at(int i, int *btn_out, hk_action *action_out)
+void hotkeys_at(int i, int *btn_out, hk_action *action_out, bool *direct_out)
 {
-	if (i < 0 || i >= g_nhotkeys) { *btn_out = -1; *action_out = HK_NONE; return; }
+	if (i < 0 || i >= g_nhotkeys) {
+		*btn_out = -1; *action_out = HK_NONE; *direct_out = false;
+		return;
+	}
 	*btn_out = g_hotkeys[i].btn;
 	*action_out = g_hotkeys[i].action;
+	*direct_out = g_hotkeys[i].direct;
 }
 
 const char *hotkeys_spec(void) { return g_hotkeys_spec; }

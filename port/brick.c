@@ -1593,17 +1593,19 @@ static bool is_brick_pro(void)
 	return pro;
 }
 
-/* The Pro's left stick is a second dpad: all the shipped cores are digital.
- * Its bits are kept apart from the hat's so releasing one does not drop a
- * direction the other still holds. Half travel to press, a third to let go,
- * so a stick resting near the line cannot chatter. */
+/* The Pro's left stick: reported as the stick's own four bits, which the host
+ * folds onto the d-pad for the core (all the shipped cores are digital) - kept
+ * apart so each can be a hotkey trigger of its own (ADR-0039). Half travel to
+ * press, a third to let go, so a stick resting near the line cannot chatter. */
 #define AXIS_LX 0
 #define AXIS_LY 1
 #define STICK_PRESS   16384
 #define STICK_RELEASE 10923
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
                  | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT))
-static uint32_t g_hat_bits, g_stick_bits;
+#define STICK_BITS (DIATOM_BIT(DIATOM_BTN_SUP) | DIATOM_BIT(DIATOM_BTN_SDOWN) \
+                  | DIATOM_BIT(DIATOM_BTN_SLEFT) | DIATOM_BIT(DIATOM_BTN_SRIGHT))
+static uint32_t g_stick_bits;
 
 static void stick_axis(int value, int neg_btn, int pos_btn)
 {
@@ -1691,8 +1693,7 @@ void diatom_port_input_poll(void)
 			if (ev.jhat.value & SDL_HAT_DOWN)  dpad |= DIATOM_BIT(DIATOM_BTN_DOWN);
 			if (ev.jhat.value & SDL_HAT_LEFT)  dpad |= DIATOM_BIT(DIATOM_BTN_LEFT);
 			if (ev.jhat.value & SDL_HAT_RIGHT) dpad |= DIATOM_BIT(DIATOM_BTN_RIGHT);
-			g_hat_bits = dpad;
-			g_buttons = (g_buttons & ~DPAD_BITS) | g_hat_bits | g_stick_bits;
+			g_buttons = (g_buttons & ~DPAD_BITS) | dpad;
 			break;
 		}
 
@@ -1707,10 +1708,10 @@ void diatom_port_input_poll(void)
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_R2);
 			} else if (ev.jaxis.axis == AXIS_LX || ev.jaxis.axis == AXIS_LY) {
 				if (ev.jaxis.axis == AXIS_LX)
-					stick_axis(ev.jaxis.value, DIATOM_BTN_LEFT, DIATOM_BTN_RIGHT);
+					stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT, DIATOM_BTN_SRIGHT);
 				else
-					stick_axis(ev.jaxis.value, DIATOM_BTN_UP, DIATOM_BTN_DOWN);
-				g_buttons = (g_buttons & ~DPAD_BITS) | g_hat_bits | g_stick_bits;
+					stick_axis(ev.jaxis.value, DIATOM_BTN_SUP, DIATOM_BTN_SDOWN);
+				g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
 			}
 			break;
 		}

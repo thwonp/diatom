@@ -83,6 +83,12 @@ enum {
 	 * unmappable; it exists to be chosen as the hotkey modifier
 	 * (plorpos-gkd.43.1). */
 	DIATOM_BTN_L3,
+	/* The stick's directions, where the device has one (Brick Pro, GKD) -
+	 * reported apart from the d-pad so that each can be a hotkey trigger of
+	 * its own (plorpos-gkd.43.2, ADR-0039). A core never sees these: the host
+	 * folds them onto UP/DOWN/LEFT/RIGHT after the suppress mask, so to a game
+	 * the stick is still the d-pad. Same order as UP/DOWN/LEFT/RIGHT. */
+	DIATOM_BTN_SUP, DIATOM_BTN_SDOWN, DIATOM_BTN_SLEFT, DIATOM_BTN_SRIGHT,
 	DIATOM_BTN_COUNT
 };
 #define DIATOM_BIT(b) (1u << (b))

@@ -99,6 +99,14 @@ send("SETMAP\tmap=menu:b"); got = drain()
 check("menu is refused, map unchanged", got,
       ["ERROR\tcode=bad_map\tmsg=menu:b", "MAP\tmap=x:b,y:a"])
 
+# The stick's own bits (ADR-0039) are folded onto the d-pad, never mapped.
+send("SETMAP\tmap=sleft:b"); got = drain()
+check("a stick direction is refused as a source", got,
+      ["ERROR\tcode=bad_map\tmsg=sleft:b", "MAP\tmap=x:b,y:a"])
+send("SETMAP\tmap=a:sup"); got = drain()
+check("and as a target", got,
+      ["ERROR\tcode=bad_map\tmsg=a:sup", "MAP\tmap=x:b,y:a"])
+
 send("SETMAP\tmap=a:b,nonsense:x"); got = drain()
 check("bad pair refuses whole message", got,
       ["ERROR\tcode=bad_map\tmsg=a:b,nonsense:x", "MAP\tmap=x:b,y:a"])
