@@ -59,6 +59,7 @@ static size_t       g_cap_slots;   /* ring depth, fixed for the session */
 static size_t       g_head;        /* next slot capture() will write */
 static size_t       g_count;       /* valid entries currently held */
 static unsigned     g_tick;        /* frames since the last capture */
+static unsigned     g_every = DIATOM_REWIND_CAPTURE_EVERY;   /* 0 = off */
 
 static void free_slots(void)
 {
@@ -76,6 +77,7 @@ void diatom_rewind_reset(diatom_core *c)
 	size_t n, depth;
 
 	free_slots();
+	g_every = DIATOM_REWIND_CAPTURE_EVERY;
 	if (!c || !c->serialize_size) return;
 
 	n = c->serialize_size();
@@ -97,8 +99,8 @@ void diatom_rewind_capture(diatom_core *c)
 	rewind_slot *s;
 	size_t n;
 
-	if (!g_slots || !c || !c->serialize_size || !c->serialize) return;
-	if (++g_tick < DIATOM_REWIND_CAPTURE_EVERY) return;
+	if (!g_slots || !g_every || !c || !c->serialize_size || !c->serialize) return;
+	if (++g_tick < g_every) return;
 	g_tick = 0;
 
 	/* Re-checked every capture, never cached - save.c's own comment measured
@@ -141,3 +143,26 @@ bool diatom_rewind_step_back(diatom_core *c)
 }
 
 size_t diatom_rewind_depth(void) { return g_count; }
+
+bool diatom_rewind_set_every(int every)
+{
+	size_t i;
+
+	if (every < 0 || every > DIATOM_REWIND_MAX_EVERY) return false;
+	g_every = (unsigned)every;
+	g_tick = 0;
+	if (!g_every && g_slots) {
+		/* Off means off: no history to step into, and none of the memory
+		 * a full ring holds. The slot table stays, so turning it back on
+		 * mid-session just starts filling again. */
+		for (i = 0; i < g_cap_slots; i++) {
+			free(g_slots[i].buf);
+			g_slots[i].buf = NULL;
+			g_slots[i].cap = g_slots[i].len = 0;
+		}
+		g_head = g_count = 0;
+	}
+	return true;
+}
+
+unsigned diatom_rewind_every(void) { return g_every; }

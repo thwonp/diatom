@@ -24,6 +24,18 @@
 #define DIATOM_REWIND_CAPTURE_EVERY 15
 #endif
 
+/* The player's rewind speed (plorpos-gkd.40): the cadence above becomes
+ * this session's default, and SETREWINDSPEED replaces it. 0 turns rewind
+ * off - nothing is captured, the ring is emptied and its memory freed.
+ * Takes effect on the next capture; the ring's depth depends on the budget
+ * and the state size only, so nothing is rebuilt. Every RUN (reset, above)
+ * goes back to the default, and the launcher re-sends the player's choice
+ * after it, the way it re-sends SETHOTKEYS. False, unchanged, when `every`
+ * is above DIATOM_REWIND_MAX_EVERY. */
+#define DIATOM_REWIND_MAX_EVERY 60
+bool     diatom_rewind_set_every(int every);
+unsigned diatom_rewind_every(void);
+
 /* Called once per RUN, before the frame loop starts. Frees any previous
  * session's buffers and sizes a fresh ring against the core's CURRENT
  * serialize_size() and a fixed memory budget. A core that reports 0 (no

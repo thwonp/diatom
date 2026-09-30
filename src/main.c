@@ -1153,6 +1153,17 @@ static bool state_plane_msg(const diatom_msg *m)
 		g_rewind_active = m->on != 0;
 		diatom_proto_send("REWIND\ton=%d", g_rewind_active ? 1 : 0);
 		return true;
+	case DIATOM_MSG_REWINDSPEED:
+		diatom_proto_send("REWINDSPEED\tevery=%u", diatom_rewind_every());
+		return true;
+	case DIATOM_MSG_SETREWINDSPEED:
+		/* Accepted idle as well: it lasts until the next RUN resets it, which
+		 * is why the launcher sends it after RUN. Answered either way, as
+		 * SETHOTKEYS is, so a refusal leaves no wrong belief behind. */
+		if (!diatom_rewind_set_every(m->every))
+			diatom_proto_send("ERROR\tcode=bad_rewindspeed\tmsg=%d", m->every);
+		diatom_proto_send("REWINDSPEED\tevery=%u", diatom_rewind_every());
+		return true;
 	default: return false;
 	}
 }
@@ -1439,7 +1450,10 @@ static int run_session_inner(const diatom_session *sn)
 		 * frame until rewind is released. Capture is skipped while
 		 * rewinding, so history stops growing at exactly the point it stops
 		 * shrinking. */
-		if (g_rewind_active) {
+		/* Rewind switched off (SETREWINDSPEED every=0) makes the hotkey
+		 * do nothing, rather than hold the frame the way an exhausted ring
+		 * does - there is no history to have run out of. */
+		if (g_rewind_active && diatom_rewind_every()) {
 			if (diatom_rewind_step_back(g_core))
 				g_core->run();   /* renders the frame the restore left us at */
 			else

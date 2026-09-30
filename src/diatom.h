@@ -168,6 +168,8 @@ typedef enum {
 	DIATOM_MSG_SETSPEED,   /* set it, 1..DIATOM_MAX_FF_SPEED: `speed` */
 	DIATOM_MSG_REWIND,     /* report whether rewind is engaged */
 	DIATOM_MSG_SETREWIND,  /* engage/disengage stepping backward: `on` = 1 | 0 */
+	DIATOM_MSG_REWINDSPEED,    /* report the rewind speed: `every` */
+	DIATOM_MSG_SETREWINDSPEED, /* set it, 0 (off)..DIATOM_REWIND_MAX_EVERY: `every` */
 	/* The hotkey submenu (sibling TortOS feature, ported from NextUI's
 	 * OptionShortcuts_* alongside the same rewind/FF port). A SELECT-held
 	 * chord, on SELECT's own terms - display_chord already claims SELECT as
@@ -219,6 +221,9 @@ typedef struct {
 	                        * `index`/`count` - see the warning on those two
 	                        * about one slot serving verbs that disagree. */
 	char hotkeys[128];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
+	int  every;            /* SETREWINDSPEED: capture cadence in frames, which
+	                        * is the rewind speed (5 = 5x); 0 = off. -1 when
+	                        * absent, so a bare verb is refused, not "off". */
 } diatom_msg;
 
 /* Input mapping and labels live in env.c, the one layer a remap touches. */
