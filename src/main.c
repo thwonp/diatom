@@ -1609,6 +1609,10 @@ static int run_session_inner(const diatom_session *sn)
 				else if ((buttons & menu_bit) && (pressed & ~menu_bit))
 					menu_tap = false;
 				menu_now = (prev_buttons & ~buttons & menu_bit) && menu_tap;
+				/* Spent. Otherwise a MENU pressed in the launcher's menu to
+				 * close it, still held as the game resumes, is released here
+				 * as a second tap and reopens the menu. */
+				if (menu_now) menu_tap = false;
 			} else {
 				menu_now = (pressed & menu_bit) != 0;
 			}
