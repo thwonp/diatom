@@ -184,3 +184,24 @@ a real set).
   useful - that is a real product question, not a memory one, and wants a
   configurable depth (NextUI's `FE_OPT_REWIND_*`) rather than a bigger fixed
   budget.
+
+## Revisited 2026-09-30 (plorpos-gkd.24)
+
+The first `Revisit if` fired, on the GKD rather than the Brick. mGBA's state
+is 463 KB, so the 8 MiB ring held ~18 slots: ~4.5 s of play, played back in
+~0.3 s (one slot per displayed frame is 15x). Measured on the GKD with a game
+and Muse over Bluetooth running: ~1.5 GB still available, one core busy
+(plorpos-gkd.38 holds the table).
+
+- The budget, the capture cadence and the depth cap are now build-time
+  defaults a port may override (`DIATOM_REWIND_BUDGET_BYTES`,
+  `DIATOM_REWIND_CAPTURE_EVERY`, `DIATOM_REWIND_MAX_DEPTH`). The Brick keeps
+  8 MiB / 15 / 600 until it is measured the same way (plorpos-gkd.38).
+- The GKD sets 256 MiB, every 5 frames, cap 1800: rewind plays at 3x and
+  holds ~47 s of GBA. Chosen over every-15-frames-held-5 (the same 3x and
+  ~141 s, but a slideshow at 12 images a second).
+- After each session Diatom calls `malloc_trim(0)`, after `EXIT`, so a
+  resident Diatom does not keep a large ring's worth of freed heap between
+  games.
+- Still uncompressed. LZ4 remains the lever if the GKD's history is judged
+  too short; the CPU for it is there (seven idle cores), the need is not yet.
