@@ -473,7 +473,8 @@ static const struct { int code; int btn; } padmap[] = {
 	{ BTN_THUMBL,     DIATOM_BTN_L3     },
 };
 
-/* The stick reads as the dpad (as on the Brick Pro). Range -900..899, right
+/* The stick: its own four bits, which the host folds onto the d-pad for the
+ * core (ADR-0039; as on the Brick Pro). Range -900..899, right
  * = +X, up = -Y; half travel is the threshold, well clear of the 32 flat. */
 #define STICK_THRESHOLD 450
 
@@ -560,10 +561,10 @@ void diatom_port_input_poll(void)
 	if (g_keys_fd >= 0) keys_read();
 
 	s = g_pad_buttons;
-	if (g_stick_x >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_RIGHT);
-	if (g_stick_x <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_LEFT);
-	if (g_stick_y >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_DOWN);
-	if (g_stick_y <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_UP);
+	if (g_stick_x >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SRIGHT);
+	if (g_stick_x <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SLEFT);
+	if (g_stick_y >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SDOWN);
+	if (g_stick_y <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SUP);
 	g_buttons = s;
 }
 
