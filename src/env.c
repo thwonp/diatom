@@ -32,6 +32,27 @@ void diatom_env_suppress(uint32_t mask)
 	g_suppress = mask;
 }
 
+/* What a core may see this frame: the pad minus what is suppressed, with the
+ * stick folded onto the d-pad (ADR-0039). The fold comes AFTER the mask, so a
+ * hotkey that hides Stick Left hides only the stick - the d-pad's Left still
+ * reaches the game, which is the whole reason the two are separate bits. */
+_Static_assert(DIATOM_BTN_SDOWN == DIATOM_BTN_SUP + 1 && DIATOM_BTN_SLEFT == DIATOM_BTN_SUP + 2
+            && DIATOM_BTN_SRIGHT == DIATOM_BTN_SUP + 3 && DIATOM_BTN_UP == 0
+            && DIATOM_BTN_DOWN == 1 && DIATOM_BTN_LEFT == 2 && DIATOM_BTN_RIGHT == 3,
+               "the stick fold shifts four bits onto the d-pad's four");
+static uint32_t core_input(void)
+{
+	uint32_t s = diatom_port_input_state() & ~g_suppress;
+	return s | ((s >> DIATOM_BTN_SUP) & 0xFu);
+}
+
+/* Diatom's own buttons, never a core's, so SETMAP refuses them on either side. */
+static bool unmappable(int b)
+{
+	return b == DIATOM_BTN_MENU || b == DIATOM_BTN_HOTKEY || b == DIATOM_BTN_L3
+	    || (b >= DIATOM_BTN_SUP && b <= DIATOM_BTN_SRIGHT);
+}
+
 bool diatom_env_geometry_changed(void)
 {
 	bool v = g_geometry_dirty;
@@ -264,7 +285,8 @@ static void cb_input_poll(void)
  * (ADR-0007, ADR-0020). Order matches the enum. */
 static const char *const button_names[DIATOM_BTN_COUNT] = {
 	"up", "down", "left", "right", "a", "b", "x", "y",
-	"l1", "r1", "l2", "r2", "select", "start", "menu", "hotkey", "l3"
+	"l1", "r1", "l2", "r2", "select", "start", "menu", "hotkey", "l3",
+	"sup", "sdown", "sleft", "sright"
 };
 
 /* Canonical Diatom buttons -> retropad. Near-identity by design; its purpose is
@@ -291,6 +313,10 @@ static int button_map[DIATOM_BTN_COUNT] = {
 	[DIATOM_BTN_MENU]   = -1,          /* Diatom's own; never reaches a core */
 	[DIATOM_BTN_HOTKEY] = -1,          /* likewise - ADR-0037 */
 	[DIATOM_BTN_L3]     = -1,          /* likewise - a modifier candidate */
+	[DIATOM_BTN_SUP]    = -1,          /* the stick: folded onto the d-pad */
+	[DIATOM_BTN_SDOWN]  = -1,          /* by core_input(), never mapped */
+	[DIATOM_BTN_SLEFT]  = -1,
+	[DIATOM_BTN_SRIGHT] = -1,
 };
 
 static int identity_map[DIATOM_BTN_COUNT];
@@ -379,7 +405,7 @@ static void turbo_tick(void)
 	int b;
 
 	g_input_frame++;
-	held = diatom_port_input_state() & ~g_suppress;
+	held = core_input();
 	for (b = 0; b < DIATOM_BTN_COUNT; b++)
 		if (turbo_period[b] &&
 		    (held & DIATOM_BIT(b)) && !(turbo_prev & DIATOM_BIT(b)))
@@ -432,10 +458,9 @@ bool diatom_input_set_map(const char *spec)
 		 * fourth rule. Refusing it on either side is the only place that rule
 		 * can actually be enforced, and letting it through would let a user
 		 * map away the button that opens the screen which would undo it.
-		 * HOTKEY and L3 are Diatom's own for the same reason (ADR-0037, 0038). */
-		if (from < 0 || from == DIATOM_BTN_MENU || from == DIATOM_BTN_HOTKEY ||
-		    from == DIATOM_BTN_L3)
-			return false;
+		 * HOTKEY, L3 and the stick are Diatom's own for the same reason
+		 * (ADR-0037, 0038, 0039). */
+		if (from < 0 || unmappable(from)) return false;
 
 		/* ADR-0028's pulse. Split the target from its period BEFORE naming the
 		 * target, so `a~3` reads as the button `a` at period 3 rather than as a
@@ -463,9 +488,7 @@ bool diatom_input_set_map(const char *spec)
 			continue;
 		}
 		to = button_by_name(colon + 1);
-		if (to < 0 || to == DIATOM_BTN_MENU || to == DIATOM_BTN_HOTKEY ||
-		    to == DIATOM_BTN_L3)
-			return false;
+		if (to < 0 || unmappable(to)) return false;
 		next[from] = identity_map[to];
 		next_period[from] = period;
 	}
@@ -555,7 +578,7 @@ static int16_t cb_input_state(unsigned port, unsigned device,
 	(void)index;
 	if (port != 0 || device != RETRO_DEVICE_JOYPAD) return 0;
 
-	state = diatom_port_input_state() & ~g_suppress;
+	state = core_input();
 
 	/* OR, not first-match. Under an identity map no two canonical buttons
 	 * share a target so returning the first was always correct; remapping

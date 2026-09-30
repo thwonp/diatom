@@ -3,7 +3,13 @@
 /* The hotkey submenu's binding table (sibling TortOS feature), ported from
  * NextUI's OptionShortcuts_* (ma_frontend_opts.c). Parsing and storage only -
  * see hotkey_chord() in main.c for the per-frame dispatch that actually
- * checks these against SELECT-held input each frame.
+ * checks these against the pad each frame.
+ *
+ * A binding is a trigger and an action. A trigger is an input on one of two
+ * layers (ADR-0039): with the modifier held (`x:ff`, the only layer there was
+ * before plorpos-gkd.43.2, so a stored spec keeps its meaning) or direct
+ * (`d.x:ff`). Directions - the d-pad's and the stick's - are modifier-only,
+ * so the d-pad can never stop working for a game.
  *
  * No SDL, no port header, no diatom_core - deliberately, so a test can drive
  * the real parser with no display and no core, the way rewind.c's ring is
@@ -27,9 +33,10 @@ bool hotkeys_set(const char *spec);
 
 /* How many bindings are currently active (0..HK_MAX), and the i'th one -
  * for hotkey_chord() to iterate without reaching into this file's storage
- * directly. */
+ * directly. `direct_out` is true for a direct trigger, false for one that
+ * needs the modifier held. */
 int  hotkeys_count(void);
-void hotkeys_at(int i, int *btn_out, hk_action *action_out);
+void hotkeys_at(int i, int *btn_out, hk_action *action_out, bool *direct_out);
 
 /* The exact string last accepted by hotkeys_set(), echoed back verbatim by
  * HOTKEYS rather than reserialized from the parsed table - see hotkeys.c. */

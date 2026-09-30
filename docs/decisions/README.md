@@ -87,3 +87,4 @@ never started.
 | [0036](0036-relicense-polyform-noncommercial.md) | Relicense this fork under PolyForm Noncommercial 1.0.0 | Accepted |
 | [0037](0037-home-is-a-second-modifier-key.md) | Let a spare device key stand in for SELECT as the frontend modifier | Accepted |
 | [0038](0038-the-hotkey-modifier-is-chosen-default-menu.md) | Let the player choose the hotkey modifier, default MENU, menu on release | Accepted |
+| [0039](0039-direct-hotkeys-and-distinct-stick-directions.md) | Direct hotkey triggers, and stick directions distinct from the d-pad | Accepted |

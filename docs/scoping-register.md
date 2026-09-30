@@ -949,6 +949,11 @@ Two levers the spike discovered:
       ADR-0035's rejection of MENU: SELECT as the modifier cost every game a
       holdable SELECT, and the menu opening on release is the accepted price
       (plorpos-gkd.43.1).
+- [x] **[OPEN]** Hotkeys without the modifier, and directions as triggers →
+      **[ADR-0039](decisions/0039-direct-hotkeys-and-distinct-stick-directions.md)**
+      *(Accepted)*. `d.x:ff` is a direct trigger, hidden from the game every
+      frame. Directions bind with the modifier only, and the stick gets its own
+      bits, folded onto the d-pad for the core (plorpos-gkd.43.2).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,
