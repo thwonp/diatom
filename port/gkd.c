@@ -499,11 +499,17 @@ static int evdev_open(const char *want)
 	return -1;
 }
 
+/* gkd.44 diagnostics, TEMPORARY: removed with the fix. Logs only when a
+ * whole MENU tap lands inside one poll batch, where the frame loop can never
+ * see it. */
+static uint64_t g_last_poll_us;
+
 static void pad_read(void)
 {
 	struct input_event ev[32];
 	ssize_t n;
 	size_t i, k;
+	bool menu_down_here = false;
 
 	while ((n = read(g_pad_fd, ev, sizeof ev)) > 0) {
 		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
@@ -518,6 +524,17 @@ static void pad_read(void)
 				if (padmap[k].code != ev[i].code) continue;
 				if (ev[i].value) g_pad_buttons |=  DIATOM_BIT(padmap[k].btn);
 				else             g_pad_buttons &= ~DIATOM_BIT(padmap[k].btn);
+				if (padmap[k].btn != DIATOM_BTN_MENU) continue;
+				if (ev[i].value) {
+					menu_down_here = true;
+				} else if (menu_down_here) {
+					char msg[96];
+
+					snprintf(msg, sizeof msg,
+					         "gkd.44: MENU tap collapsed in one poll, %.1f ms since the last poll",
+					         (diatom_port_now_us() - g_last_poll_us) / 1000.0);
+					diatom_port_log(DIATOM_LOG_WARN, msg);
+				}
 			}
 		}
 	}
@@ -558,6 +575,7 @@ void diatom_port_input_poll(void)
 		if (ev.type == SDL_QUIT) g_quit = true;
 
 	if (g_pad_fd >= 0)  pad_read();
+	g_last_poll_us = diatom_port_now_us();
 	if (g_keys_fd >= 0) keys_read();
 
 	s = g_pad_buttons;
