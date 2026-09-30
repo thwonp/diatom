@@ -1157,7 +1157,6 @@ static int run_session_inner(const diatom_session *sn)
 	uint64_t t_start, paused_us = 0;   /* menu time, excluded from the rate */
 	uint32_t buttons = 0, prev_buttons = 0, held_at_entry = 0;
 	bool menu_tap = false;   /* MENU down with nothing else pressed yet */
-	uint32_t menu_chord = 0; /* gkd.44 TEMPORARY: what cancelled menu_tap */
 	bool menu_now;
 	long     locked_at = 0;     /* frame the current rect was computed on */
 
@@ -1618,24 +1617,11 @@ static int run_session_inner(const diatom_session *sn)
 			uint32_t pressed = buttons & ~prev_buttons;
 
 			if (hotkeys_modifier() == DIATOM_BTN_MENU) {
-				if (pressed & menu_bit) {
+				if (pressed & menu_bit)
 					menu_tap = !(pressed & ~menu_bit);
-					menu_chord = pressed & ~menu_bit;
-				} else if ((buttons & menu_bit) && (pressed & ~menu_bit)) {
+				else if ((buttons & menu_bit) && (pressed & ~menu_bit))
 					menu_tap = false;
-					menu_chord |= pressed & ~menu_bit;
-				}
 				menu_now = (prev_buttons & ~buttons & menu_bit) && menu_tap;
-				/* gkd.44 diagnostics, TEMPORARY: removed with the fix. */
-				if ((prev_buttons & ~buttons & menu_bit) && menu_chord) {
-					char msg[80];
-
-					snprintf(msg, sizeof msg,
-					         "gkd.44: MENU release was a chord, not a tap (bits 0x%x)",
-					         (unsigned)menu_chord);
-					diatom_port_log(DIATOM_LOG_WARN, msg);
-					menu_chord = 0;
-				}
 				/* Spent. Otherwise a MENU pressed in the launcher's menu to
 				 * close it, still held as the game resumes, is released here
 				 * as a second tap and reopens the menu. */
