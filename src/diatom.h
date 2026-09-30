@@ -171,10 +171,9 @@ typedef enum {
 	DIATOM_MSG_REWINDSPEED,    /* report the rewind speed: `every` */
 	DIATOM_MSG_SETREWINDSPEED, /* set it, 0 (off)..DIATOM_REWIND_MAX_EVERY: `every` */
 	/* The hotkey submenu (sibling TortOS feature, ported from NextUI's
-	 * OptionShortcuts_* alongside the same rewind/FF port). A SELECT-held
-	 * chord, on SELECT's own terms - display_chord already claims SELECT as
-	 * the frontend modifier for L1/R1/A, this claims a few more buttons for
-	 * a few more frontend actions. See hotkey_chord() in main.c. */
+	 * OptionShortcuts_* alongside the same rewind/FF port). SELECT-held
+	 * chords, every one of them a binding; display mode and filter included
+	 * since plorpos-gkd.22. See hotkey_chord() in main.c. */
 	DIATOM_MSG_HOTKEYS,    /* report the current bindings: `hotkeys` */
 	DIATOM_MSG_SETHOTKEYS, /* replace them whole: `hotkeys` = "l2:ff,x:savestate" */
 	/* The launcher went away - or was displaced by a newer one, ADR-0033,

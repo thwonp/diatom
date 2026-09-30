@@ -188,3 +188,23 @@ is asked for.
   that already read this frame's input causes a missed save/load in
   practice (the same leak `display_chord`'s own comment already names and
   accepts for its own chords).
+
+## Revisited 2026-09-30 (plorpos-gkd.22)
+
+The `[DEFERRED]` removal above happened: `display_chord` is gone, and its
+three fixed chords became two bindable actions in the same table.
+
+- **Actions:** `display` (next display mode, wrapping) and `filter`
+  (sharp/nearest), both edge-triggered like `savestate`/`loadstate`. There is no
+  "previous mode". The player asked for one looping action instead of the
+  chord's L1/R1 pair. `HK_MAX` is 6.
+- **Buttons:** L1, R1, L2, R2, A, B, X, Y. L1/R1/A are free now that the chord
+  is gone, and B joined because SELECT is held for all of them anyway.
+  START, the d-pad and SELECT stay the game's.
+- **No defaults**, as before: a system with no `hotkey.<tag>` row gets no
+  display or filter chord either. Standalone Diatom (no launcher, so no
+  SETHOTKEYS) can no longer change the mode from the pad.
+- The "eight meanings under SELECT" crowding concern resolves the way
+  Revisit-if predicted: this table is SELECT's only chord source.
+- No `proto=` bump: `display`/`filter` are new values of an existing
+  field, and the launcher and Diatom ship together.
