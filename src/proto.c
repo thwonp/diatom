@@ -255,6 +255,8 @@ static void parse_line(char *line, diatom_msg *out)
 		else if (!strcmp(field, "every")) out->every = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "hotkeys"))
 			snprintf(out->hotkeys, sizeof out->hotkeys, "%s", v);
+		else if (!strcmp(field, "modifier"))
+			snprintf(out->modifier, sizeof out->modifier, "%s", v);
 		/* anything else: forward compatibility, ignore */
 	}
 }

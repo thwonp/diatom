@@ -83,6 +83,11 @@ enum {
 	 * unmappable, like MENU. A port reports it only if the device has a spare
 	 * key for it (the GKD's Home); on the Brick it simply never appears. */
 	DIATOM_BTN_HOTKEY,
+	/* A stick click, where the device has a stick (Brick Pro, GKD). Diatom's
+	 * own like MENU: never forwarded to a core (no shipped core wants L3) and
+	 * unmappable; it exists to be chosen as the hotkey modifier
+	 * (plorpos-gkd.43.1). */
+	DIATOM_BTN_L3,
 	DIATOM_BTN_COUNT
 };
 #define DIATOM_BIT(b) (1u << (b))

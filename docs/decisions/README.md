@@ -86,3 +86,4 @@ never started.
 | [0035](0035-hotkey-submenu-lives-on-select.md) | The hotkey submenu is a SELECT-held chord Diatom checks itself | Accepted |
 | [0036](0036-relicense-polyform-noncommercial.md) | Relicense this fork under PolyForm Noncommercial 1.0.0 | Accepted |
 | [0037](0037-home-is-a-second-modifier-key.md) | Let a spare device key stand in for SELECT as the frontend modifier | Accepted |
+| [0038](0038-the-hotkey-modifier-is-chosen-default-menu.md) | Let the player choose the hotkey modifier, default MENU, menu on release | Accepted |

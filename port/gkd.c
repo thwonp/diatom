@@ -448,9 +448,9 @@ size_t diatom_port_audio_queued(void)
  * NORTH), unlike the Brick, where they are crossed. The dpad is four real
  * buttons, not a hat. Menu is BTN_MODE, the Brick's MENU code too.
  *
- * Unmapped on purpose: Home (BTN_TRIGGER_HAPPY1, 704) is the hotkey and
- * brightness modifier, not a game input; the stick click (BTN_THUMBL) has
- * no shipped core that wants L3. */
+ * Home (BTN_TRIGGER_HAPPY1, 704) and the stick click (BTN_THUMBL) are
+ * reported as Diatom's own HOTKEY and L3: hotkey-modifier choices, never
+ * core inputs (ADR-0037, ADR-0038). */
 static const struct { int code; int btn; } padmap[] = {
 	{ BTN_EAST,       DIATOM_BTN_A      },
 	{ BTN_SOUTH,      DIATOM_BTN_B      },
@@ -467,9 +467,10 @@ static const struct { int code; int btn; } padmap[] = {
 	{ BTN_SELECT,     DIATOM_BTN_SELECT },
 	{ BTN_START,      DIATOM_BTN_START  },
 	{ BTN_MODE,       DIATOM_BTN_MENU   },
-	/* Home: the second frontend modifier (ADR-0037), and also - port-side,
+	/* Home: a hotkey-modifier choice (ADR-0037, 0038), and also - port-side,
 	 * via g_home - what turns the volume keys into brightness keys. */
 	{ BTN_TRIGGER_HAPPY1, DIATOM_BTN_HOTKEY },
+	{ BTN_THUMBL,     DIATOM_BTN_L3     },
 };
 
 /* The stick reads as the dpad (as on the Brick Pro). Range -900..899, right

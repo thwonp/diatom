@@ -175,7 +175,8 @@ typedef enum {
 	 * chords, every one of them a binding; display mode and filter included
 	 * since plorpos-gkd.22. See hotkey_chord() in main.c. */
 	DIATOM_MSG_HOTKEYS,    /* report the current bindings: `hotkeys` */
-	DIATOM_MSG_SETHOTKEYS, /* replace them whole: `hotkeys` = "l2:ff,x:savestate" */
+	DIATOM_MSG_SETHOTKEYS, /* replace them whole: `hotkeys` = "l2:ff,x:savestate",
+	                        * optional `modifier` = the key held for them */
 	/* The launcher went away - or was displaced by a newer one, ADR-0033,
 	 * which means the same thing. The game keeps running. */
 	DIATOM_MSG_HANGUP
@@ -220,6 +221,7 @@ typedef struct {
 	                        * `index`/`count` - see the warning on those two
 	                        * about one slot serving verbs that disagree. */
 	char hotkeys[128];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
+	char modifier[16];     /* SETHOTKEYS: "menu"|"select"|"l3"|"home"; empty = keep */
 	int  every;            /* SETREWINDSPEED: capture cadence in frames, which
 	                        * is the rewind speed (5 = 5x); 0 = off. -1 when
 	                        * absent, so a bare verb is refused, not "off". */

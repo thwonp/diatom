@@ -20,6 +20,14 @@
 static struct { int btn; hk_action action; } g_hotkeys[HK_MAX];
 static int  g_nhotkeys;
 static char g_hotkeys_spec[128];
+static int  g_modifier = DIATOM_BTN_MENU;
+
+static const struct { const char *name; int btn; } g_modifiers[] = {
+	{ "menu",   DIATOM_BTN_MENU   },
+	{ "select", DIATOM_BTN_SELECT },
+	{ "l3",     DIATOM_BTN_L3     },
+	{ "home",   DIATOM_BTN_HOTKEY },   /* the GKD's Home, ADR-0037 */
+};
 
 static int hk_btn_from_name(const char *s)
 {
@@ -104,4 +112,26 @@ void hotkeys_reset(void)
 {
 	g_nhotkeys = 0;
 	g_hotkeys_spec[0] = '\0';
+	g_modifier = DIATOM_BTN_MENU;
+}
+
+int hotkeys_modifier_from_name(const char *name)
+{
+	size_t i;
+
+	for (i = 0; name && i < sizeof g_modifiers / sizeof g_modifiers[0]; i++)
+		if (!strcmp(name, g_modifiers[i].name)) return g_modifiers[i].btn;
+	return -1;
+}
+
+void hotkeys_set_modifier(int btn) { if (btn >= 0) g_modifier = btn; }
+int  hotkeys_modifier(void) { return g_modifier; }
+
+const char *hotkeys_modifier_name(void)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof g_modifiers / sizeof g_modifiers[0]; i++)
+		if (g_modifiers[i].btn == g_modifier) return g_modifiers[i].name;
+	return "menu";
 }

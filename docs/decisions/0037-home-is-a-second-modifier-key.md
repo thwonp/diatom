@@ -70,3 +70,10 @@ no such key and is unchanged.
 The display chord is gone (ADR-0035, revisited). Display mode and filter
 are bindable hotkey actions, so Home, like SELECT, now opens only the hotkey
 chord. `MODIFIER_BITS` stays where it is, above `hotkey_chord`.
+
+## Revisited 2026-09-30 (plorpos-gkd.43.1)
+
+Home is no longer an alias that is always on beside SELECT. It's one of the
+choices for the single modifier the player picks (`modifier=home`), and the
+default is MENU. See [ADR-0038](0038-the-hotkey-modifier-is-chosen-default-menu.md).
+The stick click (BTN_THUMBL) is reported as `DIATOM_BTN_L3` for the same choice.

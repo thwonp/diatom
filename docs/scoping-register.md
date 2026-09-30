@@ -943,6 +943,12 @@ Two levers the spike discovered:
       modifier → **[ADR-0037](decisions/0037-home-is-a-second-modifier-key.md)**
       *(Accepted)*. `DIATOM_BTN_HOTKEY` is an alias of SELECT-as-modifier for
       both chords; never reaches a core, unmappable. MENU still is not one.
+- [x] **[OPEN]** Which key is the hotkey modifier →
+      **[ADR-0038](decisions/0038-the-hotkey-modifier-is-chosen-default-menu.md)**
+      *(Accepted)*. The player chooses, and the default is MENU. That reverses
+      ADR-0035's rejection of MENU: SELECT as the modifier cost every game a
+      holdable SELECT, and the menu opening on release is the accepted price
+      (plorpos-gkd.43.1).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,
