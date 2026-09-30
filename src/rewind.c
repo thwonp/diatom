@@ -21,10 +21,19 @@
 /* Total ring memory, all slots combined, as a first cut pending real
  * per-core measurement on the Brick. 8 MiB against a ~1GB device (see
  * diatom's own README) is comfortably affordable even doubled by a size
- * that grows mid-session (see the per-capture re-check below) and still
- * gives several minutes of rewind on every core measured so far in
- * CORES.md's ballpark (state sizes there run tens of KB to under 1 MB). */
+ * that grows mid-session (see the per-capture re-check below). It is NOT
+ * several minutes of rewind, as this comment once claimed: an mGBA state is
+ * 463 KB, so 8 MiB is ~18 slots, ~4.5 s (plorpos-gkd.24).
+ *
+ * A port may override the budget, the capture cadence (rewind.h) and the
+ * depth cap from the Makefile. The GKD does, after measuring ~1.5 GB free
+ * with a game running (plorpos-gkd.38); the Brick keeps these defaults until
+ * it is measured the same way. Slots are allocated as the ring fills, not up
+ * front, so a large budget costs nothing until the session is long enough
+ * to use it. */
+#ifndef DIATOM_REWIND_BUDGET_BYTES
 #define DIATOM_REWIND_BUDGET_BYTES (8u * 1024 * 1024)
+#endif
 
 /* DIATOM_REWIND_CAPTURE_EVERY (rewind.h): a snapshot taken every frame would
  * spend more CPU copying state than the core spends producing it, for no
@@ -35,7 +44,9 @@
  * number with no measurement to prefer it over this one. */
 
 #define DIATOM_REWIND_MIN_DEPTH 8
+#ifndef DIATOM_REWIND_MAX_DEPTH
 #define DIATOM_REWIND_MAX_DEPTH 600
+#endif
 
 typedef struct {
 	void   *buf;

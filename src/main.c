@@ -18,6 +18,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
+#ifdef __GLIBC__
+#include <malloc.h>   /* malloc_trim, run_session */
+#endif
 
 #include "cheevos.h"
 #include "diatom.h"
@@ -1809,6 +1812,16 @@ static int run_session(const diatom_session *sn)
 	g_phase = PHASE_LOADING;
 	rc = run_session_inner(sn);
 	g_phase = PHASE_IDLE;
+#ifdef __GLIBC__
+	/* Hand the session's freed memory - the rewind ring above all - back to
+	 * the system. Resident, Diatom would otherwise keep a large ring's worth
+	 * of free heap between games: once glibc has raised its mmap threshold,
+	 * snapshots land on the heap, and a hole in the middle of it is never
+	 * returned. Only free pages go; the cores stay loaded (ADR-0006). Here,
+	 * after EXIT, the launcher already has the screen, so it costs the
+	 * player nothing. */
+	malloc_trim(0);
+#endif
 	return rc;
 }
 

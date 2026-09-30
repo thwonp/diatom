@@ -16,8 +16,13 @@
 
 /* Once every this many forward frames, not every frame - see rewind.c for
  * why. Exposed so a test can drive diatom_rewind_capture() an exact number
- * of times per logical step instead of guessing at rewind.c's cadence. */
+ * of times per logical step instead of guessing at rewind.c's cadence.
+ * Rewind plays one snapshot per displayed frame, so this is also the rewind
+ * speed: 15 = 15x. A port may override it from the Makefile (the GKD uses 5,
+ * 3x - plorpos-gkd.24). */
+#ifndef DIATOM_REWIND_CAPTURE_EVERY
 #define DIATOM_REWIND_CAPTURE_EVERY 15
+#endif
 
 /* Called once per RUN, before the frame loop starts. Frees any previous
  * session's buffers and sizes a fresh ring against the core's CURRENT
