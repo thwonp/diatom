@@ -13,9 +13,10 @@
 
 #include <stdbool.h>
 
-typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE } hk_action;
+typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE,
+               HK_DISPLAY, HK_FILTER } hk_action;
 
-#define HK_MAX 4
+#define HK_MAX 6
 
 /* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
  * a spec that is half garbage is refused whole rather than applying the good

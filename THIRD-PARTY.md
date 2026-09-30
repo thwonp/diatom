@@ -41,9 +41,9 @@ from NextUI** (`ma_frontend_opts.c`'s `OptionShortcuts_*`), same terms as
 consumed only by the sibling personal fork of TortOS, never upstreamed.
 The `hotkey_chord()` dispatch function in `src/main.c` that actually checks
 these bindings each frame is the same NextUI-derived concept and carries the
-same restriction, even though it lives outside `hotkeys.c` itself (next to
-the pre-existing, unrelated `display_chord()` it is modeled on - see
-[ADR-0035](docs/decisions/0035-hotkey-submenu-lives-on-select.md)).
+same restriction, even though it lives outside `hotkeys.c` itself (it was
+modeled on the older `display_chord()`, which plorpos-gkd.22 folded into it
+- see [ADR-0035](docs/decisions/0035-hotkey-submenu-lives-on-select.md)).
 
 The `HOTKEYS`/`SETHOTKEYS` protocol verbs (`src/proto.c`, `src/diatom.h`)
 are, like `SPEED`/`SETSPEED`/`REWIND`/`SETREWIND` before them, a plain

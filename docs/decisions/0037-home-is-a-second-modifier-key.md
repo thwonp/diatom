@@ -64,3 +64,9 @@ no such key and is unchanged.
 - A device's spare key is one a shipped core needs as a gameplay button.
 - plorpos-gkd.22 removes the fixed display chord (this ADR then covers only the
   hotkey chord).
+
+## Revisited 2026-09-30 (plorpos-gkd.22)
+
+The display chord is gone (ADR-0035, revisited). Display mode and filter
+are bindable hotkey actions, so Home, like SELECT, now opens only the hotkey
+chord. `MODIFIER_BITS` stays where it is, above `hotkey_chord`.

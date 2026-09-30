@@ -156,6 +156,19 @@ def main():
         ck((d.line() or "").startswith("ERROR"), "an out-of-range speed is refused")
         ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=0", "leaving the speed as it was")
 
+        # Hotkeys (ADR-0035): display mode and filter are bindable actions on
+        # L1/R1/A/B too since plorpos-gkd.22 retired the fixed display chord.
+        spec = "l1:ff,r1:rewind,a:savestate,b:loadstate,x:display,y:filter"
+        d.send("SETHOTKEYS\thotkeys=" + spec)
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec,
+           "every action and every new button binds")
+        d.send("SETHOTKEYS\thotkeys=l2:display,r2:display")
+        ck((d.line() or "").startswith("ERROR"), "one action on two buttons is refused")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec, "leaving the bindings as they were")
+        d.send("SETHOTKEYS\thotkeys=start:display")
+        ck((d.line() or "").startswith("ERROR"), "START is not bindable")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec, "and nothing changed")
+
         d.send("NOSUCHVERB\tdevice=x")
         d.send("AUDIO")
         ck(d.line("AUDIO") is not None, "an unknown verb is ignored, not fatal")

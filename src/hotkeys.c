@@ -6,11 +6,11 @@
  * turbo.md), applied over the state plane (SETHOTKEYS) the way turbo's map
  * already rides SETMAP after every RUN.
  *
- * L2/R2/X/Y rather than NextUI's own free choice of button: display_chord
- * (main.c) already claims SELECT+L1/R1/A as the frontend modifier's other
- * chords, and turbo.md's button-budget accounting is exactly why picking
- * from what SELECT does not already claim, rather than repeating NextUI's
- * own list unexamined, was the right call here. */
+ * The face buttons and shoulders only (L1/R1/L2/R2/A/B/X/Y): SELECT is held
+ * for every one of these, and START, the d-pad and SELECT itself stay the
+ * game's. L1/R1/A joined when plorpos-gkd.22 retired the fixed display
+ * chord that used to own them, and display mode and filter became two more
+ * bindable actions here. */
 #include <stdio.h>
 #include <string.h>
 
@@ -23,8 +23,12 @@ static char g_hotkeys_spec[128];
 
 static int hk_btn_from_name(const char *s)
 {
+	if (!strcmp(s, "l1")) return DIATOM_BTN_L1;
+	if (!strcmp(s, "r1")) return DIATOM_BTN_R1;
 	if (!strcmp(s, "l2")) return DIATOM_BTN_L2;
 	if (!strcmp(s, "r2")) return DIATOM_BTN_R2;
+	if (!strcmp(s, "a"))  return DIATOM_BTN_A;
+	if (!strcmp(s, "b"))  return DIATOM_BTN_B;
 	if (!strcmp(s, "x"))  return DIATOM_BTN_X;
 	if (!strcmp(s, "y"))  return DIATOM_BTN_Y;
 	return -1;
@@ -36,6 +40,8 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "rewind"))    return HK_REWIND;
 	if (!strcmp(s, "savestate")) return HK_SAVESTATE;
 	if (!strcmp(s, "loadstate")) return HK_LOADSTATE;
+	if (!strcmp(s, "display"))   return HK_DISPLAY;
+	if (!strcmp(s, "filter"))    return HK_FILTER;
 	return HK_NONE;
 }
 

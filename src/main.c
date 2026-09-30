@@ -477,7 +477,8 @@ static void usage(void)
 		"\nSRAM is automatic: read at load, written when it changes, flushed on\n"
 		"exit and on SIGTERM. Save states take paths, never slot numbers - slots\n"
 		"belong to the launcher (ADR-0016).\n"
-		"\non device: SELECT+R1 / SELECT+L1 changes mode, SELECT+A toggles filter\n\n");
+		"\non device: display mode and filter are SELECT+button hotkeys the launcher\n"
+		"binds (SETHOTKEYS display/filter); standalone has none\n\n");
 	for (i = 0; i < diatom_mode_count; i++)
 		fprintf(stderr, "  %-10s %s\n",
 		        diatom_modes[i].name, diatom_modes[i].note);
@@ -500,7 +501,7 @@ static void apply_display(int mode, diatom_filter filter)
 	fflush(stdout);
 
 	/* Reported from the ONE place the mode ever changes, so a launcher hears
-	 * about it whether it asked, the user cycled it with a chord, or the rect
+	 * about it whether it asked, the user cycled it with a hotkey, or the rect
 	 * settled underneath it (ADR-0021). `rect=` is free here and is what a
 	 * launcher would otherwise have to recompute from geometry it does not
 	 * have. ADR-0022. */
@@ -735,65 +736,23 @@ static bool menu_pause(const diatom_session *sn)
 	return false;
 }
 
-/* SELECT is the modifier: SELECT+R1 and SELECT+L1 step the mode, SELECT+A
- * toggles the filter, all edge-triggered. The keys involved are hidden from
- * the core while SELECT is held; the very first frame of the press still
- * leaks, because the core reads input inside retro_run before this runs.
- * Harmless here and not worth a pre-run poll to fix.
- *
- * Returns what the core must not see this frame, and no longer sets it. There
- * are two reasons to hide a button and they have different lifetimes: this one
- * is recomputed from the pad every frame, the resume hold-off below is latched
- * until release. They shared one variable and this function is the one that
- * runs every frame, so `suppress(0)` on the first frame SELECT was not held
- * silently cleared the other. Composing them is now the caller's job, which is
- * also the only place that can see both. */
 /* The frontend modifier: SELECT, or HOTKEY on a device with a key to spare for
- * it (ADR-0037). Either one held opens both chords below; there is no chord
- * only one of them opens. */
+ * it (ADR-0037). Either one held opens every hotkey chord below; there is no
+ * chord only one of them opens. */
 #define MODIFIER_BITS (DIATOM_BIT(DIATOM_BTN_SELECT) | DIATOM_BIT(DIATOM_BTN_HOTKEY))
-
-static uint32_t display_chord(uint32_t buttons, uint32_t prev)
-{
-	uint32_t pressed = buttons & ~prev;
-	uint32_t mask;
-
-	if (!(buttons & MODIFIER_BITS)) return 0;
-
-	mask = MODIFIER_BITS | DIATOM_BIT(DIATOM_BTN_L1)
-	             | DIATOM_BIT(DIATOM_BTN_R1)
-	             | DIATOM_BIT(DIATOM_BTN_A);
-
-	/* Each of these returns rather than falling through, so one press cannot
-	 * perform two actions in a frame. */
-	if (pressed & DIATOM_BIT(DIATOM_BTN_R1)) {
-		report_slot(g_mode, g_filter);
-		apply_display((g_mode + 1) % diatom_mode_count, g_filter);
-		return mask;
-	}
-	if (pressed & DIATOM_BIT(DIATOM_BTN_L1)) {
-		report_slot(g_mode, g_filter);
-		apply_display((g_mode + diatom_mode_count - 1) % diatom_mode_count,
-		              g_filter);
-		return mask;
-	}
-	if (pressed & DIATOM_BIT(DIATOM_BTN_A)) {
-		report_slot(g_mode, g_filter);
-		apply_display(g_mode, g_filter == DIATOM_FILTER_SHARP
-		                    ? DIATOM_FILTER_NEAREST : DIATOM_FILTER_SHARP);
-		return mask;
-	}
-	return mask;
-}
 
 /* ---- hotkeys: sibling TortOS feature, ported from NextUI's OptionShortcuts_*
  * (ma_frontend_opts.c) alongside the fast-forward/rewind port above - see
- * THIRD-PARTY.md. SELECT-held chord, on SELECT's own terms: display_chord
- * above already claims SELECT as the frontend modifier for L1/R1/A, so this
- * claims a few more buttons (L2/R2/X/Y) for a few more frontend actions
- * rather than introducing a second modifier key with its own edge cases.
- * (ADR-0037 later let HOTKEY stand in for SELECT, for both chords at once -
- * an alias for the one modifier, not a second one with its own chords.)
+ * THIRD-PARTY.md. SELECT-held chord: SELECT is the frontend modifier and
+ * every frontend action under it is a binding here (plorpos-gkd.22 retired
+ * the fixed SELECT+L1/R1/A display chord into the display/filter actions).
+ * The very first frame of a press still reaches the core, which reads input
+ * inside retro_run before this runs - harmless, not worth a pre-run poll.
+ *
+ * Display and filter are edge-triggered like save/load: display steps to
+ * the next mode and wraps, filter flips sharp/nearest.
+ * (ADR-0037 lets HOTKEY stand in for SELECT - an alias for the one modifier,
+ * not a second one with its own chords.)
  *
  * FF and rewind are level-triggered - the bound button's own hold state
  * drives g_ff_speed/g_rewind_active for as long as it is held, mirroring
@@ -819,14 +778,14 @@ static uint32_t display_chord(uint32_t buttons, uint32_t prev)
  * stays true. */
 static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 
-/* Checked every frame, on the same terms as display_chord. Returns what the
+/* Checked every frame. Returns what the
  * core must not see - the modifier plus every currently-bound button, whether or
  * not any of them changed anything this frame, because a bound button must
  * disappear from the core for as long as it is held, not only on the frame
  * this function acted on it. The binding table itself (parsing, validation,
  * storage) is hotkeys.c/.h - SDL-free and tested there; this is the part
- * that touches g_ff_speed/g_rewind_active/g_core and stays here for the
- * same reason display_chord does. */
+ * that touches g_ff_speed/g_rewind_active/g_core/the display and so stays
+ * here, next to them. */
 static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
 {
 	uint32_t pressed = buttons & ~prev;
@@ -862,6 +821,19 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_LOADSTATE:
 			if ((pressed & bit) && sn->state_exit)
 				diatom_state_load(g_core, sn->state_exit);
+			break;
+		case HK_DISPLAY:
+			if (pressed & bit) {
+				report_slot(g_mode, g_filter);
+				apply_display((g_mode + 1) % diatom_mode_count, g_filter);
+			}
+			break;
+		case HK_FILTER:
+			if (pressed & bit) {
+				report_slot(g_mode, g_filter);
+				apply_display(g_mode, g_filter == DIATOM_FILTER_SHARP
+				                    ? DIATOM_FILTER_NEAREST : DIATOM_FILTER_SHARP);
+			}
 			break;
 		default: break;
 		}
@@ -1608,8 +1580,7 @@ static int run_session_inner(const diatom_session *sn)
 
 		/* The single writer. All three reasons to hide a button end up here,
 		 * so none of them can clear another. */
-		diatom_env_suppress(display_chord(buttons, prev_buttons)
-		                    | hotkey_chord(buttons, prev_buttons, sn)
+		diatom_env_suppress(hotkey_chord(buttons, prev_buttons, sn)
 		                    | held_at_entry);
 
 		/* MENU is Diatom's own key and the ports no longer act on it, because
