@@ -137,6 +137,25 @@ def main():
 
         # ADR-0009's forward-compatibility promise, which is what lets a verb
         # be added at all. If this ever fails, adding one stops being safe.
+        # Rewind speed (plorpos-gkd.40): the capture cadence, 0 = off.
+        d.send("REWINDSPEED")
+        r = d.line("REWINDSPEED")
+        ck(r is not None and r.startswith("REWINDSPEED\tevery="),
+           "REWINDSPEED answers with the build's default")
+        d.send("SETREWINDSPEED\tevery=3")
+        ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=3",
+           "SETREWINDSPEED answers with the new speed")
+        d.send("SETREWINDSPEED\tevery=0")
+        ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=0", "0 turns rewind off")
+        d.send("SETREWINDSPEED")
+        ck((d.line() or "").startswith("ERROR\tcode=bad_rewindspeed"),
+           "a bare SETREWINDSPEED is refused, not read as off")
+        ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=0",
+           "and the answer still says what holds")
+        d.send("SETREWINDSPEED\tevery=999")
+        ck((d.line() or "").startswith("ERROR"), "an out-of-range speed is refused")
+        ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=0", "leaving the speed as it was")
+
         d.send("NOSUCHVERB\tdevice=x")
         d.send("AUDIO")
         ck(d.line("AUDIO") is not None, "an unknown verb is ignored, not fatal")

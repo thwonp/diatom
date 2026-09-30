@@ -207,3 +207,11 @@ and Muse over Bluetooth running: ~1.5 GB still available, one core busy
   games.
 - Still uncompressed. LZ4 remains the lever if the GKD's history is judged
   too short; the CPU for it is there (seven idle cores), the need is not yet.
+- The speed is also the player's (plorpos-gkd.40): `SETREWINDSPEED every=N`
+  sets the cadence for the session, 0..60, 0 = off (nothing captured, the
+  ring emptied and freed, the rewind hotkey a no-op); `REWINDSPEED` asks,
+  and both answer `REWINDSPEED every=N`. Every `RUN` resets it to the build's
+  default and the launcher re-sends the player's choice after `RUN`, as it
+  does `SETHOTKEYS`. The budget stays fixed, so a slower speed is a shorter
+  history - accepted by the player. No `proto=` bump, as with this ADR's
+  other verbs: an older Diatom ignores it and keeps its default speed.
