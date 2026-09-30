@@ -197,9 +197,11 @@ and Muse over Bluetooth running: ~1.5 GB still available, one core busy
   defaults a port may override (`DIATOM_REWIND_BUDGET_BYTES`,
   `DIATOM_REWIND_CAPTURE_EVERY`, `DIATOM_REWIND_MAX_DEPTH`). The Brick keeps
   8 MiB / 15 / 600 until it is measured the same way (plorpos-gkd.38).
-- The GKD sets 256 MiB, every 5 frames, cap 1800: rewind plays at 3x and
-  holds ~47 s of GBA. Chosen over every-15-frames-held-5 (the same 3x and
-  ~141 s, but a slideshow at 12 images a second).
+- The GKD sets 256 MiB, every 5 frames, cap 1800: rewind plays at 5x (the
+  cadence IS the speed - one slot per displayed frame) and holds ~47 s of
+  GBA, ~10 s of holding the hotkey, smooth on the device. Chosen over keeping
+  every 15 frames (~141 s, but 15x) and every 3 frames (3x, ~28 s) - the
+  player tried 5x and kept it.
 - After each session Diatom calls `malloc_trim(0)`, after `EXIT`, so a
   resident Diatom does not keep a large ring's worth of freed heap between
   games.
