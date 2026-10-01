@@ -649,6 +649,16 @@ Two amendments ADR-0007 makes to the table above:
       load. Verified on the device in the order that triggers it: Advance
       Guardian Heroes launched after an NES game reads at `fmt 0`, 256 px
       against 240, no warning and no doubling.
+- [ ] **[DEFERRED]** **Hardware-rendered cores (GL/Vulkan) - no `SET_HW_RENDER`
+      today.** Spiked 2026-10-01 on the GKD (plorpos-gkd.15.1; throwaway clone
+      outside the repo, never pushed). Question: can diatom present a Vulkan
+      core zero-copy? **No, on this driver**: the Mali-G52 blob returns
+      VK_SUCCESS with fd -1 from `vkGetMemoryFdKHR` in all ~8 dma-buf variants,
+      so EGL import has nothing to import. Readback works (SwanStation and
+      ParaLLEl-RDP drawn correctly through the SDL renderer). N64 wants GL, not
+      Vulkan: ParaLLEl-RDP misses 60 fps even at 1x while GlideN64 does 168-196.
+      Options and numbers are in bead plorpos-gkd.15.2; PSX ships on
+      pcsx_rearmed's software 2x meanwhile. Trigger: N64, or PSX above 2x.
 - [ ] **[LATER]** Shaders/overlays - **a one-word decision waiting on taste,
       not on facts.** The facts: UI belongs to the launcher
       ([ADR-0009](decisions/0009-launcher-protocol.md)); the on-screen overlay
