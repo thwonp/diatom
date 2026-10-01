@@ -37,6 +37,9 @@ typedef struct {
 	const char *path;
 	bool        initialized;     /* retro_init has run */
 	bool        game_loaded;
+	/* The bytes handed to retro_load_game, held until retro_unload_game. NULL
+	 * for a need_fullpath core. See diatom_core_start. */
+	void       *content;
 	/* What THIS core declared for its frames, kept because it will not say
 	 * again. See diatom_env_pixfmt_settle. */
 	diatom_pixfmt pixfmt;
