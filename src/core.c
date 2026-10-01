@@ -292,15 +292,18 @@ bool diatom_core_start(diatom_core *c, const char *rom_path)
 
 	ok = c->load_game(&gi);
 
-	/* The core has copied whatever it needs by now; libretro does not promise
-	 * the buffer stays valid, and holding it would waste anonymous memory on a
-	 * device with no swap. */
-	free(data);
-
+	/* Held until the game unloads, as RetroArch holds it. Most cores copy the
+	 * bytes inside retro_load_game, but fake08 only queues the pointer and
+	 * reads the cart on its first retro_run: freed here, that read landed in
+	 * freed memory and segfaulted (plorpos-gkd.50.1). The cost is one copy of
+	 * a cartridge ROM while it plays; disc and arcade cores are need_fullpath
+	 * and never get a buffer. */
 	if (!ok) {
+		free(data);
 		fprintf(stderr, "diatom: core refused %s\n", rom_path);
 		return false;
 	}
+	c->content = data;
 	c->game_loaded = true;
 	/* Before the first frame can be presented, and after the core has had
 	 * every chance to speak: whatever it declared is this core's, and its
@@ -322,4 +325,6 @@ void diatom_core_stop(diatom_core *c)
 		c->unload_game();
 		c->game_loaded = false;
 	}
+	free(c->content);
+	c->content = NULL;
 }
