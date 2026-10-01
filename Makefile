@@ -106,6 +106,10 @@ ifeq ($(PORT),gkd)
   # cap that lets small-state cores use the budget. ~47 s of GBA.
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
              -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+  # Resident cores: 16, not the Brick's 8. The GKD has nine cores today and
+  # PICO-8's fake08 was the one refused at 8 (plorpos-gkd.50.2). Each stays
+  # mapped once played; FBNeo, the largest, is ~38 MB against ~1.5 GB free.
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   # The device's libSDL2 was built against glibc 2.40 and references 2.34+
   # symbols (dlerror@GLIBC_2.34) that this toolchain's 2.31 cannot resolve.
