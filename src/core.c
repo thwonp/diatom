@@ -244,8 +244,13 @@ bool diatom_core_start(diatom_core *c, const char *rom_path)
 	 * cores unzip for themselves, and the first real launcher found that out
 	 * on the first game it handed over. One entry per archive (the largest);
 	 * a need_fullpath core gets the extraction as a tmpfs file, since it
-	 * wants to read from disk, and everything else gets the buffer. */
-	if (diatom_zip_is(rom_path)) {
+	 * wants to read from disk, and everything else gets the buffer.
+	 *
+	 * Except a core that sets block_extract, which says the archive IS the
+	 * content: an arcade set is identified by its zip's name, and FBNeo handed
+	 * one ROM out of 1943.zip ("bme02.13d") reports the romset as unknown.
+	 * Such a core gets the zip path as is (plorpos-gkd.56). */
+	if (diatom_zip_is(rom_path) && !si.block_extract) {
 		char inner[512];
 
 		if (!diatom_zip_load(rom_path, &data, &len, inner, sizeof inner)) {

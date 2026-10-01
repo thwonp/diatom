@@ -1447,24 +1447,27 @@ static int run_session_inner(const diatom_session *sn)
 		 * do nothing, rather than hold the frame the way an exhausted ring
 		 * does - there is no history to have run out of. */
 		if (g_rewind_active && diatom_rewind_every()) {
+			/* Ring exhausted: diatom_rewind_step_back()'s own contract is to
+			 * hold here, not to be called again - skipping run() keeps
+			 * g_frame exactly as it was instead of quietly resuming forward
+			 * play the player never un-paused. */
 			if (diatom_rewind_step_back(g_core))
 				g_core->run();   /* renders the frame the restore left us at */
-			else
-				/* Ring exhausted. diatom_rewind_step_back()'s own contract
-				 * is to hold here, not to be called again - skipping run()
-				 * keeps g_frame exactly as it was instead of quietly resuming
-				 * forward play the player never un-paused.
-				 *
-				 * But during play the pad is only read from the core's input
-				 * callback, inside run(). Skip run() without this and the
-				 * buttons freeze as they were - rewind hotkey still "held" -
-				 * so rewind never ends and the game is stuck for good. Found
-				 * on the GKD 2026-09-29 (plorpos-gkd.23). */
-				diatom_port_input_poll();
 		} else {
 			g_core->run();   /* renders forward play */
 			diatom_rewind_capture(g_core);
 		}
+		/* During play the pad is read from the core's input callback, inside
+		 * run(). A frame where that did not happen - run() skipped, or a core
+		 * that stops polling - would freeze the buttons as they were, MENU
+		 * included, and leave no way out of the game:
+		 *   - an exhausted rewind ring skips run(), with the rewind hotkey
+		 *     still "held" (GKD 2026-09-29, plorpos-gkd.23);
+		 *   - FBNeo's "romset is unknown" screen never polls, and a Menu
+		 *     tap did nothing (GKD 2026-10-01, plorpos-gkd.56).
+		 * So the host reads the pad itself whenever the core did not. */
+		if (!diatom_env_polled()) diatom_port_input_poll();
+		if (diatom_env_shutdown()) stop = true;
 		frames++;
 
 		/* Immediately after the frame the core produced, and before anything
