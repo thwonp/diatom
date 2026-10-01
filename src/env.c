@@ -168,9 +168,13 @@ static bool env_cb(unsigned cmd, void *data)
 		*(bool *)data = true;
 		return true;
 	case MASK(RETRO_ENVIRONMENT_SHUTDOWN):
-		/* The core is done: FBNeo sends it from its "romset is unknown"
-		 * screen when any button is pressed, which is the only way off that
-		 * screen it offers. Ends the session as Quit would. */
+		/* The core is done. Ends the session as Quit would.
+		 *
+		 * FBNeo's "romset is unknown" screen sends this on any button, but it
+		 * asks for the button with a JOYPAD_MASK query, which diatom does not
+		 * answer - so on that screen it never arrives, and the way off is
+		 * Menu (host polling, main.c), as the user asked for on the GKD
+		 * 2026-10-01 (plorpos-gkd.56.8). */
 		diatom_port_log(DIATOM_LOG_INFO, "core asked to shut down");
 		g_shutdown = true;
 		return true;
