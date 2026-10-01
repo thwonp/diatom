@@ -27,6 +27,11 @@ static int               g_new_w, g_new_h;
 static double            g_new_aspect;
 static uint32_t          g_suppress;
 
+/* Whether the core read the pad this frame, and whether it asked to end. Both
+ * consumed by the main loop once per frame (diatom_env_polled/_shutdown). */
+static bool g_polled;
+static bool g_shutdown;
+
 void diatom_env_suppress(uint32_t mask)
 {
 	g_suppress = mask;
@@ -162,6 +167,13 @@ static bool env_cb(unsigned cmd, void *data)
 	case MASK(RETRO_ENVIRONMENT_GET_CAN_DUPE):
 		*(bool *)data = true;
 		return true;
+	case MASK(RETRO_ENVIRONMENT_SHUTDOWN):
+		/* The core is done: FBNeo sends it from its "romset is unknown"
+		 * screen when any button is pressed, which is the only way off that
+		 * screen it offers. Ends the session as Quit would. */
+		diatom_port_log(DIATOM_LOG_INFO, "core asked to shut down");
+		g_shutdown = true;
+		return true;
 	case MASK(RETRO_ENVIRONMENT_SET_ROTATION):
 		/* Declined by default - the port already owns panel rotation, and
 		 * honoring this would mean rotation twice over. Logged so we find out
@@ -274,8 +286,23 @@ static bool env_cb(unsigned cmd, void *data)
 /* Defined down with the map, which is the state it exists to advance. */
 static void turbo_tick(void);
 
+bool diatom_env_polled(void)
+{
+	bool v = g_polled;
+	g_polled = false;
+	return v;
+}
+
+bool diatom_env_shutdown(void)
+{
+	bool v = g_shutdown;
+	g_shutdown = false;
+	return v;
+}
+
 static void cb_input_poll(void)
 {
+	g_polled = true;
 	diatom_port_input_poll();
 	turbo_tick();
 }

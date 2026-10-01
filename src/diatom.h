@@ -106,6 +106,11 @@ void diatom_env_suppress(uint32_t mask);
  * env.c for the measurement that made this necessary. */
 void diatom_env_core_log_quiet(bool quiet);
 
+/* Once per frame, each consuming its flag: whether the core polled the pad
+ * during that frame's run(), and whether it sent RETRO_ENVIRONMENT_SHUTDOWN. */
+bool diatom_env_polled(void);
+bool diatom_env_shutdown(void);
+
 /* options.c - what a core can be configured with, and what it currently is.
  *
  * Diatom holds the definitions and the values; the LAUNCHER decides what the
