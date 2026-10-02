@@ -109,7 +109,8 @@ void diatom_disk_close(diatom_core *c);
 void diatom_disk_settle(diatom_core *c);
 
 /* Open once and keep - ADR-0006. Returns the same core for the same path, so a
- * repeat launch skips dlopen and retro_init. Never unloaded. */
+ * repeat launch skips dlopen and retro_init. Never unloaded. Locked, so the
+ * premap's thread and a RUN can both call it. */
 diatom_core *diatom_core_resident(const char *path);
 int          diatom_core_resident_count(void);
 /* Map every *_libretro.so in `dir`, returning how many are now resident. For
