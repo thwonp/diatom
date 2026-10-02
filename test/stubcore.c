@@ -29,6 +29,10 @@
  *   STUBCORE_CRASH=exit[@N]   exit(1), which raises no signal at all
  *   STUBCORE_CRASH=load       die inside retro_load_game, before RUNNING
  *
+ * STUBCORE_SRAM=1 gives it a battery: 64 bytes of SAVE_RAM that, like a real
+ * core's, outlive the game, and whose first byte goes up by one at frame 30 of
+ * every game - a save, as far as the frontend can tell.
+ *
  * It also exposes a small, entirely predictable block of system RAM, so the
  * achievement path has bytes to watch without an emulator. See sysram below.
  *
@@ -233,13 +237,19 @@ static void sysram_tick(void)
 	                               RETRO_DEVICE_ID_JOYPAD_LEFT) ? 1 : 0);
 }
 
+static uint8_t sram[64];
+
 void *retro_get_memory_data(unsigned id)
 {
+	if (id == RETRO_MEMORY_SAVE_RAM)
+		return getenv("STUBCORE_SRAM") ? sram : NULL;
 	return id == RETRO_MEMORY_SYSTEM_RAM ? sysram : NULL;
 }
 
 size_t retro_get_memory_size(unsigned id)
 {
+	if (id == RETRO_MEMORY_SAVE_RAM)
+		return getenv("STUBCORE_SRAM") ? sizeof sram : 0;
 	return id == RETRO_MEMORY_SYSTEM_RAM ? sizeof sysram : 0;
 }
 void retro_reset(void) { frame = 0; }
@@ -279,6 +289,7 @@ void retro_run(void)
 
 	poll_cb();
 	sysram_tick();
+	if (frame == 30) sram[0]++;
 
 	/* A box you can drive, so input is verifiable by looking at it. */
 	held = input_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT);

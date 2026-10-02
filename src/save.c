@@ -197,6 +197,11 @@ bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path
 	memcpy(g_shadow, g_sram, g_sram_size);
 	g_last_write = now_us();
 
+	/* The last game's shutdown left g_stop set, and maybe g_pending. Kept,
+	 * the new writer quit on arrival and every later save waited on a thread
+	 * that was gone - or wrote this game's uninitialized staging buffer once,
+	 * when an orphaned g_pending let it past the check (plorpos-gkd.75). */
+	g_stop = g_pending = false;
 	if (pthread_create(&g_writer, NULL, writer, NULL) == 0)
 		g_running = true;
 	else

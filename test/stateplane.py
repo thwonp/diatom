@@ -31,9 +31,12 @@ for ext in (".in.raw", ".out.raw"):
 # Headless and silent, as in proto.py: otherwise a window opens and the stub
 # core's tone plays through the speakers. --tap-audio still sees every sample.
 ENV = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_RENDER_DRIVER="software",
-           SDL_AUDIODRIVER="dummy")
+           SDL_AUDIODRIVER="dummy", STUBCORE_SRAM="1")
+# A --save of its own, so the battery saves below never land in the repo.
+import tempfile
+SAVE_DEFAULT = tempfile.mkdtemp(prefix="diatom-save-default-")
 p = subprocess.Popen([f"{ROOT}/build/desktop/diatom", "--socket", SOCK,
-                      "--tap-audio", TAP], env=ENV,
+                      "--tap-audio", TAP, "--save", SAVE_DEFAULT], env=ENV,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(100):
     if os.path.exists(SOCK): break
@@ -202,6 +205,28 @@ check_that("resume path accepted, game reaches RUNNING",
 # pause writes the preview BEFORE announcing PAUSED - the order is the contract
 before = pathlib.Path(pv).stat().st_mtime_ns
 send("STOP"); drain(2.0)
+
+# --- battery saves, game after game in one resident (plorpos-gkd.75) -------
+# The stub's SRAM changes at frame 30 of every game. Each game must get its
+# .srm, not only the first: the writer thread is started per game, and once
+# it was stopped at the end of a game every later one started already told
+# to stop, so a save made more than a second before quitting was lost.
+for n, name in enumerate(("first", "second", "third"), 1):
+    rom = f"{tmp}/{name}.bin"
+    open(rom, "wb").write(b"\0" * 16)
+    send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so\trom={rom}")
+    drain(3.0)                      # frame 30 is at 0.5 s; the writer runs by 1 s
+    send("STOP"); drain(2.0)
+    check_that(f"the {name} game in this resident wrote its .srm",
+               os.path.exists(f"{SAVE_DEFAULT}/{name}.srm"),
+               os.listdir(SAVE_DEFAULT))
+    if os.path.exists(f"{SAVE_DEFAULT}/{name}.srm"):
+        # The counter carries over from earlier games on the stub, so the
+        # first game sets the base and each one after is one more.
+        b = open(f"{SAVE_DEFAULT}/{name}.srm", "rb").read()
+        if n == 1: base = b[0] if b else 0
+        check_that(f"and it holds that game's save, not a stale buffer",
+                   len(b) == 64 and b[0] == base + n - 1, list(b[:4]))
 
 # --- ADR-0026: achievements over the protocol ------------------------------
 # The unit test (make check-cheevos) proves the mapping and the evaluation.
