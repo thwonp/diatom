@@ -270,8 +270,10 @@ conform-check: $(BIN)
 # It is in `check` despite starting a process, because it costs about a second
 # and needs no core, no ROM and no network - and it SKIPS rather than builds
 # when build/desktop/diatom is absent, so `check` keeps its promise of being
-# instant and offline for someone who has not built yet.
-check-proto:
+# instant and offline for someone who has not built yet. A binary that IS
+# there is brought up to date first: one left over from another branch failed
+# this check for code the branch never had (plorpos-gkd.60).
+check-proto: $(wildcard $(BIN))
 	@python3 test/proto.py
 
 # ADR-0020's state plane, end to end against the stub core. On the same terms
