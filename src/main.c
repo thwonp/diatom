@@ -1331,8 +1331,8 @@ static int run_session_inner(const diatom_session *sn)
 	 * because no panel and no core will ever agree on a rate. */
 	frame_us = 1000000.0 / (av.timing.fps > 0 ? av.timing.fps : 60.0);
 
-	/* Sized against THIS core's current serialize_size(), after load_game -
-	 * a core with no savestate support gets a depth-0 ring and rewind is
+	/* Each capture is sized against the core's current serialize_size() -
+	 * a core with no savestate support never captures and rewind is
 	 * simply unavailable this session, discovered the same way SAVE/LOAD
 	 * already discover it (serialize_size() returning 0). Also resets any
 	 * previous session's ring, wrong core or not: state from one core

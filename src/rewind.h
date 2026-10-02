@@ -37,34 +37,41 @@ bool     diatom_rewind_set_every(int every);
 unsigned diatom_rewind_every(void);
 
 /* Called once per RUN, before the frame loop starts. Frees any previous
- * session's buffers and sizes a fresh ring against the core's CURRENT
- * serialize_size() and a fixed memory budget. A core that reports 0 (no
- * savestate support) gets a ring of depth 0 - rewind is simply unavailable
- * that session, the same way it would be with no snapshots yet captured. */
+ * session's history and buffers (waiting for the worker thread, so never
+ * from the frame loop). Nothing is sized here: buffers are built by the
+ * first capture, against that capture's serialize_size(). A core that
+ * reports 0 (no savestate support) never captures - rewind is simply
+ * unavailable that session. */
 void diatom_rewind_reset(diatom_core *c);
 
-/* Call periodically during ordinary forward play (see DIATOM_REWIND_CAPTURE_
- * EVERY in rewind.c) - NOT while rewind is active, or the timeline it is
- * walking backward through would be overwritten under it. Re-checks
- * serialize_size() on every call rather than trusting the size the ring was
- * built with, because a core's state size can grow mid-session (measured on
- * mGBA, see save.c) - a slot too small for the new size is grown in place. */
+/* Call once per forward frame (every DIATOM_REWIND_CAPTURE_EVERY'th call
+ * captures) - NOT while rewind is active. Costs the frame loop the core's
+ * serialize and nothing else: compression happens on a worker thread, and
+ * a capture that finds the worker behind is dropped rather than waited for.
+ * Re-checks serialize_size() every capture - a core's state size can change
+ * mid-session (measured on mGBA, see save.c) - and a change starts the
+ * history over. */
 void diatom_rewind_capture(diatom_core *c);
 
-/* Steps one entry backward: restores the most recently captured state via
- * unserialize and consumes it from the ring. False means the ring is
- * exhausted - the caller should hold the current frame rather than call
- * this again, matching "rewind stops at the oldest recorded moment" rather
- * than wrapping around to imagined future frames. */
+/* Steps one entry backward: restores the next older captured state via
+ * unserialize and consumes it from the ring. The first step of a rewind
+ * discards captures the worker has not committed yet instead of waiting
+ * for them. False means the ring is exhausted - the caller should hold the
+ * current frame rather than call this again, matching "rewind stops at the
+ * oldest recorded moment" rather than wrapping around to imagined future
+ * frames. */
 bool diatom_rewind_step_back(diatom_core *c);
 
 /* How many steps remain before diatom_rewind_step_back would return false.
  * For the launcher's UI (a rewind indicator) and for tests. */
 size_t diatom_rewind_depth(void);
 
-/* Frees the ring. Same effect as diatom_rewind_reset with a NULL core, kept
- * as its own name for callers that are shutting down rather than starting a
- * new session. */
+/* Frees the ring and stops the worker thread. For process exit. */
 void diatom_rewind_shutdown(void);
+
+/* Blocks until every capture handed to the worker is committed. For tests,
+ * which capture faster than any frame loop would; never call it from the
+ * frame loop. */
+void diatom_rewind_flush(void);
 
 #endif
