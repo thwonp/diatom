@@ -31,9 +31,12 @@ for ext in (".in.raw", ".out.raw"):
 # Headless and silent, as in proto.py: otherwise a window opens and the stub
 # core's tone plays through the speakers. --tap-audio still sees every sample.
 ENV = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_RENDER_DRIVER="software",
-           SDL_AUDIODRIVER="dummy")
+           SDL_AUDIODRIVER="dummy", STUBCORE_SAVEDIR_PROBE="1")
+# A --save of its own, so the probe below never writes into the repo.
+import tempfile
+SAVE_DEFAULT = tempfile.mkdtemp(prefix="diatom-save-default-")
 p = subprocess.Popen([f"{ROOT}/build/desktop/diatom", "--socket", SOCK,
-                      "--tap-audio", TAP], env=ENV,
+                      "--tap-audio", TAP, "--save", SAVE_DEFAULT], env=ENV,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(100):
     if os.path.exists(SOCK): break
@@ -202,6 +205,24 @@ check_that("resume path accepted, game reaches RUNNING",
 # pause writes the preview BEFORE announcing PAUSED - the order is the contract
 before = pathlib.Path(pv).stat().st_mtime_ns
 send("STOP"); drain(2.0)
+
+# --- RUN save=: a save dir per game (plorpos-aev) ---------------------------
+# The stub writes stubcore.probe into whatever GET_SAVE_DIRECTORY says, which
+# is the same g_policy.save_dir the .srm path is built from.
+per_game = f"{tmp}/Genesis"
+os.mkdir(per_game)
+for f in (f"{SAVE_DEFAULT}/stubcore.probe",):
+    if os.path.exists(f): os.unlink(f)
+send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so\tsave={per_game}")
+drain(3.0); send("STOP"); drain(2.0)
+check_that("RUN save= is the dir the core is given",
+           os.path.exists(f"{per_game}/stubcore.probe")
+           and not os.path.exists(f"{SAVE_DEFAULT}/stubcore.probe"),
+           os.listdir(per_game) + os.listdir(SAVE_DEFAULT))
+send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so")
+drain(3.0); send("STOP"); drain(2.0)
+check_that("the next RUN without save= is back on --save",
+           os.path.exists(f"{SAVE_DEFAULT}/stubcore.probe"), os.listdir(SAVE_DEFAULT))
 
 # --- ADR-0026: achievements over the protocol ------------------------------
 # The unit test (make check-cheevos) proves the mapping and the evaluation.

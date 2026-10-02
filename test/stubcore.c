@@ -29,12 +29,17 @@
  *   STUBCORE_CRASH=exit[@N]   exit(1), which raises no signal at all
  *   STUBCORE_CRASH=load       die inside retro_load_game, before RUNNING
  *
+ * STUBCORE_SAVEDIR_PROBE=1 makes retro_load_game write an empty
+ * stubcore.probe into the dir GET_SAVE_DIRECTORY names, so a test can see
+ * which save dir a game was given without the stub having a battery.
+ *
  * It also exposes a small, entirely predictable block of system RAM, so the
  * achievement path has bytes to watch without an emulator. See sysram below.
  *
  * Test fixture. Not part of Diatom's runtime.
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -195,6 +200,16 @@ bool retro_load_game(const struct retro_game_info *game)
 	/* Before RUNNING has gone out, so the frontend owes the launcher an ERROR
 	 * and must keep its hands off the display. */
 	if (!strcmp(crash_mode, "load")) *null_ptr = 1;
+	if (getenv("STUBCORE_SAVEDIR_PROBE")) {
+		const char *dir = NULL;
+		char path[1024];
+		FILE *f;
+
+		if (env && env(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &dir) && dir) {
+			snprintf(path, sizeof path, "%s/stubcore.probe", dir);
+			if ((f = fopen(path, "w"))) fclose(f);
+		}
+	}
 	return env && env(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
 }
 bool retro_load_game_special(unsigned t, const struct retro_game_info *i, size_t n)

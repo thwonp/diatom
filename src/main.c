@@ -39,6 +39,10 @@ static bool        g_frame_fresh;
 /* The session, up here because menu_pause reads its persistence paths. The
  * lifecycle comment lives with run_session_inner below, which is what actually
  * runs one. */
+/* --save, and the dir the current RUN named in its place (RUN save=). */
+static const char *g_save_default;
+static char        g_run_save[1024];
+
 typedef struct diatom_session {
 	const char   *core, *rom, *shot, *state_load, *state_exit;
 	const char   *preview;    /* BMP of the frame, written on pause and exit */
@@ -1943,6 +1947,7 @@ int main(int argc, char **argv)
 
 	if (!g_policy.system_dir) g_policy.system_dir = ".";
 	if (!g_policy.save_dir)   g_policy.save_dir   = ".";
+	g_save_default = g_policy.save_dir;
 	g_policy.pixfmt = DIATOM_PIX_RGB565;   /* libretro's default is 0RGB1555,
 	                                          which Diatom refuses; every core
 	                                          measured picked RGB565 anyway */
@@ -2028,6 +2033,12 @@ int main(int argc, char **argv)
 			 * pass unconditionally. */
 			sn.state_load = m.resume[0]     ? m.resume     : NULL;
 			sn.state_exit = m.exit_state[0] ? m.exit_state : NULL;
+			/* The save dir too, per game - the .srm and what a core is told
+			 * by GET_SAVE_DIRECTORY - so a launcher can keep each system's
+			 * saves apart (plorpos-aev). Absent, it is --save, as before. */
+			snprintf(g_run_save, sizeof g_run_save, "%s",
+			         m.save[0] ? m.save : g_save_default);
+			g_policy.save_dir = g_run_save;
 			sn.preview    = m.preview[0]    ? m.preview    : NULL;
 			sn.cheevos    = m.cheevos[0]    ? m.cheevos    : NULL;
 			sn.console    = m.console;
