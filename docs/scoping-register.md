@@ -491,6 +491,12 @@ Two amendments ADR-0007 makes to the table above:
       superseding ADR-0015. Shape-exact to 0.03% everywhere, but **not "never
       worse"** as 0015 claimed: it loses a whole vertical factor on SNES PAL and
       Genesis. Live numbers: [core-facts.md](reference/core-facts.md).
+- [x] **[LB]** **Cut the mode set to three** →
+      **[ADR-0040](decisions/0040-three-display-modes.md)** *(Accepted)*,
+      superseding ADR-0014's set and ADR-0018. `integer`, `aspect`, `stretch`;
+      default still `stretch`. Per-console tables: `fill` is `aspect` or a
+      crop, `overscale` crops both axes, `native` is 1-11% of the panel,
+      `integer-vertical` is `aspect` or smaller. User's call, 2026-10-02.
 - [x] **[OPEN]** Aspect-ratio and overscan policy → **the user chooses**, from
       seven modes defaulting to `stretch`
       ([ADR-0014](decisions/0014-display-modes-and-default.md),

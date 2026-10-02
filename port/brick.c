@@ -1243,9 +1243,8 @@ static inline diatom_rgb mix(diatom_rgb a, diatom_rgb b, int w)
 /* Scale-blit src into the destination rect of one page, converting to the
  * framebuffer's own channel order (offsets read from the driver, not assumed).
  *
- * CLIPS rather than refuses: a fill or overscale mode hands over a rect larger
- * than the panel on purpose, and dropping the frame would be the wrong answer
- * to a deliberate crop. */
+ * CLIPS rather than refuses: integer shows a source larger than the panel 1:1
+ * (SNES hires), and dropping the frame would be the wrong answer to that. */
 static void blit(uint8_t *page, const void *src, int w, int h, size_t pitch,
                  diatom_pixfmt fmt, diatom_rect dst)
 {

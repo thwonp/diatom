@@ -62,11 +62,11 @@ never started.
 | [0011](0011-lock-the-display-rect.md) | Lock the display rect at load from base geometry | Superseded by 0021 |
 | [0012](0012-independent-toolchain.md) | Build our own toolchain; depend on nothing from NextUI or MinUI | Accepted |
 | [0013](0013-brick-fbdev-flip-thread.md) | The Brick presents via fbdev, with a flip thread | Accepted |
-| [0014](0014-display-modes-and-default.md) | Offer six display modes; default to stretch | Accepted |
+| [0014](0014-display-modes-and-default.md) | Offer six display modes; default to stretch | Superseded by 0040 |
 | [0015](0015-integer-vertical-mode.md) | Add integer-vertical; keep stretch as the default | Superseded by 0018 |
 | [0016](0016-saves-and-save-states.md) | Saves, save states, and who owns the slot | Accepted |
 | [0017](0017-firmware-is-declared-not-known.md) | Firmware requirements are declared by the launcher, not known by Diatom | Accepted |
-| [0018](0018-integer-vertical-remeasured.md) | Integer-vertical, re-measured: it is not "never worse" | Accepted |
+| [0018](0018-integer-vertical-remeasured.md) | Integer-vertical, re-measured: it is not "never worse" | Superseded by 0040 |
 | [0019](0019-input-mapping-and-remapping.md) | Two input translations, and only one of them is remappable | Accepted |
 | [0020](0020-shared-state-plane.md) | The protocol grows a state plane, with one owner per item | Accepted |
 | [0021](0021-settle-the-rect-before-locking.md) | Lock the rect, but relock if what we locked onto was never real | Accepted |
@@ -87,3 +87,4 @@ never started.
 | [0036](0036-relicense-polyform-noncommercial.md) | Relicense this fork under PolyForm Noncommercial 1.0.0 | Accepted |
 | [0038](0038-the-hotkey-modifier-is-chosen-default-menu.md) | Let the player choose the hotkey modifier, default MENU, menu on release | Accepted |
 | [0039](0039-direct-hotkeys-and-distinct-stick-directions.md) | Direct hotkey triggers, and stick directions distinct from the d-pad | Accepted |
+| [0040](0040-three-display-modes.md) | Offer three display modes - integer, aspect, stretch; default stays stretch | Accepted |

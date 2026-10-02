@@ -1,9 +1,9 @@
 # 0014. Offer six display modes; default to stretch
 
-- **Status:** Accepted
+- **Status:** Superseded by 0040
 - **Date:** 2026-08-24
 - **Supersedes:** -
-- **Superseded by:** -
+- **Superseded by:** ADR-0040
 
 ## Context
 
