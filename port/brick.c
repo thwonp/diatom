@@ -1975,6 +1975,67 @@ static void stick_axis(int value, int neg_btn, int pos_btn)
 #define AXIS_R2 5
 #define AXIS_PRESSED 16384
 
+/* The four level buttons, and holding one repeats it at the launcher's pace -
+ * TortOS's REPEAT_DELAY_MS and REPEAT_RATE_MS, 300 and 90 - so a hold does the
+ * same thing in a game as at the shelf. Until 2026-10-02 a hold was one step
+ * here and a run there. Before each repeat the button is asked about directly,
+ * so a release this loop never saw cannot leave a level climbing. */
+#define LEVEL_REPEAT_DELAY_US 300000ull
+#define LEVEL_REPEAT_RATE_US   90000ull
+static const struct { int idx; bool bright; int dir; } level_buttons[] = {
+	{ JOY_VOL_UP, false, +1 }, { JOY_VOL_DN, false, -1 },
+	{ JOY_FN_R,   true,  +1 }, { JOY_FN_L,   true,  -1 },
+};
+#define LEVEL_BUTTONS (sizeof level_buttons / sizeof level_buttons[0])
+
+/* The joystick button for level_buttons[k]: the Brick Pro's function keys
+ * are other buttons than the Brick's. */
+static int level_idx(size_t k)
+{
+	int i = level_buttons[k].idx;
+
+	if (is_brick_pro() && i == JOY_FN_R) return JOY_PRO_FN_R;
+	if (is_brick_pro() && i == JOY_FN_L) return JOY_PRO_FN_L;
+	return i;
+}
+static uint64_t g_level_next_us[LEVEL_BUTTONS];   /* when it next repeats; 0 is not held */
+
+static void level_step(size_t k)
+{
+	if (level_buttons[k].bright) bright_nudge(level_buttons[k].dir);
+	else                         gain_nudge(level_buttons[k].dir);
+}
+
+/* Whether `button` is a level button, handled here if so. */
+static bool level_button(int button, bool down)
+{
+	size_t k;
+
+	for (k = 0; k < LEVEL_BUTTONS; k++) {
+		if (level_idx(k) != button) continue;
+		g_level_next_us[k] = down ? diatom_port_now_us() + LEVEL_REPEAT_DELAY_US : 0;
+		if (down) level_step(k);
+		return true;
+	}
+	return false;
+}
+
+static void levels_repeat(void)
+{
+	uint64_t now = diatom_port_now_us();
+	size_t k;
+
+	for (k = 0; k < LEVEL_BUTTONS; k++) {
+		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
+		if (!g_joy || !SDL_JoystickGetButton(g_joy, level_idx(k))) {
+			g_level_next_us[k] = 0;
+			continue;
+		}
+		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
+		level_step(k);
+	}
+}
+
 static void debug_event(const char *what, int a, int b)
 {
 	char msg[96];
@@ -2004,26 +2065,12 @@ void diatom_port_input_poll(void)
 			bool down = (ev.type == SDL_JOYBUTTONDOWN);
 			debug_event("joy button", ev.jbutton.button, down);
 
-			/* Volume is the port's, and stops here. Whoever owns the
-			 * input loop during a game has to handle these, because
-			 * nothing else sees them - the device UI is not running.
-			 * They are never reported upward and never reach a core. */
-			if (ev.jbutton.button == JOY_VOL_UP) {
-				if (down) gain_nudge(+1);
-				break;
-			}
-			if (ev.jbutton.button == JOY_VOL_DN) {
-				if (down) gain_nudge(-1);
-				break;
-			}
-			if (ev.jbutton.button == (is_brick_pro() ? JOY_PRO_FN_R : JOY_FN_R)) {
-				if (down) bright_nudge(+1);
-				break;
-			}
-			if (ev.jbutton.button == (is_brick_pro() ? JOY_PRO_FN_L : JOY_FN_L)) {
-				if (down) bright_nudge(-1);
-				break;
-			}
+			/* Volume and brightness are the port's, and stop here.
+			 * Whoever owns the input loop during a game has to handle
+			 * these, because nothing else sees them - the device UI is
+			 * not running. They are never reported upward and never
+			 * reach a core. */
+			if (level_button(ev.jbutton.button, down)) break;
 
 			/* The Pro's stick clicks: L3 and R3, hotkey choices
 			 * (plorpos-gkd.43.1, ADR-0044). The same indexes are the plain
@@ -2079,7 +2126,7 @@ void diatom_port_input_poll(void)
 		}
 		}
 	}
-
+	levels_repeat();
 }
 
 uint32_t diatom_port_input_state(void) { return g_buttons; }
@@ -2124,6 +2171,10 @@ void diatom_port_level_invalidate(void)
 	 * presses go; the pad's releases stay, or a button would be left held. */
 	SDL_PumpEvents();
 	SDL_FilterEvents(not_level_press, NULL);
+	/* And no level key repeats on from before: one held into the menu
+	 * would step on after Continue (plorpos-gkd.50.26's bug, in the
+	 * launcher); a new press starts a new hold. */
+	memset(g_level_next_us, 0, sizeof g_level_next_us);
 }
 
 /* `*count` is positions, not a maximum index, so it is one MORE than the

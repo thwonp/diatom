@@ -540,9 +540,54 @@ static void pad_read(void)
 static void gain_nudge(int dir);
 static void bright_nudge(int dir);
 
+/* Holding a volume key repeats it at the launcher's pace - TortOS's
+ * REPEAT_DELAY_MS and REPEAT_RATE_MS, 300 and 90 - as on the Brick (upstream
+ * 15dbfec, plorpos-xpt.1.1). A hold keeps the kind its press had, brightness
+ * under HOME or volume, and the kernel is asked before each repeat whether
+ * the key is still down, so a release this loop never saw cannot leave a
+ * level climbing. [0] is Vol+, [1] Vol-. */
+#define LEVEL_REPEAT_DELAY_US 300000ull
+#define LEVEL_REPEAT_RATE_US   90000ull
+static uint64_t g_level_next_us[2];   /* when it next repeats; 0 is not held */
+static bool     g_level_bright[2];
+
+static void level_step(int k)
+{
+	int dir = k == 0 ? +1 : -1;
+
+	if (g_level_bright[k]) bright_nudge(dir);
+	else                   gain_nudge(dir);
+}
+
+static void levels_repeat(void)
+{
+	static const int code[2] = { KEY_VOLUMEUP, KEY_VOLUMEDOWN };
+	uint8_t keys[KEY_MAX / 8 + 1];
+	uint64_t now = diatom_port_now_us();
+	bool read = false;
+	int k;
+
+	for (k = 0; k < 2; k++) {
+		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
+		if (!read) {
+			memset(keys, 0, sizeof keys);
+			if (ioctl(g_keys_fd, EVIOCGKEY(sizeof keys), keys) < 0) {
+				g_level_next_us[0] = g_level_next_us[1] = 0;
+				return;
+			}
+			read = true;
+		}
+		if (!(keys[code[k] / 8] & (1u << (code[k] % 8)))) {
+			g_level_next_us[k] = 0;
+			continue;
+		}
+		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
+		level_step(k);
+	}
+}
+
 /* The volume keys are the port's and stop here - never reported upward, never
- * a core's - because nothing else is watching them while a game runs. Presses
- * only; a held key does not repeat, as on the Brick. */
+ * a core's - because nothing else is watching them while a game runs. */
 static void keys_read(void)
 {
 	struct input_event ev[16];
@@ -551,14 +596,18 @@ static void keys_read(void)
 
 	while ((n = read(g_keys_fd, ev, sizeof ev)) > 0) {
 		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
-			int dir;
+			int k;
 
-			if (ev[i].type != EV_KEY || ev[i].value != 1) continue;
-			if      (ev[i].code == KEY_VOLUMEUP)   dir = +1;
-			else if (ev[i].code == KEY_VOLUMEDOWN) dir = -1;
+			/* value 2 is the kernel's own autorepeat: the hold is timed
+			 * here, at the launcher's pace, instead. */
+			if (ev[i].type != EV_KEY || ev[i].value == 2) continue;
+			if      (ev[i].code == KEY_VOLUMEUP)   k = 0;
+			else if (ev[i].code == KEY_VOLUMEDOWN) k = 1;
 			else continue;
-			if (g_home) bright_nudge(dir);
-			else        gain_nudge(dir);
+			if (!ev[i].value) { g_level_next_us[k] = 0; continue; }
+			g_level_bright[k]  = g_home;
+			g_level_next_us[k] = diatom_port_now_us() + LEVEL_REPEAT_DELAY_US;
+			level_step(k);
 		}
 	}
 }
@@ -572,7 +621,7 @@ void diatom_port_input_poll(void)
 		if (ev.type == SDL_QUIT) g_quit = true;
 
 	if (g_pad_fd >= 0)  pad_read();
-	if (g_keys_fd >= 0) keys_read();
+	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
 
 	s = g_pad_buttons;
 	if (g_stick_x >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SRIGHT);
@@ -874,6 +923,9 @@ void diatom_port_level_invalidate(void)
 	 * when it overflows meanwhile, pad_read resyncs from the kernel. */
 	if (g_keys_fd >= 0)
 		while (read(g_keys_fd, ev, sizeof ev) > 0) { }
+	/* And no hold repeats on from before: one held into the menu would
+	 * step on after Continue; a new press starts a new hold. */
+	g_level_next_us[0] = g_level_next_us[1] = 0;
 }
 
 /* The handover. The launcher is another Wayland client under the same sway,

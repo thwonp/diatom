@@ -2267,6 +2267,43 @@ static void set_bit(int btn, bool down)
 	else      g_buttons &= ~DIATOM_BIT(btn);
 }
 
+/* Holding a volume key repeats it at the launcher's pace - TortOS's
+ * REPEAT_DELAY_MS and REPEAT_RATE_MS, 300 and 90 - as on the Brick (upstream
+ * 15dbfec, plorpos-xpt.1.1). A hold keeps the kind its press had, brightness
+ * with Menu held or volume, and SDL is asked before each repeat whether the
+ * button is still down, so a release this loop never saw cannot leave a level
+ * climbing. [0] is Vol+, [1] Vol-. */
+#define LEVEL_REPEAT_DELAY_US 300000ull
+#define LEVEL_REPEAT_RATE_US   90000ull
+static uint64_t g_level_next_us[2];   /* when it next repeats; 0 is not held */
+static bool     g_level_bright[2];
+
+static void level_step(int k)
+{
+	int dir = k == 0 ? +1 : -1;
+
+	/* Brightness spends the Menu press: its release is no tap. */
+	if (g_level_bright[k]) { g_menu_spent = true; bright_nudge(dir); }
+	else                   gain_nudge(dir);
+}
+
+static void levels_repeat(void)
+{
+	static const int idx[2] = { JOY_VOL_UP, JOY_VOL_DN };
+	uint64_t now = diatom_port_now_us();
+	int k;
+
+	for (k = 0; k < 2; k++) {
+		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
+		if (!g_joy || !SDL_JoystickGetButton(g_joy, idx[k])) {
+			g_level_next_us[k] = 0;
+			continue;
+		}
+		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
+		level_step(k);
+	}
+}
+
 void diatom_port_input_poll(void)
 {
 	SDL_Event ev;
@@ -2305,10 +2342,12 @@ void diatom_port_input_poll(void)
 			 * core's. Whoever owns the input loop during a game has to
 			 * handle these, because nothing else sees them. */
 			if (b == JOY_VOL_UP || b == JOY_VOL_DN) {
-				int dir = b == JOY_VOL_UP ? +1 : -1;
-				if (!down) break;
-				if (g_menu_down) { g_menu_spent = true; bright_nudge(dir); }
-				else gain_nudge(dir);
+				int k = b == JOY_VOL_UP ? 0 : 1;
+
+				if (!down) { g_level_next_us[k] = 0; break; }
+				g_level_bright[k]  = g_menu_down;
+				g_level_next_us[k] = diatom_port_now_us() + LEVEL_REPEAT_DELAY_US;
+				level_step(k);
 				break;
 			}
 			if (down && g_menu_down && !g_menu_sent && !g_menu_spent) {
@@ -2332,6 +2371,7 @@ void diatom_port_input_poll(void)
 		}
 		}
 	}
+	levels_repeat();
 }
 
 uint32_t diatom_port_input_state(void) { return g_buttons; }
@@ -2380,6 +2420,9 @@ void diatom_port_level_invalidate(void)
 	 * presses go; the pad's releases stay, or a button would be left held. */
 	SDL_PumpEvents();
 	SDL_FilterEvents(not_level_press, NULL);
+	/* And no hold repeats on from before: one held into the menu would
+	 * step on after Continue; a new press starts a new hold. */
+	g_level_next_us[0] = g_level_next_us[1] = 0;
 
 	/* The level read and written now, not by the first frames: those also
 	 * start the codec open (audio_claim) - at a game's start, in its warmup,
