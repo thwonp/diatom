@@ -5,9 +5,9 @@
  * hardware, so it belongs to the port. Put both in the port and the maths gets
  * duplicated per device and drifts.
  *
- * Seven modes, because "how big should the picture be" has that many
- * defensible answers and no universally right one. The default is `stretch`
- * (ADR-0014), chosen by cycling them on a real panel rather than by argument.
+ * Three modes, cut from seven by ADR-0040: whole pixels, the shape the core
+ * asks for, or the whole panel. The default is `stretch` (ADR-0014), chosen by
+ * cycling them on a real panel rather than by argument.
  *
  * The counter-example that motivated per-device arithmetic still holds: PC
  * Engine's 256x243 at 3x is 768x729, which exceeds the Miniloong's 720 lines
@@ -15,10 +15,11 @@
  */
 #include "diatom.h"
 
-/* The comparison set, in cycle order on device. Ordered by how much of the
- * panel gets used, so stepping through is a single monotonic story rather than
- * a shuffle: boxed, boxed-but-shape-correct, shape-correct, that cropped to
- * cover, stretched, uniform-cropped, then 1:1 as a reference.
+/* The set, in cycle order on device: boxed with whole pixels, boxed with the
+ * shape kept, then the whole panel. Seven once - integer-vertical, fill,
+ * overscale and native went in ADR-0040, after the per-console coverage and
+ * crop tables showed each either matched one of these or cost a crop nobody
+ * wanted.
  *
  * Geometry and filter are cycled separately (mode on the shoulders, filter on
  * A) because the question worth answering is what a given geometry looks like
@@ -27,18 +28,10 @@
 const diatom_display_mode_info diatom_modes[] = {
 	{ "integer",   DIATOM_SCALE_INTEGER,
 	  "largest whole factor, letterboxed" },
-	{ "integer-vertical", DIATOM_SCALE_INTEGER_VERT,
-	  "whole factor down, shape correct across" },
 	{ "aspect",    DIATOM_SCALE_ASPECT_FIT,
 	  "shape the core asks for, fits inside the panel" },
-	{ "fill",      DIATOM_SCALE_ASPECT_FILL,
-	  "shape kept, covers the panel, edges cropped" },
 	{ "stretch",   DIATOM_SCALE_STRETCH,
 	  "both axes filled, shape ignored" },
-	{ "overscale", DIATOM_SCALE_INTEGER_OVER,
-	  "next whole factor up: uniform pixels, edges cropped" },
-	{ "native",    DIATOM_SCALE_NATIVE,
-	  "1:1, no scaling at all" },
 };
 const int diatom_mode_count =
 	(int)(sizeof diatom_modes / sizeof diatom_modes[0]);
@@ -77,9 +70,6 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 	}
 
 	switch (mode) {
-	case DIATOM_SCALE_NATIVE:
-		return centered(src_w, src_h, surf_w, surf_h);
-
 	case DIATOM_SCALE_INTEGER:
 		fx = surf_w / src_w;
 		fy = surf_h / src_h;
@@ -90,54 +80,9 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 		if (f < 1) f = 1;
 		return centered(src_w * f, src_h * f, surf_w, surf_h);
 
-	case DIATOM_SCALE_INTEGER_VERT:
-		/* Whole factor vertically, shape-correct horizontally.
-		 *
-		 * Exists because "integer scaling" does not mean "undistorted" - it
-		 * means "source pixels preserved", and half the test matrix never had
-		 * square pixels. Measured 2026-08-24 on a 1024x768 panel: plain
-		 * integer shows NES 12.5% too narrow, SNES 14.3%, PC Engine 12.2%,
-		 * because each reports a pixel aspect its resolution does not imply.
-		 *
-		 * This keeps the axis where uniformity is most visible exactly whole
-		 * and lets the other axis carry the correction. For content that IS
-		 * square-pixel - Game Boy, GBA, Genesis - it collapses to exactly what
-		 * plain integer produces, so it is never the worse of the two.
-		 *
-		 * Step the factor down rather than clamp the width: a wide aspect on a
-		 * narrow panel must lose a whole factor, not gain a squashed one. */
-		a = target_aspect(src_w, src_h, aspect);
-		for (f = surf_h / src_h; f > 1; f--) {
-			int w = (int)((double)(src_h * f) * a + 0.5);
-			if (w <= surf_w) break;
-		}
-		if (f < 1) f = 1;
-		return centered((int)((double)(src_h * f) * a + 0.5), src_h * f,
-		               surf_w, surf_h);
-
-	case DIATOM_SCALE_INTEGER_OVER:
-		/* Smallest integer factor that covers the surface on both axes, so the
-		 * overflow is cropped. Keeps pixels perfectly uniform - the one way to
-		 * fill a panel without uneven pixel rows - at the cost of the edges.
-		 * On the Brick that is NES at 4x: 1024x960, losing 96 lines. Often the
-		 * right trade, because the lines lost are the overscan a CRT hid. */
-		fx = (surf_w + src_w - 1) / src_w;
-		fy = (surf_h + src_h - 1) / src_h;
-		f  = fx > fy ? fx : fy;
-		if (f < 1) f = 1;
-		return centered(src_w * f, src_h * f, surf_w, surf_h);
-
 	case DIATOM_SCALE_ASPECT_FIT:
 		a = target_aspect(src_w, src_h, aspect);
 		if ((double)surf_w / a <= (double)surf_h)
-			return centered(surf_w, (int)((double)surf_w / a + 0.5),
-			               surf_w, surf_h);
-		return centered((int)((double)surf_h * a + 0.5), surf_h,
-		               surf_w, surf_h);
-
-	case DIATOM_SCALE_ASPECT_FILL:
-		a = target_aspect(src_w, src_h, aspect);
-		if ((double)surf_w / a >= (double)surf_h)
 			return centered(surf_w, (int)((double)surf_w / a + 0.5),
 			               surf_w, surf_h);
 		return centered((int)((double)surf_h * a + 0.5), surf_h,

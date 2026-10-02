@@ -288,12 +288,8 @@ bool diatom_state_load(diatom_core *c, const char *path);
  * Which mode should be default is OPEN (register §5). The set exists so the
  * question can be answered by looking at a panel rather than by argument. */
 typedef enum {
-	DIATOM_SCALE_NATIVE,         /* 1x, centered                               */
 	DIATOM_SCALE_INTEGER,        /* largest whole factor that fits, boxed     */
-	DIATOM_SCALE_INTEGER_VERT,   /* whole factor down, shape-correct across   */
-	DIATOM_SCALE_INTEGER_OVER,   /* smallest whole factor that covers, cropped*/
 	DIATOM_SCALE_ASPECT_FIT,     /* fractional, shape kept, boxed             */
-	DIATOM_SCALE_ASPECT_FILL,    /* fractional, shape kept, cropped           */
 	DIATOM_SCALE_STRETCH         /* fills both axes, shape ignored            */
 } diatom_scale_mode;
 

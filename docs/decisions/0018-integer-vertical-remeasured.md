@@ -1,9 +1,9 @@
 # 0018. Integer-vertical, re-measured: it is not "never worse"
 
-- **Status:** Accepted
+- **Status:** Superseded by 0040
 - **Date:** 2026-08-25
 - **Supersedes:** [0015](0015-integer-vertical-mode.md)
-- **Superseded by:** -
+- **Superseded by:** ADR-0040
 
 [ADR-0014](0014-display-modes-and-default.md) stands unchanged. This replaces
 [ADR-0015](0015-integer-vertical-mode.md), whose decisions survive but whose
