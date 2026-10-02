@@ -81,6 +81,18 @@ compatible with diatom's own license (MIT upstream, PolyForm Noncommercial in
 this fork), and brings no GPL code in. The networking halves (`rc_client`, `rapi`, `rurl`) are deliberately
 not vendored; `vendor/rcheevos/README.md` lists every omission and why.
 
+## `vendor/lz4/`
+
+The LZ4 block compressor, vendored for the rewind ring (`src/rewind.c`,
+plorpos-gkd.59) because the GKD's ROCKNIX image ships no `liblz4.so`.
+
+- **Copyright (c) 2011-2020, Yann Collet**
+- **BSD 2-Clause licensed**, full text in `vendor/lz4/LICENSE`.
+
+Permissive, like rcheevos: compatible with this fork's license and brings no
+copyleft in. Only `lib/lz4.c` and `lib/lz4.h` of v1.10.0 are carried, unmodified;
+`vendor/lz4/README.md` says why the frame and HC formats are not.
+
 ## Cores
 
 **Diatom ships no cores and has no core list.** It loads whatever shared library

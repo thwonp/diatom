@@ -13,7 +13,7 @@ PORT ?= desktop
 
 CC      ?= cc
 CFLAGS  += -std=gnu11 -Wall -Wextra -Wno-unused-parameter -O2
-CFLAGS  += -Iinclude -Isrc -Ivendor/rcheevos/include
+CFLAGS  += -Iinclude -Isrc -Ivendor/rcheevos/include -Ivendor/lz4
 # Header dependency tracking. Without it, changing a struct in diatom.h leaves
 # stale objects calling through old member offsets - which on 2026-08-26 turned
 # serialize_size() into a call to a different function entirely and made state
@@ -55,6 +55,12 @@ RC_OBJ := $(RC_SRC:%.c=$(BUILD)/%.o)
 RC_CFLAGS := -std=gnu11 -O2 -MMD -MP -DRC_DISABLE_LUA \
              -I$(RC_DIR)/include -I$(RC_DIR)/src
 $(RC_OBJ): CFLAGS := $(RC_CFLAGS)
+
+# lz4 (vendor/lz4/README.md): the rewind ring's compressor. Same terms as
+# rcheevos above - compiled on its own flags, never patched.
+LZ4_DIR := vendor/lz4
+LZ4_OBJ := $(BUILD)/$(LZ4_DIR)/lz4.o
+$(LZ4_OBJ): CFLAGS := -std=gnu11 -O2 -MMD -MP
 
 ifeq ($(PORT),desktop)
   # sdl2-config ships with SDL2 itself; pkg-config is a separate install and is
@@ -220,9 +226,9 @@ $(STUB): test/stubcore.c
 run-stub: $(BIN) $(STUB)
 	./$(BIN) --core $(STUB)
 
-$(BIN): $(OBJ) $(RC_OBJ)
+$(BIN): $(OBJ) $(RC_OBJ) $(LZ4_OBJ)
 	@mkdir -p $(BUILD)
-	$(CC) -o $@ $(OBJ) $(RC_OBJ) $(LDFLAGS)
+	$(CC) -o $@ $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(LDFLAGS)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -355,7 +361,7 @@ $(TOOLS_DIR)/allocwatch.o: tools/allocwatch.c
 	@mkdir -p $(TOOLS_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(CONFORM): $(OBJ) $(RC_OBJ) $(TOOLS_DIR)/allocwatch.o
+$(CONFORM): $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(TOOLS_DIR)/allocwatch.o
 	$(CC) -o $@ $^ $(LDFLAGS) \
 	  -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
 
@@ -372,4 +378,4 @@ conform-device:
 # would otherwise become the default goal, and `make` would silently build one
 # object and stop - which it did, on 2026-08-26, and looked exactly like the
 # docker mtime staleness it was added to prevent.
--include $(OBJ:.o=.d) $(RC_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(RC_OBJ:.o=.d) $(LZ4_OBJ:.o=.d)
