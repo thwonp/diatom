@@ -211,7 +211,7 @@ $(BUILD)/%.o: %.c
 # fails when it is broken. check-seam has held since day one for exactly that
 # reason; the register drifted 418 -> 992 lines in three days because nothing
 # ever complained.
-check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane
+check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind
 
 # Does a RetroAchievements address reach the byte it names? Offline, needs no
 # core and no ROM, and links only cheevos.c plus the vendored runtime - so it
@@ -228,6 +228,30 @@ $(CHEEVOS_TEST): test/cheevos_test.c src/cheevos.c $(RC_OBJ)
 	$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -O2 \
 	      -Iinclude -Isrc -I$(RC_DIR)/include -DRC_DISABLE_LUA \
 	      -o $@ test/cheevos_test.c src/cheevos.c $(RC_OBJ) -lm
+
+# The rewind ring against a fake core (plorpos-gkd.59): every restore checked
+# byte for byte. Built twice - the worker thread is half of what is tested, so
+# TSan, plus ASan/UBSan for the ring arithmetic. A small ring, so the budget
+# and the entry cap are both reachable in a few hundred 4 KiB captures. Uses
+# the host compiler whatever PORT is: it is a desktop check, like the others.
+REWIND_TEST_FLAGS := -std=gnu11 -Wall -Wextra -Wno-unused-parameter -O1 -g \
+  -Iinclude -Isrc -I$(LZ4_DIR) -DDIATOM_REWIND_BUDGET_BYTES='(64u * 1024)' \
+  -DDIATOM_REWIND_MAX_DEPTH=40 -DDIATOM_REWIND_TEST_HOOK=rewind_test_hook
+REWIND_TEST_SRC := test/rewind_test.c src/rewind.c $(LZ4_DIR)/lz4.c
+
+check-rewind: $(BUILD)/rewind-test-asan $(BUILD)/rewind-test-tsan
+	@./$(BUILD)/rewind-test-asan
+	@TSAN_OPTIONS=halt_on_error=1 ./$(BUILD)/rewind-test-tsan
+
+$(BUILD)/rewind-test-asan: $(REWIND_TEST_SRC) src/rewind.h
+	@mkdir -p $(BUILD)
+	cc $(REWIND_TEST_FLAGS) -fsanitize=address,undefined -fno-sanitize-recover=all \
+	   -o $@ $(REWIND_TEST_SRC) -lpthread
+
+$(BUILD)/rewind-test-tsan: $(REWIND_TEST_SRC) src/rewind.h
+	@mkdir -p $(BUILD)
+	cc $(REWIND_TEST_FLAGS) -fsanitize=thread -o $@ $(REWIND_TEST_SRC) -lpthread
+.PHONY: check-rewind
 
 # Deliberately NOT part of `check`. It needs a build and it runs in real time -
 # Diatom paces to the core's frame rate, so 300 frames costs five seconds of
