@@ -205,8 +205,16 @@ and Muse over Bluetooth running: ~1.5 GB still available, one core busy
 - After each session Diatom calls `malloc_trim(0)`, after `EXIT`, so a
   resident Diatom does not keep a large ring's worth of freed heap between
   games.
-- Still uncompressed. LZ4 remains the lever if the GKD's history is judged
-  too short; the CPU for it is there (seven idle cores), the need is not yet.
+- Compressed since plorpos-gkd.59, as NextUI does: each snapshot is XORed
+  against the one before and LZ4-compressed (vendored, `vendor/lz4/`) on a
+  worker thread into a byte ring of variable-length entries; the budget is
+  now compressed bytes. Measured on the GKD from real autosaves, capture
+  every 5: PlayStation 2.0x -> 53x, every other system 21-123x, so all of
+  them reach the 1800-entry cap (~30 s of hold) where PlayStation had ~1 s
+  and PICO-8 ~2 s. Unlike NextUI the frame loop never compresses and never
+  waits: a capture the worker is not ready for is dropped, and starting a
+  rewind discards work in flight instead of draining it. The frame loop
+  still pays the core's own serialize every capture.
 - The speed is also the player's (plorpos-gkd.40): `SETREWINDSPEED every=N`
   sets the cadence for the session, 0..60, 0 = off (nothing captured, the
   ring emptied and freed, the rewind hotkey a no-op); `REWINDSPEED` asks,

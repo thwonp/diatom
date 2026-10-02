@@ -1292,6 +1292,7 @@ pad attached, which is why the real pad has a Mode switch.
       Support it. RAM cost is a budgeted placeholder (8 MiB, uncompressed,
       re-sized against the live core's `serialize_size()`), not a measured
       one - no per-core state size exists yet for the actual target device.
+      *(Since measured and compressed: plorpos-gkd.59, see ADR-0034.)*
 - [ ] **[OPEN]** **NGPC has no battery saves, only states.** Measured
       2026-09-01 on Dark Arms and Metal Slug - 1st Mission, both of which save
       on real hardware: `mednafen_ngp` reports `retro_get_memory_size(SAVE_RAM)`
