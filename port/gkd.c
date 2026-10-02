@@ -499,6 +499,31 @@ static int evdev_open(const char *want)
 	return -1;
 }
 
+static bool bit_set(const unsigned long *bits, unsigned n)
+{
+	return (bits[n / (8 * sizeof *bits)] >> (n % (8 * sizeof *bits))) & 1;
+}
+
+/* Rebuild the pad from the kernel's own state after it dropped events. Drain
+ * first, then ask: an event landing in between is then applied twice, which
+ * is harmless, instead of lost. */
+static void pad_resync(void)
+{
+	struct input_event ev[32];
+	unsigned long keys[KEY_CNT / (8 * sizeof(long)) + 1] = { 0 };
+	struct input_absinfo abs;
+	size_t k;
+
+	while (read(g_pad_fd, ev, sizeof ev) > 0) { }
+	if (ioctl(g_pad_fd, EVIOCGKEY(sizeof keys), keys) < 0) return;
+	g_pad_buttons = 0;
+	for (k = 0; k < sizeof padmap / sizeof padmap[0]; k++)
+		if (bit_set(keys, padmap[k].code)) g_pad_buttons |= DIATOM_BIT(padmap[k].btn);
+	g_home = bit_set(keys, BTN_TRIGGER_HAPPY1);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = abs.value;
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = abs.value;
+}
+
 static void pad_read(void)
 {
 	struct input_event ev[32];
@@ -507,6 +532,15 @@ static void pad_read(void)
 
 	while ((n = read(g_pad_fd, ev, sizeof ev)) > 0) {
 		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
+			/* Nothing reads this fd while the launcher has the screen, and
+			 * the kernel's queue holds 256 events, about 64 taps: past that
+			 * it throws the queue away, and with it the release of the MENU
+			 * that opened the menu. MENU then stayed down and the next press
+			 * made no edge - "the first MENU does nothing" (plorpos-gkd.44). */
+			if (ev[i].type == EV_SYN && ev[i].code == SYN_DROPPED) {
+				pad_resync();
+				return;
+			}
 			if (ev[i].type == EV_ABS) {
 				if (ev[i].code == ABS_X) g_stick_x = ev[i].value;
 				if (ev[i].code == ABS_Y) g_stick_y = ev[i].value;
@@ -870,7 +904,8 @@ void diatom_port_level_invalidate(void)
 	 * menu - are thrown away. Nothing reads this fd meanwhile, and keys_read
 	 * acts on every press it finds: a Vol+ on the shelf replayed as a volume
 	 * step and a bar at the next game's start (seen 2026-09-29). The pad fd is
-	 * left alone - pad_read tracks held buttons, which draining would lose. */
+	 * left alone - pad_read tracks held buttons, which draining would lose;
+	 * when it overflows meanwhile, pad_read resyncs from the kernel. */
 	if (g_keys_fd >= 0)
 		while (read(g_keys_fd, ev, sizeof ev) > 0) { }
 }
