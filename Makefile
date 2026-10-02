@@ -107,9 +107,11 @@ ifeq ($(PORT),gkd)
     $(error gkd sysroot missing: run tools/fetch-gkd-sysroot.sh)
   endif
   CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
-  # Rewind (ADR-0034, revisited): 256 MiB against ~1.5 GB free in a game
-  # (plorpos-gkd.38), a snapshot every 5 frames so rewind plays at 5x, and a
-  # cap that lets small-state cores use the budget. ~47 s of GBA.
+  # Rewind (ADR-0034, revisited): 256 MiB of compressed history against
+  # ~1.5 GB free in a game (plorpos-gkd.38), a snapshot every 5 frames so
+  # rewind plays at 5x. Since LZ4 (plorpos-gkd.59) the 1800-entry cap binds
+  # first for every system: ~30 s of hold, ~150 s of play. PlayStation comes
+  # closest to the budget (~180 MB at the cap, measured in flight).
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
              -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
   # Resident cores: 16, not the Brick's 8. The GKD has nine cores today and
