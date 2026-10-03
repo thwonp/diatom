@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Diatom port interface - ADR-0007.
  *
  * THIS HEADER MUST NOT INCLUDE libretro.h, AND NEITHER MAY ANY PORT.

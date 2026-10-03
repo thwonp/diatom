@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Does Diatom allocate inside its frame loop?
  *
  * §11 is the project's stated thesis and its "no malloc in the frame loop" item

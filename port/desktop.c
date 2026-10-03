@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Desktop port - SDL2.
  *
  * Built FIRST, before any device backend, and that ordering is deliberate: an

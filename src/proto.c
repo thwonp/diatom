@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* The launcher protocol - ADR-0009.
  *
  * One Unix domain socket, line-based, tab-separated `key=value`. Tabs separate

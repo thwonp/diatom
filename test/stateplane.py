@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """ADR-0020's state plane, end to end against the stub core.
 
 Every case here is one that was actually got wrong while building it, which is

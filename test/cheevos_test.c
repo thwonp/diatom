@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* SPDX-License-Identifier: MIT */
 /* Does a RetroAchievements address reach the byte it is supposed to?
  *
  * ADR-0025 moved achievements into Diatom on the strength of one claim: that

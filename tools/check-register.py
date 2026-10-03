@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Structural checks on docs/scoping-register.md.
 
 The register is the project's resume point: read a section, see what is left.

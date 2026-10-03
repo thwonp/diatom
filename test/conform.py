@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Headless conformance: does Diatom still do the same thing, in the same space?
 
 Three properties, and each exists because §11 - the section this project calls

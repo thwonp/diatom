@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* SPIKE: which RETRO_ENVIRONMENT_* calls do our cores actually make, and at
  * which lifecycle phase?
  *

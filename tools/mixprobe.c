@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Can a port set an ALSA mixer control with no alsa-lib and no fork?
  *
  * The Brick's sysroot carries SDL2 and nothing else, so `port/brick.c` cannot

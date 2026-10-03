@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """How much of the output is not the tone that went in?
 
 `resampleprobe` pushes a single sine through the real resampler. The input has

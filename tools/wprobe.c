@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* SPIKE: what does an atomic save-file write actually cost on this SD card?
  * write to .tmp, fsync, rename - the sequence a crash-safe save must use.
  * An instrument, not Diatom code. Its numbers are cited by ADR-0016. */

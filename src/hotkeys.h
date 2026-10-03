@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* NextUI-derived: PolyForm Noncommercial 1.0.0, NOT this repo's root MIT
- * license - see THIRD-PARTY.md before touching this file. */
+ * license - see NOTICE and THIRD-PARTY.md before touching this file. */
 /* The hotkey submenu's binding table (sibling TortOS feature), ported from
  * NextUI's OptionShortcuts_* (ma_frontend_opts.c). Parsing and storage only -
  * see hotkey_chord() in main.c for the per-frame dispatch that actually

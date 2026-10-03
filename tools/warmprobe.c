@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* What does a game launch cost when the process is already up and the core is
  * already resident?
  *

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Counter ticks to microseconds, for diatom_port_now_us in both ports.
  *
  * Not ticks * 1000000 / freq, which is what both ports did until 2026-09-15.

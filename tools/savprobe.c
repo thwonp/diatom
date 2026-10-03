@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* SPIKE: what do our cores actually expose for saving, and what does it cost?
  *
  * Answers, per core:

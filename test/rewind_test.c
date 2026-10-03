@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* src/rewind.c against a fake core: every restored state is checked byte for
  * byte, so a wrong delta reference, a ring entry overwritten while still
  * held, or a stale capture slipping through all fail here instead of as a

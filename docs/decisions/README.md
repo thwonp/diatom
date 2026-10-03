@@ -71,7 +71,7 @@ never started.
 | [0020](0020-shared-state-plane.md) | The protocol grows a state plane, with one owner per item | Accepted |
 | [0021](0021-settle-the-rect-before-locking.md) | Lock the rect, but relock if what we locked onto was never real | Accepted |
 | [0022](0022-display-mode-on-the-state-plane.md) | Display mode joins the state plane, and is the second contested row | Accepted |
-| [0023](0023-core-licensing.md) | Diatom is MIT and ships no cores, which is what makes that safe | Proposed |
+| [0023](0023-core-licensing.md) | Diatom is MIT and ships no cores, which is what makes that safe | Accepted |
 | [0024](0024-session-persistence-paths.md) | A session carries its persistence paths, and PREVIEW finally exists | Accepted |
 | [0025](0025-achievements-belong-to-the-frontend.md) | Achievements belong to the frontend, and rcheevos is the evaluator | Proposed |
 | [0026](0026-achievements-on-the-launcher-protocol.md) | Achievements on the launcher protocol: the console is declared and the set is a file | Proposed |
@@ -84,9 +84,10 @@ never started.
 | [0033](0033-the-newest-connection-wins.md) | The newest connection wins, because a dead launcher's socket can outlive it | Accepted |
 | [0034](0034-fast-forward-and-rewind.md) | Fast-forward and rewind, ported from NextUI, budgeted rather than measured | Accepted |
 | [0035](0035-hotkey-submenu-lives-on-select.md) | The hotkey submenu is a SELECT-held chord Diatom checks itself | Accepted |
-| [0036](0036-relicense-polyform-noncommercial.md) | Relicense this fork under PolyForm Noncommercial 1.0.0 | Accepted |
+| [0036](0036-relicense-polyform-noncommercial.md) | Relicense this fork under PolyForm Noncommercial 1.0.0 | Superseded by 0042 |
 | [0037](0037-home-is-a-second-modifier-key.md) | Let a spare device key stand in for SELECT as the frontend modifier | Accepted |
 | [0038](0038-the-hotkey-modifier-is-chosen-default-menu.md) | Let the player choose the hotkey modifier, default MENU, menu on release | Accepted |
 | [0039](0039-direct-hotkeys-and-distinct-stick-directions.md) | Direct hotkey triggers, and stick directions distinct from the d-pad | Accepted |
 | [0040](0040-three-display-modes.md) | Offer three display modes - integer, aspect, stretch; default stays stretch | Accepted |
 | [0041](0041-shader-chains-are-sent-not-named.md) | Send the shader chain itself over SETDISPLAY; the launcher owns the list and its names | Accepted |
+| [0042](0042-license-per-file-mit-default.md) | License per file: MIT by default, PolyForm Noncommercial only where NextUI's code is | Accepted |

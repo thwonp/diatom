@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Persistence - ADR-0016.
  *
  * Host-side entirely. The port deals in pixels, samples, buttons and time, and

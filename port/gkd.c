@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* GKD 350H Ultra (RK3576S) port, on vendor ROCKNIX.
  *
  * Started from port/desktop.c rather than port/brick.c: ROCKNIX runs a sway

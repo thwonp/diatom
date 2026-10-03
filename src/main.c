@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT AND PolyForm-Noncommercial-1.0.0 */
 /* Diatom - a minimal libretro frontend.
  *
  * Standalone is the primary mode:  diatom --core X.so --rom game.nes
@@ -556,6 +557,7 @@ static void report_slot(int mode, diatom_filter filter)
  * launcher that sends it twice gets one menu. */
 static bool g_pause_requested;
 
+/* BEGIN PolyForm-Noncommercial-1.0.0 - NextUI-derived: fast-forward and rewind state, NextUI's setFastForward/limitFF. See NOTICE. */
 /* Fast-forward and rewind - ported from NextUI's frontend-side approach
  * (ma_runframe.c setFastForward/limitFF, ma_rewind.c), not libretro's
  * fast-forward-ratio API. See src/rewind.c and THIRD-PARTY.md.
@@ -566,6 +568,7 @@ static bool g_pause_requested;
 #define DIATOM_MAX_FF_SPEED 8
 static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
+/* END PolyForm-Noncommercial-1.0.0 */
 /* A core still emits one frame's worth of audio per retro_run() call while
  * fast-forwarding - nothing skips samples, only the sleep between frames
  * shrinks - so unthrottled output would play sped-up and garbled. Quieted
@@ -749,6 +752,7 @@ static bool menu_pause(const diatom_session *sn)
 	return false;
 }
 
+/* BEGIN PolyForm-Noncommercial-1.0.0 - NextUI-derived: the hotkey chords, NextUI's OptionShortcuts_* (hotkey_chord). See NOTICE. */
 /* ---- hotkeys: sibling TortOS feature, ported from NextUI's OptionShortcuts_*
  * (ma_frontend_opts.c) alongside the fast-forward/rewind port above - see
  * THIRD-PARTY.md. One key, chosen by the player and MENU by default
@@ -845,6 +849,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 
 	return mask;
 }
+/* END PolyForm-Noncommercial-1.0.0 */
 
 /* One game, start to finish. Extracted so the protocol loop (ADR-0009) can run
  * it repeatedly in a process that never exits - which is what makes a warm
@@ -1808,6 +1813,7 @@ static int run_session_inner(const diatom_session *sn)
 		}
 		diatom_audio_sync();
 
+		/* BEGIN PolyForm-Noncommercial-1.0.0 - NextUI-derived: the fast-forward deadline, NextUI's setFastForward/limitFF. See NOTICE. */
 		/* Fast-forward: a shorter deadline, not fewer frames - ported from
 		 * NextUI's setFastForward/limitFF, which computes exactly this
 		 * ratio (ff_frame_time = 1e6/(fps*(max_ff_speed+1))) against SDL_Delay
@@ -1816,6 +1822,7 @@ static int run_session_inner(const diatom_session *sn)
 		 * itself, because g_ff_speed can change mid-session via SETSPEED. */
 		{
 			double target_us = frame_us / g_ff_speed;
+		/* END PolyForm-Noncommercial-1.0.0 */
 
 			next_us += target_us;
 			now = diatom_port_now_us();

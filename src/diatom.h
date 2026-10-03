@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Diatom internals.
  *
  * One module organized by file, not by layer. An earlier proposal split "core
@@ -187,17 +188,21 @@ typedef enum {
 	DIATOM_MSG_SETMUTE,    /* hold it off, or release it: `on` = 1 | 0 */
 	DIATOM_MSG_QUIET,      /* report whether the game's own sound is held silent */
 	DIATOM_MSG_SETQUIET,   /* hold it silent, or let it play: `on` = 1 | 0 */
-	/* Fast-forward and rewind. Ported from NextUI's frontend-side approach
-	 * (ma_runframe.c / ma_rewind.c), not libretro's fast-forward-ratio API -
-	 * see src/rewind.c and THIRD-PARTY.md. */
+	/* Fast-forward and rewind. The verbs are this repo's (MIT), a plain
+	 * extension of the state plane; what they drive is ported from NextUI's
+	 * frontend-side approach (ma_runframe.c / ma_rewind.c), not libretro's
+	 * fast-forward-ratio API, and is PolyForm Noncommercial - src/rewind.c
+	 * and the fenced parts of main.c. See NOTICE and THIRD-PARTY.md. */
 	DIATOM_MSG_SPEED,      /* report the playback speed multiplier: `speed` */
 	DIATOM_MSG_SETSPEED,   /* set it, 1..DIATOM_MAX_FF_SPEED: `speed` */
 	DIATOM_MSG_REWIND,     /* report whether rewind is engaged */
 	DIATOM_MSG_SETREWIND,  /* engage/disengage stepping backward: `on` = 1 | 0 */
 	DIATOM_MSG_REWINDSPEED,    /* report the rewind speed: `every` */
 	DIATOM_MSG_SETREWINDSPEED, /* set it, 0 (off)..DIATOM_REWIND_MAX_EVERY: `every` */
-	/* The hotkey submenu (sibling TortOS feature, ported from NextUI's
-	 * OptionShortcuts_* alongside the same rewind/FF port). SELECT-held
+	/* The hotkey submenu (sibling TortOS feature). The verbs are this repo's
+	 * (MIT); the bindings they set are ported from NextUI's OptionShortcuts_*
+	 * alongside the same rewind/FF port and are PolyForm Noncommercial -
+	 * src/hotkeys.c and hotkey_chord() in main.c. SELECT-held
 	 * chords, every one of them a binding; display mode and filter included
 	 * since plorpos-gkd.22. See hotkey_chord() in main.c. */
 	DIATOM_MSG_HOTKEYS,    /* report the current bindings: `hotkeys` */

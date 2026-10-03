@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Does SDL's audio path actually drive a bluealsa sink on this device?
  *
  * Diatom opens a named sink through SDL and the sink then carries nothing,

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* The port's audio contract, exercised against a real port.
  *
  * ADR-0007 says the port owns opening a device and the host owns choosing one,

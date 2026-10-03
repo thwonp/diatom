@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* NextUI-derived: PolyForm Noncommercial 1.0.0, NOT this repo's root MIT
- * license - see THIRD-PARTY.md before touching this file. */
+ * license - see NOTICE and THIRD-PARTY.md before touching this file. */
 /* See rewind.h. Ported from NextUI's ma_rewind.c (PolyForm Noncommercial
  * 1.0.0) - see THIRD-PARTY.md. Like NextUI, each snapshot is XORed against
  * the one before it and LZ4-compressed on a worker thread into a byte ring

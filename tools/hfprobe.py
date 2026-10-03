@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Is the resampler adding high frequencies that were not in the source?
 
 A resampler is a lowpass. It cannot create energy above what it was given, so

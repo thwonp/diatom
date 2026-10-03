@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Can a port read and set the backlight with no vendor headers?
  *
  * TortOS's libmsettings shows brightness going through /dev/disp rather than a

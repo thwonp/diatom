@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* The environment callback.
  *
  * Scope comes from measurement, not guesswork. The env-inventory spike ran six

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Offline half of the core-facts check - no device needed.
 
 `tools/corefacts.sh --check` re-measures on hardware and is the real proof, but

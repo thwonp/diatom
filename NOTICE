@@ -1,39 +1,37 @@
 This is a fork of diatom by Eric Reinsmidt, maintained as the emulator of
 plorpOS (working name), itself a fork of TortOS.
 
-Required Notice: Copyright (c) 2026 Thwonp (https://github.com/thwonp/diatom)
+LICENSING IS PER FILE (docs/decisions/0042-license-per-file-mit-default.md).
 
-This fork is licensed under the PolyForm Noncommercial License 1.0.0; see
-LICENSE. It may not be sold or otherwise put to commercial use.
+MIT is the default (LICENSE): Eric Reinsmidt's diatom code, under the terms he
+released it with, and everything Thwonp wrote for this fork. That holds for
+every version of this fork, not only this one - including anything published
+while the fork was licensed PolyForm Noncommercial (2026-09-28 to 2026-10-03,
+ADR-0036): Thwonp's code in those versions is available under the MIT License
+too. Each source file says which terms it is under on its first line
+(SPDX-License-Identifier).
 
-Eric Reinsmidt released diatom under the MIT License. His code is used here
-under those terms, whose notice follows and must be kept with any copy:
+The exception is code derived from NextUI (https://github.com/LoveRetro/NextUI),
+which NextUI licenses under the PolyForm Noncommercial License 1.0.0. That code
+keeps those terms - full text in LICENSES/PolyForm-Noncommercial-1.0.0.txt -
+and may not be put to commercial use. It is:
 
----
+  src/rewind.c, src/rewind.h
+      The rewind ring, after NextUI's ma_rewind.c. Whole files.
 
-MIT License
+  src/hotkeys.c, src/hotkeys.h
+      The hotkey bindings, after NextUI's OptionShortcuts_*. Whole files.
 
-Copyright (c) 2026 Eric Reinsmidt
+  src/main.c
+      Only the regions between "BEGIN PolyForm-Noncommercial-1.0.0" and
+      "END PolyForm-Noncommercial-1.0.0" comments: the fast-forward and
+      rewind state, the hotkey chords (hotkey_chord), and the fast-forward
+      deadline, after NextUI's setFastForward/limitFF. The rest of the file
+      is MIT (SPDX: "MIT AND PolyForm-Noncommercial-1.0.0").
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
+A built diatom contains these parts, so the binary as a whole may not be sold
+or otherwise put to commercial use. The MIT parts, taken on their own, carry
+no such restriction.
 
 Third-party code in this repository keeps its own license:
 
@@ -44,5 +42,9 @@ Third-party code in this repository keeps its own license:
 
   vendor/rcheevos  RetroAchievements, MIT. Full text in vendor/rcheevos/LICENSE.
 
+  vendor/lz4       Yann Collet, BSD-2-Clause. Full text in vendor/lz4/LICENSE.
+
 The cores diatom loads are not part of it and are not distributed with it -
 diatom loads whatever core it is handed. See THIRD-PARTY.md.
+
+Required Notice: Copyright (c) 2026 Thwonp (https://github.com/thwonp/diatom)

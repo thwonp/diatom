@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Generate env_names.h from libretro.h.
 
 Emits a number -> name lookup for RETRO_ENVIRONMENT_* commands, plus a predicate

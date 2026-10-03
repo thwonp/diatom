@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* A stand-in launcher, driving Diatom over the ADR-0009 socket.
  *
  * Exists to measure the number the whole resident architecture rests on: how

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* A libretro core that is not an emulator.
  *
  * Exists so Diatom can be developed and tested with no third-party binary

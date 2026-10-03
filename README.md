@@ -7,11 +7,13 @@ fork is the emulator behind plorpOS (working name), a fork of
 [TortOS](https://github.com/ericreinsmidt/TortOS), which drives it over a Unix
 socket.
 
-**PolyForm Noncommercial 1.0.0.** Free to use, change and share, not for
-commercial use; see [LICENSE](LICENSE). It is a fork of Eric Reinsmidt's diatom,
-whose MIT notice is kept in [NOTICE](NOTICE). Diatom loads whatever core it is
-handed and ships none of them; the cores keep their own licenses. Why the
-license changed, and what it costs: [ADR-0036](docs/decisions/0036-relicense-polyform-noncommercial.md).
+**MIT** ([LICENSE](LICENSE)), like Eric Reinsmidt's diatom it is a fork of -
+except the code ported from NextUI (rewind, the hotkeys and parts of
+fast-forward), which keeps NextUI's PolyForm Noncommercial 1.0.0; [NOTICE](NOTICE)
+lists exactly which files and regions, so a built diatom as a whole is not for
+commercial use. Diatom loads whatever core it is handed and ships none of them;
+the cores keep their own licenses. Why it is per file:
+[ADR-0042](docs/decisions/0042-license-per-file-mit-default.md).
 
 **Status: running on hardware, shipping in TortOS.** Eleven systems across six
 cores on a TrimUI Brick (TG3040): NES · SNES · Genesis · Master System ·

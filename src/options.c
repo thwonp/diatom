@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Core options.
  *
  * A core declares what it can be configured with, and asks the frontend for

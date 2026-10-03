@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* SPIKE: what does holding every core resident actually cost in RSS, and what
  * does dlopen cost on this CPU?
  *

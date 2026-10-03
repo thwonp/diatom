@@ -1,9 +1,9 @@
 # 0023. Diatom is MIT and ships no cores, which is what makes that safe
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-03, by [ADR-0042](0042-license-per-file-mit-default.md); left at Proposed by an oversight)
 - **Date:** 2026-08-26
 - **Supersedes:** -
-- **Superseded by:** [ADR-0036](0036-relicense-polyform-noncommercial.md), in part (the "MIT is GPL-compatible" premise; the three rules stand)
+- **Superseded by:** [ADR-0036](0036-relicense-polyform-noncommercial.md) in part, 2026-09-28 to 2026-10-03 (the "MIT is GPL-compatible" premise; the three rules stood). 0036 is itself superseded by [ADR-0042](0042-license-per-file-mit-default.md), which restores the premise for the MIT parts
 
 Settles the §1 register item open since 2026-08-23. Relates to
 [ADR-0002](0002-separate-repository.md) and [ADR-0006](0006-resident-core-model.md).

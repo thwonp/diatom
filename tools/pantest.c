@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* What does FBIOPAN_DISPLAY on the Brick's disp2 fbdev actually cost, and
  * does anything change it?
  *

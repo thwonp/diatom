@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Resampling.
  *
  * Cores emit whatever rate their hardware ran at; the device runs at whatever

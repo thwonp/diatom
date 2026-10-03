@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Where the picture goes.
  *
  * ADR-0007 splits this deliberately: deciding the rect is arithmetic, so it

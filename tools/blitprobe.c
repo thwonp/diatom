@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Is the blit slow because of the pixels it computes, or the memory it writes?
  *
  * present() costs 8.4 ms, against 1.65-4.2 ms for emulating the machine. That

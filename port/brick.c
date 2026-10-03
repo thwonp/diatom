@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* TrimUI Brick (TG3040) port.
  *
  * Presentation is raw fbdev with a flip thread; SDL2 (the firmware's own

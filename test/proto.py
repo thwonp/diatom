@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Does the state plane answer on the wire?
 
 ADR-0020 defines a state as three things - a query verb, a write verb, and the

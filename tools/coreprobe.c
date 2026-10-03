@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* SPDX-License-Identifier: MIT */
 /* What a first launch pays, per core, measured rather than remembered.
  *
  * dlopen and retro_init are separate decisions and this times them separately.

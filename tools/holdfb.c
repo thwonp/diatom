@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* SPIKE, part two: the realistic pause state.
  *
  * A paused Diatom does not exit - ADR-0008 makes it long-lived. So it still

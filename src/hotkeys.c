@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* NextUI-derived: PolyForm Noncommercial 1.0.0, NOT this repo's root MIT
- * license - see THIRD-PARTY.md before touching this file. */
+ * license - see NOTICE and THIRD-PARTY.md before touching this file. */
 /* See hotkeys.h. Ported from NextUI's OptionShortcuts_* (ma_frontend_opts.c) -
  * a per-game/per-console cfg file there, four sqlite-backed keys here
  * (TortOS's hotkey.<tag>, mirroring turbo.<tag>'s own precedent, docs/

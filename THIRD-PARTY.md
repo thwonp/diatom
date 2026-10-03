@@ -1,11 +1,12 @@
 # Third-party notices
 
-This fork's own code is licensed PolyForm Noncommercial 1.0.0 (root `LICENSE`)
-since 2026-09-28; Eric Reinsmidt's original code keeps its MIT notice in
-`NOTICE`. See [ADR-0036](docs/decisions/0036-relicense-polyform-noncommercial.md)
-for why, and for what that changed about ADR-0002's and ADR-0023's permissive
-premise. The per-file NextUI sections below predate the relicense; they now
-record provenance, not the only noncommercial code.
+This fork is MIT (root `LICENSE`) - Eric Reinsmidt's code and the fork's own -
+except the NextUI-derived code below, which is PolyForm Noncommercial 1.0.0
+(`LICENSES/`). `NOTICE` lists it file by file and region by region, and each
+source file's SPDX line says which it is. See
+[ADR-0042](docs/decisions/0042-license-per-file-mit-default.md), which
+superseded the whole-fork PolyForm license of ADR-0036 on 2026-10-03 and
+restored ADR-0023's permissive premise for the MIT parts.
 
 ## `src/rewind.c`
 
@@ -25,7 +26,9 @@ carries for the same reason and, on that fork, for two libretro cores besides.
 Every other file in this repo, including the rest of `src/proto.c` and
 `src/diatom.h`, carries no NextUI provenance - the new
 protocol verbs are a straightforward extension of ADR-0020's existing state
-plane and carry nothing NextUI-derived in their own text.
+plane and carry nothing NextUI-derived in their own text. The two fenced
+fast-forward regions of `src/main.c` (its state and its deadline) are the
+part of `setFastForward`/`limitFF` that was ported, and carry the same terms.
 
 See [ADR-0034](docs/decisions/0034-fast-forward-and-rewind.md) for what was
 ported, what had to be adapted for this frontend's different architecture
@@ -77,8 +80,8 @@ vendored under ADR-0025 so the build stays self-contained.
 - **MIT licensed**, full text in `vendor/rcheevos/LICENSE`.
 
 MIT is the whole reason this is possible rather than a problem: it is
-compatible with diatom's own license (MIT upstream, PolyForm Noncommercial in
-this fork), and brings no GPL code in. The networking halves (`rc_client`, `rapi`, `rurl`) are deliberately
+compatible with diatom's own license (MIT, upstream and in this fork), and
+brings no GPL code in. The networking halves (`rc_client`, `rapi`, `rurl`) are deliberately
 not vendored; `vendor/rcheevos/README.md` lists every omission and why.
 
 ## `vendor/lz4/`

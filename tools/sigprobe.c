@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* SPIKE: when this device powers down, does a running process get a signal,
  * and how long does it get before SIGKILL?
  *

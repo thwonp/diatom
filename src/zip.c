@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Zip content, because that is how launchers ship ROM libraries.
  *
  * TortOS's entire library is zipped - one ROM per archive, No-Intro style -

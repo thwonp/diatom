@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* SPDX-License-Identifier: MIT */
 #ifndef DIATOM_CHEEVOS_H
 #define DIATOM_CHEEVOS_H
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Inject one button press into an evdev node, so the pause/menu path can be
  * exercised over adb with nobody holding the device. The kernel forwards
  * events written to an evdev fd through the input core, so every reader -

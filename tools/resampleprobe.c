@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* What does the resampler actually do to a signal it cannot argue with?
  *
  * Game audio is a bad test bench. `hfprobe` measured "energy above 10 kHz" on

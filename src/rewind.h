@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* NextUI-derived: PolyForm Noncommercial 1.0.0, NOT this repo's root MIT
- * license - see THIRD-PARTY.md before touching this file. */
+ * license - see NOTICE and THIRD-PARTY.md before touching this file. */
 /* Concept ported from NextUI's ma_rewind.c (PolyForm Noncommercial 1.0.0) -
  * a real ring buffer of savestate snapshots, stepped backward one entry per
  * displayed frame while held, not merely reloading the last save. See

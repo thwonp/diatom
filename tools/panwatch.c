@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Who is panning /dev/fb0, and when?
  *
  * A tear at a display handover is two processes panning one framebuffer

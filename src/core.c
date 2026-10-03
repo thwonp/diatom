@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* Loading a core, and its lifecycle.
  *
  * ADR-0006: every core is dlopen'd once and NEVER unloaded. dlclose does not

@@ -143,10 +143,14 @@ verified rather than assumed.
       cores are *non-commercial*, covering four of nine systems, which the
       question never contemplated. Licenses now recorded by `fetch-cores.sh`.
 - [x] **[LB]** Fork relicensed → **PolyForm Noncommercial 1.0.0**, 2026-09-28 →
-      **[ADR-0036](decisions/0036-relicense-polyform-noncommercial.md)** *(Accepted)*.
-      Supersedes the MIT item above for this fork; Eric Reinsmidt's MIT notice
-      is kept in `NOTICE`. It voids ADR-0023's "MIT is GPL-compatible" premise:
-      a distributed card with GPL cores is the exposure, not this repo.
+      **[ADR-0036](decisions/0036-relicense-polyform-noncommercial.md)** *(Superseded by 0042)*.
+      Voided ADR-0023's "MIT is GPL-compatible" premise while it stood.
+- [x] **[LB]** License per file → **MIT by default, PolyForm Noncommercial only
+      for NextUI-derived code**, 2026-10-03 →
+      **[ADR-0042](decisions/0042-license-per-file-mit-default.md)** *(Accepted)*.
+      Supersedes 0036 in full, for every version of the fork. NC: `rewind.*`,
+      `hotkeys.*`, three fenced regions of `main.c`; `NOTICE` lists them.
+      Restores 0023's premise for the MIT parts.
 - [x] **[LB]** Standalone repository → **[ADR-0002](decisions/0002-separate-repository.md)** *(Accepted)*
 - [x] **[LB]** Decision-recording practice: ADRs → **[ADR-0001](decisions/0001-record-architecture-decisions.md)** *(Accepted)*
 - [x] **[OPEN]** **A real launcher drives Diatom in production.** TortOS

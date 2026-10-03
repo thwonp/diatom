@@ -1,9 +1,9 @@
 # 0036. Relicense this fork under PolyForm Noncommercial 1.0.0
 
-- **Status:** Accepted
+- **Status:** Superseded
 - **Date:** 2026-09-28 (accepted 2026-09-28)
 - **Supersedes:** [ADR-0023](0023-core-licensing.md), in part (its license premise; its three rules stand)
-- **Superseded by:** -
+- **Superseded by:** [ADR-0042](0042-license-per-file-mit-default.md), in full (2026-10-03)
 
 **Not legal advice**, same as ADR-0023.
 
