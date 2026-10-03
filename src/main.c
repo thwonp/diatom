@@ -49,6 +49,7 @@ typedef struct diatom_session {
 	const char   *firmware;   /* what the launcher says this content needs */
 	const char   *cheevos;    /* an achievement set to watch, ADR-0026 */
 	int           console;    /* which console's address space it is written against */
+	int           disc;       /* image to start an .m3u on, -1 = the core's choice */
 	long          limit;
 	int           mode;
 	diatom_filter filter;
@@ -476,6 +477,7 @@ static void usage(void)
 		"              [--shader <spec>]   as SETDISPLAY shader=, ADR-0041\n"
 		"              [--load-state <file>] [--state-on-exit <file>]\n"
 		"              [--firmware <name>]  required in --system, checked first\n"
+		"              [--disc <n>]         multi-disc content: start on image n (0-based)\n"
 		"              [--frames <n>] [--shot <file.bmp>] [--preview-on-exit <file.bmp>]\n"
 		"              [--socket <path>]   launcher protocol, ADR-0009\n"
 		"              [--cores <dir>]     map every core there before listening\n"
@@ -1110,6 +1112,37 @@ static void display_set(const diatom_msg *m)
 	apply_display(mode, filter);
 }
 
+/* Disc swapping, plorpos-gkd.47. `count=0` is the whole answer for a core with
+ * no disk interface, and while idle: the launcher draws no Disc row for it. */
+static void disc_emit(void)
+{
+	unsigned index, count;
+	bool open;
+	char label[128];
+
+	if (!diatom_disk_report(g_core, &index, &count, &open, label, sizeof label)) {
+		diatom_proto_send("DISC\tindex=0\tcount=0");
+		return;
+	}
+	diatom_proto_send("DISC\tindex=%u\tcount=%u\ttray=%s\tlabel=%s",
+	                  index, count, open ? "open" : "closed", label);
+}
+
+/* Answered either way, as SETMAP is, so a refusal cannot leave the launcher
+ * believing in a disc that is not in the drive. */
+static void disc_set(const diatom_msg *m)
+{
+	if (m->index < 0 || !diatom_disk_swap(g_core, (unsigned)m->index)) {
+		diatom_proto_send("ERROR\tcode=bad_disc\tmsg=%d", m->index);
+	} else {
+		/* Rewinding across the swap would restore the old disc's RAM with
+		 * the new disc in the drive. History starts again here. */
+		diatom_rewind_reset(g_core);
+		g_rewind_active = false;
+	}
+	disc_emit();
+}
+
 /* Shared by all three message loops. A launcher may read or write any of this
  * whenever it likes: the two moments it is drawing - menu and idle - are
  * exactly the moments Diatom is not, and it is no less valid mid-game. */
@@ -1125,6 +1158,8 @@ static bool state_plane_msg(const diatom_msg *m)
 		 * believing a map it does not have. */
 		diatom_input_emit_map();
 		return true;
+	case DIATOM_MSG_DISC:     disc_emit();       return true;
+	case DIATOM_MSG_SETDISC:  disc_set(m);       return true;
 	case DIATOM_MSG_LEVELS:   levels_emit_all(); return true;
 	case DIATOM_MSG_SETLEVEL: level_set(m);      return true;
 	case DIATOM_MSG_AUDIO:    audio_emit();      return true;
@@ -1300,7 +1335,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * belongs to. ADR-0026: Diatom never guesses this. */
 	diatom_cheevos_set_console((unsigned)sn->console);
 
-	if (!diatom_core_start(g_core, sn->rom)) {
+	if (!diatom_core_start(g_core, sn->rom, sn->disc)) {
 		/* Say the firmware was found, so a launcher that reports this does not
 		 * send someone hunting for a BIOS they already have. */
 		if (sn->firmware && *sn->firmware)
@@ -1525,6 +1560,7 @@ static int run_session_inner(const diatom_session *sn)
 		} else {
 			g_core->run();   /* renders forward play */
 			diatom_rewind_capture(g_core);
+			diatom_disk_tick(g_core);   /* a swapped disc's tray closes */
 		}
 		/* During play the pad is read from the core's input callback, inside
 		 * run(). A frame where that did not happen - run() skipped, or a core
@@ -1944,7 +1980,7 @@ int main(int argc, char **argv)
 	bool list_options = false;
 	diatom_filter start_filter;
 	long limit = 0;
-	int i, start_mode = -1, console = 0;
+	int i, start_mode = -1, console = 0, disc = -1;
 
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--core") && i + 1 < argc) core_path = argv[++i];
@@ -1966,6 +2002,8 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--cheevos") && i + 1 < argc) cheevos_path = argv[++i];
 		else if (!strcmp(argv[i], "--console") && i + 1 < argc)
 			console = (int)strtol(argv[++i], NULL, 10);
+		else if (!strcmp(argv[i], "--disc") && i + 1 < argc)
+			disc = (int)strtol(argv[++i], NULL, 10);
 		else if (!strcmp(argv[i], "--tap-audio") && i + 1 < argc) tap = argv[++i];
 		else if (!strcmp(argv[i], "--socket") && i + 1 < argc) sock = argv[++i];
 		else if (!strcmp(argv[i], "--cores") && i + 1 < argc) cores_dir = argv[++i];
@@ -2116,6 +2154,7 @@ int main(int argc, char **argv)
 			sn.preview    = m.preview[0]    ? m.preview    : NULL;
 			sn.cheevos    = m.cheevos[0]    ? m.cheevos    : NULL;
 			sn.console    = m.console;
+			sn.disc       = m.disc;
 			sn.mode   = start_mode;
 			sn.filter = start_filter;
 			run_session(&sn);   /* its own ERROR/EXIT is the report */
@@ -2134,7 +2173,7 @@ int main(int argc, char **argv)
 			.core = core_path, .rom = rom_path, .shot = shot_path,
 			.state_load = state_load, .state_exit = state_exit,
 			.preview = preview_path, .firmware = firmware,
-			.cheevos = cheevos_path, .console = console,
+			.cheevos = cheevos_path, .console = console, .disc = disc,
 			.limit = limit, .mode = start_mode, .filter = start_filter,
 			.list_only = list_options,
 		};

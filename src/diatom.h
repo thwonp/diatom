@@ -44,6 +44,13 @@ typedef struct {
 	 * again. See diatom_env_pixfmt_settle. */
 	diatom_pixfmt pixfmt;
 	bool          pixfmt_known;
+	/* Disc swapping, plorpos-gkd.47. Declared once, inside retro_init, and
+	 * the core stays resident (ADR-0006), so like the pixel format it is kept
+	 * with the core it came from. v0's callbacks are a prefix of EXT's, so
+	 * one struct holds either; `disk_ext` says whether the tail is valid. */
+	struct retro_disk_control_ext_callback disk;
+	bool          has_disk, disk_ext;
+	int           disk_close_in;   /* frames until the tray closes; 0 = shut */
 
 	void   (*set_environment)(retro_environment_t);
 	void   (*set_video_refresh)(retro_video_refresh_t);
@@ -74,8 +81,19 @@ bool diatom_zip_load(const char *path, void **out, size_t *out_len,
 
 /* core.c */
 bool diatom_core_open(diatom_core *c, const char *path);
-bool diatom_core_start(diatom_core *c, const char *rom_path);
+/* `disc` is the image to start on, -1 for the core's own choice. */
+bool diatom_core_start(diatom_core *c, const char *rom_path, int disc);
 void diatom_core_stop(diatom_core *c);
+
+/* Disc swapping, plorpos-gkd.47. A swap opens the tray and selects the image
+ * at once; the tray closes on its own after DIATOM_DISC_OPEN_FRAMES frames of
+ * play, so the game sees a lid that was open rather than one that blinked.
+ * report is false when this core has no disk interface or no game. */
+#define DIATOM_DISC_OPEN_FRAMES 60
+bool diatom_disk_report(diatom_core *c, unsigned *index, unsigned *count,
+                        bool *open, char *label, size_t label_n);
+bool diatom_disk_swap(diatom_core *c, unsigned index);
+void diatom_disk_tick(diatom_core *c);
 
 /* Open once and keep - ADR-0006. Returns the same core for the same path, so a
  * repeat launch skips dlopen and retro_init. Never unloaded. */
@@ -185,6 +203,10 @@ typedef enum {
 	DIATOM_MSG_HOTKEYS,    /* report the current bindings: `hotkeys` */
 	DIATOM_MSG_SETHOTKEYS, /* replace them whole: `hotkeys` = "l2:ff,x:savestate",
 	                        * optional `modifier` = the key held for them */
+	/* Multi-disc content, plorpos-gkd.47: an .m3u the core plays as one
+	 * game. Query / write like the rest of the plane. */
+	DIATOM_MSG_DISC,       /* report the inserted image: `index`, `count` */
+	DIATOM_MSG_SETDISC,    /* swap to image `index` (0-based) */
 	/* The launcher went away - or was displaced by a newer one, ADR-0033,
 	 * which means the same thing. The game keeps running. */
 	DIATOM_MSG_HANGUP
@@ -238,6 +260,7 @@ typedef struct {
 	int  every;            /* SETREWINDSPEED: capture cadence in frames, which
 	                        * is the rewind speed (5 = 5x); 0 = off. -1 when
 	                        * absent, so a bare verb is refused, not "off". */
+	int  disc;             /* RUN: image to start on, 0-based; -1 when absent */
 } diatom_msg;
 
 /* Input mapping and labels live in env.c, the one layer a remap touches. */

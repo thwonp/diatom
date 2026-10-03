@@ -75,11 +75,15 @@ def check_that(name, cond, got):
     if not cond: fails.append(name)
 
 print("READY:", (r := drain(2.0)))
-check("proto version", [x for x in r if x.startswith("READY")][0].split("\t")[1], "proto=6")
+check("proto version", [x for x in r if x.startswith("READY")][0].split("\t")[1], "proto=7")
 
 # Before any RUN: identity must already be identity, not "everything unbound".
 send("MAP"); check("map is identity while idle", drain(), ["MAP\tmap=identity"])
 send("INPUTS"); check("no labels while idle", drain(), ["INPUTS\tcount=0"])
+# plorpos-gkd.47: no game, no discs - and still an answer, not a silence.
+send("DISC"); check("no discs while idle", drain(), ["DISC\tindex=0\tcount=0"])
+send("SETDISC\tindex=1"); check("a swap while idle is refused, and answered", drain(),
+      ["ERROR\tcode=bad_disc\tmsg=1", "DISC\tindex=0\tcount=0"])
 
 send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so")
 run = drain(3.0)
@@ -278,6 +282,21 @@ for n, name in enumerate(("first", "second", "third"), 1):
         check_that(f"and it holds that game's save, not a stale buffer",
                    len(b) == 64 and b[0] == base + n - 1, list(b[:4]))
 
+# A resumed .m3u starts on the disc it was left on: RUN's disc= reaches the
+# core before retro_load_game, and only for that game.
+rom = f"{tmp}/discs.bin"
+open(rom, "wb").write(b"\0" * 16)
+send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so\trom={rom}\tdisc=1")
+drain(2.0)
+send("DISC"); check("RUN with disc=1 starts on the second disc", drain(),
+      ["DISC\tindex=1\tcount=2\ttray=closed\tlabel=Stub Disc 2"])
+send("STOP"); drain(2.0)
+send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so\trom={rom}")
+drain(2.0)
+send("DISC"); check("and the next RUN without it is back on the first", drain(),
+      ["DISC\tindex=0\tcount=2\ttray=closed\tlabel=Stub Disc 1"])
+send("STOP"); drain(2.0)
+
 # --- ADR-0026: achievements over the protocol ------------------------------
 # The unit test (make check-cheevos) proves the mapping and the evaluation.
 # This proves the WIRING: that a set named on RUN is read, that the frame call
@@ -403,6 +422,21 @@ check_that("SETQUIET is acknowledged with the new state",
            any(l == "QUIET\ton=1" for l in got), got)
 send("SETQUIET\ton=0"); got = drain(1.0)
 check_that("and released", any(l == "QUIET\ton=0" for l in got), got)
+
+# --- disc swapping, plorpos-gkd.47 ------------------------------------------
+# The stub offers two discs through the EXT interface. A swap opens the tray
+# and selects at once; the tray closes only after frames have run, so a game
+# polling the lid sees it open.
+send("DISC"); check("two discs, the first in, tray shut", drain(),
+      ["DISC\tindex=0\tcount=2\ttray=closed\tlabel=Stub Disc 1"])
+send("SETDISC\tindex=1"); check("a swap selects at once with the tray open", drain(),
+      ["DISC\tindex=1\tcount=2\ttray=open\tlabel=Stub Disc 2"])
+time.sleep(1.6)
+send("DISC"); check("and the tray closes by itself after a second of play", drain(),
+      ["DISC\tindex=1\tcount=2\ttray=closed\tlabel=Stub Disc 2"])
+send("SETDISC\tindex=2"); check("an image the game does not have is refused, and answered",
+      drain(), ["ERROR\tcode=bad_disc\tmsg=2",
+                "DISC\tindex=1\tcount=2\ttray=closed\tlabel=Stub Disc 2"])
 
 send("STOP"); got = drain(3.0)
 check_that("the game still ends normally after all that",

@@ -159,6 +159,7 @@ static void parse_line(char *line, diatom_msg *out)
 
 	memset(out, 0, sizeof *out);
 	out->every = -1;   /* absent is not 0, which means off */
+	out->disc  = -1;   /* absent is not 0, which is the first disc */
 	field = strtok_r(line, "\t", &save);
 	if (!field) { out->kind = DIATOM_MSG_NONE; return; }
 
@@ -197,6 +198,8 @@ static void parse_line(char *line, diatom_msg *out)
 	else if (!strcmp(field, "SETREWINDSPEED")) out->kind = DIATOM_MSG_SETREWINDSPEED;
 	else if (!strcmp(field, "HOTKEYS"))    out->kind = DIATOM_MSG_HOTKEYS;
 	else if (!strcmp(field, "SETHOTKEYS")) out->kind = DIATOM_MSG_SETHOTKEYS;
+	else if (!strcmp(field, "DISC"))       out->kind = DIATOM_MSG_DISC;
+	else if (!strcmp(field, "SETDISC"))    out->kind = DIATOM_MSG_SETDISC;
 	else {
 		log_(DIATOM_LOG_WARN, "proto: ignoring unknown verb '%s'", field);
 		out->kind = DIATOM_MSG_NONE;
@@ -257,6 +260,7 @@ static void parse_line(char *line, diatom_msg *out)
 		else if (!strcmp(field, "final")) snprintf(out->sfinal, sizeof out->sfinal, "%s", v);
 		else if (!strcmp(field, "speed")) out->speed = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "every")) out->every = (int)strtol(v, NULL, 10);
+		else if (!strcmp(field, "disc"))  out->disc  = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "hotkeys"))
 			snprintf(out->hotkeys, sizeof out->hotkeys, "%s", v);
 		else if (!strcmp(field, "modifier"))
@@ -365,7 +369,11 @@ diatom_msg_kind diatom_proto_poll(diatom_msg *out, int timeout_ms, bool running)
 		/* proto=6 adds ADR-0032's quiet, for the same reason again: an old
 		 * Diatom ignores SETQUIET and the game plays on under the music, which
 		 * a launcher could not tell from a quiet that worked. */
-		diatom_proto_send("READY\tproto=6\tstate=%s", running ? "running" : "idle");
+		/* proto=7 adds disc swapping (plorpos-gkd.47), DISC / SETDISC and
+		 * RUN's `disc=`. A launcher asks DISC only of a Diatom that answers
+		 * it, rather than waiting out a silence to learn there is no row to
+		 * draw. */
+		diatom_proto_send("READY\tproto=7\tstate=%s", running ? "running" : "idle");
 		/* A displaced launcher is a vanished one, and every loop already
 		 * knows what that means - the in-game menu resumes the game. Said
 		 * after READY, so the new launcher hears where things stand first. */

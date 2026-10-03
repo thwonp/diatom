@@ -73,11 +73,50 @@ static int      box_x = 96, box_y = 80;
 static double   phase;
 static double   audio_accum;
 
+/* Two discs, as an .m3u of two would be (plorpos-gkd.47). Negotiated the
+ * way pcsx_rearmed does it: EXT when the frontend answers version 1 or more,
+ * v0 otherwise. Every game starts on the first. */
+#define STUB_DISCS 2
+static unsigned disc_index;
+static bool     disc_ejected;
+
+static bool stub_set_eject(bool e)   { disc_ejected = e; return true; }
+static bool stub_get_eject(void)     { return disc_ejected; }
+static unsigned stub_get_index(void) { return disc_index; }
+static unsigned stub_get_num(void)   { return STUB_DISCS; }
+static bool stub_set_index(unsigned i)
+{
+	if (!disc_ejected || i >= STUB_DISCS) return false;   /* tray first */
+	disc_index = i;
+	return true;
+}
+static bool stub_replace(unsigned i, const struct retro_game_info *g)
+{ (void)i; (void)g; return false; }
+static bool stub_add(void) { return false; }
+static bool stub_label(unsigned i, char *s, size_t n)
+{
+	snprintf(s, n, "Stub Disc %u", i + 1);
+	return true;
+}
+
 void retro_set_environment(retro_environment_t cb)
 {
 	bool no_game = true;
+	unsigned ver = 0;
 	env = cb;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_game);
+	if (cb(RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION, &ver) && ver >= 1) {
+		static struct retro_disk_control_ext_callback ext = {
+			stub_set_eject, stub_get_eject, stub_get_index, stub_set_index,
+			stub_get_num, stub_replace, stub_add, NULL, NULL,
+			stub_label };
+		cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, &ext);
+	} else {
+		static struct retro_disk_control_callback v0 = {
+			stub_set_eject, stub_get_eject, stub_get_index, stub_set_index,
+			stub_get_num, stub_replace, stub_add };
+		cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, &v0);
+	}
 }
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb)   { (void)cb; }
@@ -197,6 +236,8 @@ bool retro_load_game(const struct retro_game_info *game)
 	 * built on it - the geometry toggle, the crash frame, sysram - means
 	 * something different on the second game than on the first. */
 	frame = 0;
+	disc_index = 0;
+	disc_ejected = false;
 	/* Offered by every real core and discarded by Diatom until ADR-0020. The
 	 * port-1 entry is here so the "port 0 only" filter has something to
 	 * exclude rather than being untested. */

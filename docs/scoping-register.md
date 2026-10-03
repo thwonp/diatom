@@ -1158,6 +1158,17 @@ and fail clearly rather than mysteriously when it is missing.
 list, that work arrives with it - which is an argument for deciding the two
 together rather than assuming `genesis_plus_gx` covering Sega CD makes it free.
 
+**Multi-disc arrived with the PlayStation** (plorpos-gkd.47, 2026-10-03).
+Measured on the GKD with `envlog` and a two-CHD `.m3u`: `pcsx_rearmed` asks
+`GET_DISK_CONTROL_INTERFACE_VERSION` inside `retro_init` and declares v0 when
+refused, EXT when told 1. Diatom now answers 1 and keeps the interface on the
+core, which is resident and will not declare it again. The state plane gains
+`DISC` / `SETDISC index=`, RUN gains `disc=` so a resumed game starts on the
+disc it was left on, and READY says `proto=7`. A swap opens the tray and
+selects at once; the tray closes after 60 frames of play, so a game polling
+the lid sees it open. Sega CD through `genesis_plus_gx` takes the same path,
+unmeasured.
+
 **The coprocessor risk ADR-0005 flagged did not materialize** (measured
 2026-08-25): Star Fox and Stunt Race FX (SuperFX), Yoshi's Island (SA-1), Super
 Mario Kart (DSP-1) and Mega Man X2 (CX4) all hold full speed with 0 resyncs on

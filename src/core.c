@@ -200,7 +200,7 @@ static bool read_file(const char *path, void **out, size_t *len)
 	return true;
 }
 
-bool diatom_core_start(diatom_core *c, const char *rom_path)
+bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
 {
 	struct retro_system_info si;
 	struct retro_game_info gi;
@@ -294,6 +294,7 @@ bool diatom_core_start(diatom_core *c, const char *rom_path)
 		gi.size = len;
 	}
 
+	c->disk_close_in = 0;
 	ok = c->load_game(&gi);
 
 	/* Held until the game unloads, as RetroArch holds it. Most cores copy the
@@ -309,6 +310,29 @@ bool diatom_core_start(diatom_core *c, const char *rom_path)
 	}
 	c->content = data;
 	c->game_loaded = true;
+	if (c->has_disk) {
+		fprintf(stderr, "diatom: disk: interface v%d, %u images, on %u\n",
+		        c->disk_ext ? 1 : 0, c->disk.get_num_images(),
+		        c->disk.get_image_index());
+		/* The disc a resumed game was last on, plorpos-gkd.47, so a state
+		 * saved on disc 2 finds disc 2 in the drive. Swapped here, before
+		 * the first frame, rather than through EXT's set_initial_image:
+		 * pcsx_rearmed honours that only for the path of the image itself
+		 * as it spells it (<m3u dir>/<line>), which a frontend can learn
+		 * only from get_image_path after a load - measured on the GKD
+		 * 2026-10-03, accepted and ignored for the .m3u path. Nothing has
+		 * run, so nothing is watching the lid and it closes at once. */
+		if (disc >= 0 && (unsigned)disc != c->disk.get_image_index()) {
+			if (diatom_disk_swap(c, (unsigned)disc)) {
+				c->disk.set_eject_state(false);
+				c->disk_close_in = 0;
+				fprintf(stderr, "diatom: disk: starting on image %u\n",
+				        c->disk.get_image_index());
+			} else {
+				fprintf(stderr, "diatom: disk: cannot start on image %d\n", disc);
+			}
+		}
+	}
 	/* Before the first frame can be presented, and after the core has had
 	 * every chance to speak: whatever it declared is this core's, and its
 	 * silence means it is still what it said the first time. */
@@ -331,4 +355,59 @@ void diatom_core_stop(diatom_core *c)
 	}
 	free(c->content);
 	c->content = NULL;
+}
+
+/* Disc swapping, plorpos-gkd.47. Only while a game is loaded: the callbacks
+ * are the core's, but what they index is that game's image list. */
+bool diatom_disk_report(diatom_core *c, unsigned *index, unsigned *count,
+                        bool *open, char *label, size_t label_n)
+{
+	char *p;
+
+	if (label_n) label[0] = '\0';
+	if (!c || !c->game_loaded || !c->has_disk) return false;
+	*index = c->disk.get_image_index();
+	*count = c->disk.get_num_images();
+	*open  = c->disk.get_eject_state();
+	if (label_n && c->disk_ext && c->disk.get_image_label &&
+	    !c->disk.get_image_label(*index, label, label_n))
+		label[0] = '\0';
+	/* It goes out on a line of tab-separated fields. */
+	for (p = label; *p; p++)
+		if (*p == '\t' || *p == '\n' || *p == '\r') *p = ' ';
+	return true;
+}
+
+/* Open the tray and select `index`. The tray is NOT closed here: a lid that
+ * opens and shuts between two frames is one the game never saw open, and a
+ * PlayStation game waiting at "insert disc 2" polls for exactly that. It
+ * closes in diatom_disk_tick, after frames have run. */
+bool diatom_disk_swap(diatom_core *c, unsigned index)
+{
+	if (!c || !c->game_loaded || !c->has_disk) return false;
+	if (index >= c->disk.get_num_images()) return false;
+	if (!c->disk.get_eject_state() && !c->disk.set_eject_state(true)) {
+		fprintf(stderr, "diatom: disk: core refused to open the tray\n");
+		return false;
+	}
+	if (!c->disk.set_image_index(index)) {
+		fprintf(stderr, "diatom: disk: core refused image %u\n", index);
+		c->disk.set_eject_state(false);   /* back as it was */
+		c->disk_close_in = 0;
+		return false;
+	}
+	c->disk_close_in = DIATOM_DISC_OPEN_FRAMES;
+	fprintf(stderr, "diatom: disk: image %u selected, tray open\n", index);
+	return true;
+}
+
+/* Once per frame of forward play. */
+void diatom_disk_tick(diatom_core *c)
+{
+	if (!c || c->disk_close_in <= 0 || --c->disk_close_in > 0) return;
+	if (c->game_loaded && c->has_disk) {
+		c->disk.set_eject_state(false);
+		fprintf(stderr, "diatom: disk: tray closed on image %u\n",
+		        c->disk.get_image_index());
+	}
 }

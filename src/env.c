@@ -21,6 +21,7 @@
 static void capture_descriptors(const struct retro_input_descriptor *d);
 
 static diatom_policy    *g_policy;
+static diatom_core      *g_bound;   /* the core this callback is answering */
 static diatom_port_caps *g_caps;
 static bool              g_geometry_dirty;
 static int               g_new_w, g_new_h;
@@ -270,6 +271,28 @@ static bool env_cb(unsigned cmd, void *data)
 		/* Recorded rather than ignored: such a core is loaded with
 		 * retro_load_game(NULL), and passing it a path instead fails. */
 		g_policy->supports_no_game = data ? *(const bool *)data : true;
+		return true;
+
+	/* ---- disc swapping, plorpos-gkd.47 ----------------------------------- */
+	/* Declined until 2026-10-03 like the rest of the spike's refusals: the
+	 * spike had no multi-disc core in it. pcsx_rearmed asks the version at
+	 * retro_init and declares v0 when refused, EXT when told 1. Kept on the
+	 * core, not here - it is declared once and the core stays resident. */
+	case MASK(RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION):
+		*(unsigned *)data = 1;
+		return true;
+	case MASK(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE):
+		if (!g_bound || !data) return false;
+		memset(&g_bound->disk, 0, sizeof g_bound->disk);
+		memcpy(&g_bound->disk, data, sizeof(struct retro_disk_control_callback));
+		g_bound->has_disk = true;
+		g_bound->disk_ext = false;
+		return true;
+	case MASK(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE):
+		if (!g_bound || !data) return false;
+		g_bound->disk     = *(const struct retro_disk_control_ext_callback *)data;
+		g_bound->has_disk = true;
+		g_bound->disk_ext = true;
 		return true;
 
 	/* ---- misc ------------------------------------------------------------ */
@@ -704,6 +727,7 @@ void diatom_env_bind(diatom_core *c, diatom_policy *p, diatom_port_caps *caps)
 {
 	g_policy = p;
 	g_caps   = caps;
+	g_bound  = c;
 
 	/* Bind the option table BEFORE set_environment: a core declares its
 	 * options from inside that call, and they must land in its own table. */
