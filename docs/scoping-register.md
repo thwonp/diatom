@@ -497,6 +497,12 @@ Two amendments ADR-0007 makes to the table above:
       default still `stretch`. Per-console tables: `fill` is `aspect` or a
       crop, `overscale` crops both axes, `native` is 1-11% of the panel,
       `integer-vertical` is `aspect` or smaller. User's call, 2026-10-02.
+- [x] **[LB]** **Shaders on the GKD: who owns the list** →
+      **[ADR-0041](decisions/0041-shader-chains-are-sent-not-named.md)** *(Accepted)*.
+      The launcher sends the chain itself (`SETDISPLAY shader=` passes,
+      `final=`); diatom compiles and draws it, all or nothing, and says it
+      back in `DISPLAY`. No list file, flag or query on this side. GKD only;
+      desktop and Brick take None. User's call, 2026-10-02.
 - [x] **[OPEN]** Aspect-ratio and overscan policy → **the user chooses**, from
       seven modes defaulting to `stretch`
       ([ADR-0014](decisions/0014-display-modes-and-default.md),

@@ -59,6 +59,17 @@ Passes draw as NextUI's do: clip-space quad, identity `MVPMatrix`. The
 orientation flip is in `TexCoord` (one strip for a texture target, one for
 the screen).
 
+Two more of NextUI's assumptions, found on the device (plorpos-gkd.72.6):
+
+- Every pass is told the FRAME's size (`TextureSize`, `InputSize`), not its
+  own input's - NextUI's presets are all `srctype`/`scaletype` source. Told
+  its input's, lcd3x after pixellate drew one grid cell per screen pixel and
+  showed nothing.
+- `mediump` is read as `highp`. The shaders declare their size uniforms
+  mediump, which Mali runs as 16-bit floats: `scanline.glsl` overflowed
+  (pi x 1600 x 240) and drew black, and above 1024 such a float cannot name
+  every pixel. The GKD's output is 1600x1440; NextUI's targets are smaller.
+
 ## Consequences
 
 - The launcher holds every entry's settings; changing one is a launcher

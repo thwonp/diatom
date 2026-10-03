@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* See gkd_gl.h. */
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -164,6 +165,18 @@ static char *clean_source(const char *src)
 		l += len;
 	}
 	*o = '\0';
+
+	/* mediump to highp, word for word. Nearly every NextUI shader declares
+	 * its size uniforms mediump, which Mali runs as 16-bit floats: fine on a
+	 * 640-wide screen, not on this 1600x1440 one. scanline.glsl multiplies
+	 * OutputSize by TextureSize, overflows 65504 and draws black, and above
+	 * 1024 a 16-bit float cannot even name every pixel (plorpos-gkd.72.6).
+	 * Padded, so the source keeps its length. */
+	for (o = out; (o = strstr(o, "mediump")); o += 7) {
+		bool word = (o == out || !(isalnum((unsigned char)o[-1]) || o[-1] == '_')) &&
+		            !(isalnum((unsigned char)o[7]) || o[7] == '_');
+		if (word) memcpy(o, "highp  ", 7);
+	}
 	return out;
 }
 
@@ -450,14 +463,14 @@ static bool ensure_target(pass *ps, int w, int h)
 	return true;
 }
 
-/* One pass: `in` (iw x ih) through ps into whatever framebuffer is bound,
+/* One pass: `in` through ps into whatever framebuffer is bound,
  * over the viewport (x, y, w, h).
  *
  * Every texture here holds the image top row first, the way the core wrote
  * it. Into a texture, v = 0 goes to the bottom of the target (row 0); onto
  * the screen, to the top - the quad says which, not MVPMatrix - so the
  * picture is upright on glass and nothing flips in between. */
-static void run(const pass *ps, unsigned in, int iw, int ih, bool linear,
+static void run(const pass *ps, unsigned in, bool linear,
                 int x, int y, int w, int h, bool to_screen)
 {
 	static const float mvp[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
@@ -474,8 +487,12 @@ static void run(const pass *ps, unsigned in, int iw, int ih, bool linear,
 	if (ps->u_dir >= 0)     p_glUniform1i(ps->u_dir, 1);
 	if (ps->u_count >= 0)   p_glUniform1i(ps->u_count, (int)g_frame);
 	if (ps->u_out >= 0)     p_glUniform2f(ps->u_out, (float)w, (float)h);
-	if (ps->u_tex >= 0)     p_glUniform2f(ps->u_tex, (float)iw, (float)ih);
-	if (ps->u_in >= 0)      p_glUniform2f(ps->u_in, (float)iw, (float)ih);
+	/* The frame's size for every pass, not the pass's own input: NextUI's
+	 * presets are all srctype/scaletype "source", and lcd3x after pixellate
+	 * is drawing a grid per GAME pixel, not per pixel of what it samples
+	 * (plorpos-gkd.72.6). TexCoord still spans the whole input. */
+	if (ps->u_tex >= 0)     p_glUniform2f(ps->u_tex, (float)g_src_w, (float)g_src_h);
+	if (ps->u_in >= 0)      p_glUniform2f(ps->u_in, (float)g_src_w, (float)g_src_h);
 	if (ps->u_sampler >= 0) p_glUniform1i(ps->u_sampler, 0);
 	if (ps->u_origtex >= 0) p_glUniform2f(ps->u_origtex, (float)g_src_w, (float)g_src_h);
 	if (ps->u_origin >= 0)  p_glUniform2f(ps->u_origin, (float)g_src_w, (float)g_src_h);
@@ -497,7 +514,7 @@ void gkdgl_draw(int sw, int sh, diatom_rect dst, bool none_linear)
 	if (!g_src_w || dst.w <= 0 || dst.h <= 0) return;
 
 	if (!g_npass) {
-		run(&g_copy, in, iw, ih, none_linear, gx, gy, dst.w, dst.h, true);
+		run(&g_copy, in, none_linear, gx, gy, dst.w, dst.h, true);
 		g_frame++;
 		return;
 	}
@@ -510,18 +527,18 @@ void gkdgl_draw(int sw, int sh, diatom_rect dst, bool none_linear)
 
 		if (last && !ps->scale) {
 			p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			run(ps, in, iw, ih, ps->linear, gx, gy, dst.w, dst.h, true);
+			run(ps, in, ps->linear, gx, gy, dst.w, dst.h, true);
 			g_frame++;
 			return;
 		}
 		if (!ensure_target(ps, ow, oh)) return;
 		p_glBindFramebuffer(GL_FRAMEBUFFER, ps->fbo);
-		run(ps, in, iw, ih, ps->linear, 0, 0, ow, oh, false);
+		run(ps, in, ps->linear, 0, 0, ow, oh, false);
 		in = ps->tex; iw = ow; ih = oh;
 	}
 
 	p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	run(&g_copy, in, iw, ih, g_final_linear, gx, gy, dst.w, dst.h, true);
+	run(&g_copy, in, g_final_linear, gx, gy, dst.w, dst.h, true);
 	g_frame++;
 }
 
@@ -575,7 +592,7 @@ void gkdgl_overlay_draw(int sw, int sh, diatom_rect r)
 	if (!g_ov_w) return;
 	p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	p_glEnable(GL_BLEND);
-	run(&g_ovp, g_ov_tex, g_ov_w, g_ov_h, false, r.x, sh - r.y - r.h, r.w, r.h, true);
+	run(&g_ovp, g_ov_tex, false, r.x, sh - r.y - r.h, r.w, r.h, true);
 	p_glDisable(GL_BLEND);
 	(void)sw;
 }
