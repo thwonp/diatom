@@ -787,7 +787,7 @@ static bool g_hotkey_ff_active, g_hotkey_rewind_active;
  * disappear from the core for as long as it is held, not only on the frame
  * this function acted on it. The binding table itself (parsing, validation,
  * storage) is hotkeys.c/.h - SDL-free and tested there; this is the part
- * that touches g_ff_speed/g_rewind_active/g_core/the display and so stays
+ * that touches g_ff_speed/g_rewind_active/g_core and so stays
  * here, next to them. */
 static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
 {
@@ -824,19 +824,6 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_LOADSTATE:
 			if ((pressed & bit) && sn->state_exit)
 				diatom_state_load(g_core, sn->state_exit);
-			break;
-		case HK_DISPLAY:
-			if (pressed & bit) {
-				report_slot(g_mode, g_filter);
-				apply_display((g_mode + 1) % diatom_mode_count, g_filter);
-			}
-			break;
-		case HK_FILTER:
-			if (pressed & bit) {
-				report_slot(g_mode, g_filter);
-				apply_display(g_mode, g_filter == DIATOM_FILTER_SHARP
-				                    ? DIATOM_FILTER_NEAREST : DIATOM_FILTER_SHARP);
-			}
 			break;
 		default: break;
 		}

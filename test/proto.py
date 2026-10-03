@@ -156,25 +156,37 @@ def main():
         ck((d.line() or "").startswith("ERROR"), "an out-of-range speed is refused")
         ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=0", "leaving the speed as it was")
 
-        # Hotkeys (ADR-0035): display mode and filter are bindable actions on
-        # L1/R1/A/B too since plorpos-gkd.22 retired the fixed display chord.
-        # The modifier is chosen, MENU by default (plorpos-gkd.43.1, ADR-0038).
+        # Hotkeys (ADR-0035): L1/R1/A/B bind too since plorpos-gkd.22 retired
+        # the fixed display chord. The modifier is chosen, MENU by default
+        # (plorpos-gkd.43.1, ADR-0038).
         d.send("HOTKEYS")
         ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=\tmodifier=menu",
            "no bindings, and MENU is the default modifier")
-        spec = "l1:ff,r1:rewind,a:savestate,b:loadstate,x:display,y:filter"
+        spec = "l1:ff,r1:rewind,a:savestate,b:loadstate"
         want = "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu"
         d.send("SETHOTKEYS\thotkeys=" + spec)
         ck(d.line("HOTKEYS") == want,
            "every action and every new button binds; no modifier field keeps MENU")
-        d.send("SETHOTKEYS\thotkeys=l2:display,r2:display")
+        d.send("SETHOTKEYS\thotkeys=l2:rewind,r2:rewind")
         ck((d.line() or "").startswith("ERROR"), "one action on two buttons is refused")
         ck(d.line("HOTKEYS") == want, "leaving the bindings as they were")
-        d.send("SETHOTKEYS\thotkeys=start:display")
+        d.send("SETHOTKEYS\thotkeys=start:rewind")
         ck((d.line() or "").startswith("ERROR"), "START is not bindable")
         ck(d.line("HOTKEYS") == want, "and nothing changed")
+        # display and filter were actions until plorpos-gkd.73. A spec saved
+        # before that still binds everything else in it, even a full set.
+        for old, why in (("sright:ff,sleft:rewind,x:display,a:filter",
+                          "a saved spec with display and filter keeps its other bindings"),
+                         ("y:filter,l1:ff,r1:rewind,a:savestate,b:loadstate",
+                          "a full set plus a retired entry is still a full set")):
+            d.send("SETHOTKEYS\thotkeys=" + old)
+            ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + old + "\tmodifier=menu", why)
+        d.send("SETHOTKEYS\thotkeys=x:ff,a:sharpen")
+        ck((d.line() or "").startswith("ERROR"), "any other unknown action is still refused")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + old + "\tmodifier=menu",
+           "leaving the bindings as they were")
         # Direct triggers and directions (plorpos-gkd.43.2, ADR-0039).
-        spec = "d.x:ff,x:rewind,sright:savestate,up:loadstate,d.l2:display"
+        spec = "d.x:ff,x:rewind,sright:savestate,up:loadstate"
         want = "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu"
         d.send("SETHOTKEYS\thotkeys=" + spec)
         ck(d.line("HOTKEYS") == want,

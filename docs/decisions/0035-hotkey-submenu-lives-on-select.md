@@ -213,3 +213,20 @@ three fixed chords became two bindable actions in the same table.
 
 SELECT is no longer the fixed modifier. The player chooses it, and the default is MENU.
 See [ADR-0038](0038-the-hotkey-modifier-is-chosen-default-menu.md).
+
+## Revisited 2026-10-02 (plorpos-gkd.73)
+
+`display` and `filter` are no longer actions; `HK_MAX` is 4 (ff, rewind,
+savestate, loadstate). The display mode is set from the launcher's shelf and
+in-game menus, which was enough. The filter's other value is plain bilinear on
+the GKD (SDL has no sharp-bilinear), which read as blur, so nearest stays the
+only filter until shaders (plorpos-gkd.72) bring a real sharp look.
+
+A spec saved before this still carries `display`/`filter` entries, and the
+launcher sends saved specs as they are. Those two names are skipped, not
+refused, so a stale entry cannot cost a system its other bindings. Any other
+unknown action is still refused whole. `--filter` and SETDISPLAY's `filter=`
+are unchanged.
+
+GKD branch only (feature/gkd). On the Brick, `sharp` is a real sharp-bilinear
+and the hotkey is its only way in, so dev keeps both actions.

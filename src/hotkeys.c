@@ -9,8 +9,10 @@
  * Triggers: the face buttons and shoulders (L1/R1/L2/R2/A/B/X/Y) on either
  * layer, and the d-pad's and stick's directions with the modifier only
  * (ADR-0039). START and the modifier itself stay out. L1/R1/A joined when
- * plorpos-gkd.22 retired the fixed display chord that used to own them, and
- * display mode and filter became two more bindable actions here. */
+ * plorpos-gkd.22 retired the fixed display chord that used to own them.
+ * Display mode and filter were bindable actions here from then until
+ * plorpos-gkd.73: the mode is the launcher's menus' job, and the filter's
+ * only other look is plain bilinear on the GKD, which nobody wanted. */
 #include <stdio.h>
 #include <string.h>
 
@@ -61,8 +63,6 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "rewind"))    return HK_REWIND;
 	if (!strcmp(s, "savestate")) return HK_SAVESTATE;
 	if (!strcmp(s, "loadstate")) return HK_LOADSTATE;
-	if (!strcmp(s, "display"))   return HK_DISPLAY;
-	if (!strcmp(s, "filter"))    return HK_FILTER;
 	return HK_NONE;
 }
 
@@ -88,7 +88,14 @@ bool hotkeys_set(const char *spec)
 		hk_action action;
 		int i;
 
-		if (!colon || n >= HK_MAX) return false;
+		if (!colon) return false;
+		/* Retired by plorpos-gkd.73, still in specs saved before it. Skipped
+		 * rather than refused, or one stale entry would cost that system
+		 * every binding it has. Before the HK_MAX check: a full set of four
+		 * plus a stale one is still four. */
+		if (!strcmp(colon + 1, "display") || !strcmp(colon + 1, "filter"))
+			continue;
+		if (n >= HK_MAX) return false;
 		*colon = '\0';
 		btn = hk_btn_from_name(direct ? tok + 2 : tok, direct);
 		action = hk_action_from_name(colon + 1);
