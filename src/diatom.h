@@ -159,7 +159,7 @@ typedef enum {
 	DIATOM_MSG_LEVELS,     /* report volume and brightness */
 	DIATOM_MSG_SETLEVEL,   /* set `lkind` to `index` of `count` positions */
 	DIATOM_MSG_DISPLAY,    /* report the display mode and filter */
-	DIATOM_MSG_SETDISPLAY, /* set them: `dmode`, `dfilter` */
+	DIATOM_MSG_SETDISPLAY, /* set them: `dmode`, `dfilter`, `shader`, `sfinal` */
 	DIATOM_MSG_OVERLAY,    /* composite `path` over the game for `count` ms */
 	DIATOM_MSG_CHEEVOS,    /* report the achievement set and what has fired */
 	DIATOM_MSG_SETCHEEVOS, /* load a set from `path`; empty unloads */
@@ -223,6 +223,10 @@ typedef struct {
 	char device[128];
 	char dmode[32];        /* SETDISPLAY: a name from diatom_modes[] */
 	char dfilter[16];      /* SETDISPLAY: nearest | sharp */
+	/* SETDISPLAY, ADR-0041: "none", or passes "path:nearest|linear:scale"
+	 * joined by commas; `final` is nearest | linear. Empty = unchanged. */
+	char shader[1024];
+	char sfinal[16];
 	int  index, count;     /* SETLEVEL: `count` is POSITIONS, not a max index.
 	                        * OVERLAY: `count` is the duration in ms, sent as
 	                        * `ms=`. One slot, two verbs, no second name. */

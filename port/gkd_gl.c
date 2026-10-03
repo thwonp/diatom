@@ -261,12 +261,22 @@ static void drop_chain(void)
 
 bool gkdgl_init(void)
 {
+	/* Two strips over all of clip space, as NextUI draws them
+	 * (generic_video.c): its shaders are written for an identity MVPMatrix,
+	 * and stock.glsl ignores the matrix outright, so a quad that needed the
+	 * matrix to land drew that shader into one corner. The flip lives in
+	 * TexCoord instead: vertices 0-3 draw into a texture (v = 0 at the
+	 * bottom, row 0), 4-7 onto the screen (v = 0 at the top). */
 	static const float quad[] = {
-		/* VertexCoord x,y   TexCoord u,v - a strip over [0,1]^2 */
-		0, 0,  0, 0,
-		1, 0,  1, 0,
-		0, 1,  0, 1,
-		1, 1,  1, 1,
+		/* VertexCoord x,y   TexCoord u,v */
+		-1, -1,  0, 0,
+		 1, -1,  1, 0,
+		-1,  1,  0, 1,
+		 1,  1,  1, 1,
+		-1, -1,  0, 1,
+		 1, -1,  1, 1,
+		-1,  1,  0, 0,
+		 1,  1,  1, 0,
 	};
 	char err[512];
 	const char *ext;
@@ -445,18 +455,12 @@ static bool ensure_target(pass *ps, int w, int h)
  *
  * Every texture here holds the image top row first, the way the core wrote
  * it. Into a texture, v = 0 goes to the bottom of the target (row 0); onto
- * the screen, to the top - so the picture is upright on glass and nothing
- * flips in between. */
+ * the screen, to the top - the quad says which, not MVPMatrix - so the
+ * picture is upright on glass and nothing flips in between. */
 static void run(const pass *ps, unsigned in, int iw, int ih, bool linear,
                 int x, int y, int w, int h, bool to_screen)
 {
-	const float sy = to_screen ? -2.0f : 2.0f, ty = to_screen ? 1.0f : -1.0f;
-	const float mvp[16] = {
-		2, 0,  0, 0,
-		0, sy, 0, 0,
-		0, 0,  1, 0,
-		-1, ty, 0, 1,
-	};
+	static const float mvp[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
 	int f = linear ? GL_LINEAR : GL_NEAREST;
 
 	p_glViewport(x, y, w, h);
@@ -475,7 +479,7 @@ static void run(const pass *ps, unsigned in, int iw, int ih, bool linear,
 	if (ps->u_sampler >= 0) p_glUniform1i(ps->u_sampler, 0);
 	if (ps->u_origtex >= 0) p_glUniform2f(ps->u_origtex, (float)g_src_w, (float)g_src_h);
 	if (ps->u_origin >= 0)  p_glUniform2f(ps->u_origin, (float)g_src_w, (float)g_src_h);
-	p_glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	p_glDrawArrays(GL_TRIANGLE_STRIP, to_screen ? 4 : 0, 4);
 }
 
 void gkdgl_draw(int sw, int sh, diatom_rect dst, bool none_linear)
@@ -586,7 +590,7 @@ void gkdgl_fill(int sw, int sh, diatom_rect r, uint8_t red, uint8_t green,
 	p_glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 	p_glUseProgram(g_fillp.prog);
 	if (g_fillp.u_mvp >= 0) {
-		static const float mvp[16] = { 2,0,0,0, 0,2,0,0, 0,0,1,0, -1,-1,0,1 };
+		static const float mvp[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
 		p_glUniformMatrix4fv(g_fillp.u_mvp, 1, GL_FALSE, mvp);
 	}
 	p_glUniform4f(g_fill_color, red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f);

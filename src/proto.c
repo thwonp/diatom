@@ -253,6 +253,8 @@ static void parse_line(char *line, diatom_msg *out)
 		else if (!strcmp(field, "ms"))    out->count = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "mode"))  snprintf(out->dmode,  sizeof out->dmode,  "%s", v);
 		else if (!strcmp(field, "filter"))snprintf(out->dfilter,sizeof out->dfilter,"%s", v);
+		else if (!strcmp(field, "shader"))snprintf(out->shader, sizeof out->shader, "%s", v);
+		else if (!strcmp(field, "final")) snprintf(out->sfinal, sizeof out->sfinal, "%s", v);
 		else if (!strcmp(field, "speed")) out->speed = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "every")) out->every = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "hotkeys"))

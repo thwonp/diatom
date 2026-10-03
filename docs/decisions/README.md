@@ -89,3 +89,4 @@ never started.
 | [0038](0038-the-hotkey-modifier-is-chosen-default-menu.md) | Let the player choose the hotkey modifier, default MENU, menu on release | Accepted |
 | [0039](0039-direct-hotkeys-and-distinct-stick-directions.md) | Direct hotkey triggers, and stick directions distinct from the d-pad | Accepted |
 | [0040](0040-three-display-modes.md) | Offer three display modes - integer, aspect, stretch; default stays stretch | Accepted |
+| [0041](0041-shader-chains-are-sent-not-named.md) | Send the shader chain itself over SETDISPLAY; the launcher owns the list and its names | Accepted |

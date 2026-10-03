@@ -411,6 +411,11 @@ static double        g_base_aspect;
 static int           g_mode;
 static diatom_filter g_filter;
 
+/* The shader chain as last applied, kept in the protocol's own words so
+ * DISPLAY can say it back exactly. ADR-0041. */
+static char g_shader[1024] = "none";
+static char g_sfinal[16]   = "nearest";
+
 /* Per-combination measurement, so a mode that looks best can be checked
  * against what it costs. Printed on every change and again at exit. */
 #define SLOT(m, f) ((m) * 2 + (int)(f))
@@ -468,6 +473,7 @@ static void usage(void)
 	fprintf(stderr,
 		"usage: diatom --core <core.so> --rom <file> [--system <dir>] [--save <dir>]\n"
 		"              [--display <mode>] [--filter nearest|sharp]\n"
+		"              [--shader <spec>]   as SETDISPLAY shader=, ADR-0041\n"
 		"              [--load-state <file>] [--state-on-exit <file>]\n"
 		"              [--firmware <name>]  required in --system, checked first\n"
 		"              [--frames <n>] [--shot <file.bmp>] [--preview-on-exit <file.bmp>]\n"
@@ -510,9 +516,10 @@ static void apply_display(int mode, diatom_filter filter)
 	 * launcher would otherwise have to recompute from geometry it does not
 	 * have. ADR-0022. */
 	if (diatom_proto_connected())
-		diatom_proto_send("DISPLAY\tmode=%s\tfilter=%s\trect=%dx%d+%d+%d",
+		diatom_proto_send("DISPLAY\tmode=%s\tfilter=%s\trect=%dx%d+%d+%d"
+		                  "\tshader=%s\tfinal=%s",
 		                  diatom_modes[mode].name, filter_name(filter),
-		                  g_dst.w, g_dst.h, g_dst.x, g_dst.y);
+		                  g_dst.w, g_dst.h, g_dst.x, g_dst.y, g_shader, g_sfinal);
 }
 
 /* Report what a combination cost, so the look and the price are read together.
@@ -1004,6 +1011,65 @@ static void level_set(const diatom_msg *m)
 		level_emit(k, idx, cnt);
 }
 
+/* "none", or up to DIATOM_SHADER_MAX_PASSES "path:nearest|linear:scale"
+ * joined by commas. Cuts `buf` up: the passes point into it. -1 if malformed.
+ * The path is split from the right, so only its last two colons are taken. */
+static int shader_parse(char *buf, diatom_shader_pass *p)
+{
+	char *pass, *save = NULL;
+	int n = 0;
+
+	if (!strcmp(buf, "none")) return 0;
+	for (pass = strtok_r(buf, ",", &save); pass; pass = strtok_r(NULL, ",", &save)) {
+		char *f, *sc, *end;
+		long scale;
+
+		if (n == DIATOM_SHADER_MAX_PASSES) return -1;
+		if (!(sc = strrchr(pass, ':'))) return -1;
+		*sc++ = '\0';
+		if (!(f = strrchr(pass, ':'))) return -1;
+		*f++ = '\0';
+		scale = strtol(sc, &end, 10);
+		/* 4 is already 2560 wide from a 640 source; past it the next pass's
+		 * texture is what fails, and that fails as a black screen. */
+		if (!*pass || end == sc || *end || scale < 0 || scale > 4) return -1;
+		if      (!strcmp(f, "nearest")) p[n].linear = false;
+		else if (!strcmp(f, "linear"))  p[n].linear = true;
+		else return -1;
+		p[n].path  = pass;
+		p[n].scale = (int)scale;
+		n++;
+	}
+	return n ? n : -1;
+}
+
+/* All or nothing, as the port's half is: on false the previous chain is still
+ * drawing and `err` is one line, fit for an ERROR msg. ADR-0041. */
+static bool shader_apply(const char *spec, const char *fin, char *err, size_t cap)
+{
+	diatom_shader_pass p[DIATOM_SHADER_MAX_PASSES];
+	char buf[sizeof g_shader];
+	bool linear;
+	int n;
+
+	if      (!strcmp(fin, "nearest")) linear = false;
+	else if (!strcmp(fin, "linear"))  linear = true;
+	else { snprintf(err, cap, "final=%s", fin); return false; }
+	if (strlen(spec) >= sizeof buf) { snprintf(err, cap, "spec too long"); return false; }
+	snprintf(buf, sizeof buf, "%s", spec);
+	if ((n = shader_parse(buf, p)) < 0) { snprintf(err, cap, "bad spec: %s", spec); return false; }
+	if (!diatom_port_shader_set(p, n, linear, err, cap)) {
+		/* A compile log is many lines, and the protocol is one per message. */
+		for (char *c = err; *c; c++) if (*c == '\n' || *c == '\t' || *c == '\r') *c = ' ';
+		return false;
+	}
+	/* Either may be the global itself (a final= alone re-applies g_shader). */
+	if (spec != g_shader) snprintf(g_shader, sizeof g_shader, "%s", spec);
+	snprintf(g_sfinal, sizeof g_sfinal, "%s", linear ? "linear" : "nearest");
+	printf("diatom: shader %s (final %s)\n", g_shader, g_sfinal);
+	return true;
+}
+
 static void display_set(const diatom_msg *m)
 {
 	int mode = g_mode, i;
@@ -1026,7 +1092,19 @@ static void display_set(const diatom_msg *m)
 			return;
 		}
 	}
-	/* Both fields validated before either is applied, for the same reason
+	/* The shader last of the checks and first of the changes: it is the one
+	 * that can still fail (a file, a compile) after everything else has been
+	 * validated, and the port's half changes nothing when it does. */
+	if (m->shader[0] || m->sfinal[0]) {
+		char err[512] = "";
+
+		if (!shader_apply(m->shader[0] ? m->shader : g_shader,
+		                  m->sfinal[0] ? m->sfinal : g_sfinal, err, sizeof err)) {
+			diatom_proto_send("ERROR\tcode=bad_shader\tmsg=%s", err);
+			return;
+		}
+	}
+	/* Every field validated before any is applied, for the same reason
 	 * SETMAP is all-or-nothing: a half-applied setting is one nobody asked
 	 * for and neither side believes in. */
 	apply_display(mode, filter);
@@ -1862,7 +1940,7 @@ int main(int argc, char **argv)
 	const char *state_load = NULL, *state_exit = NULL, *firmware = NULL, *tap = NULL;
 	const char *preview_path = NULL, *cheevos_path = NULL;
 	const char *sock = getenv("DIATOM_SOCKET");
-	const char *cores_dir = NULL;
+	const char *cores_dir = NULL, *shader = NULL;
 	bool list_options = false;
 	diatom_filter start_filter;
 	long limit = 0;
@@ -1877,6 +1955,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot_path = argv[++i];
 		else if (!strcmp(argv[i], "--display") && i + 1 < argc) display = argv[++i];
 		else if (!strcmp(argv[i], "--filter") && i + 1 < argc) filter = argv[++i];
+		else if (!strcmp(argv[i], "--shader") && i + 1 < argc) shader = argv[++i];
 		else if (!strcmp(argv[i], "--load-state") && i + 1 < argc) state_load = argv[++i];
 		else if (!strcmp(argv[i], "--state-on-exit") && i + 1 < argc) state_exit = argv[++i];
 		else if (!strcmp(argv[i], "--preview-on-exit") && i + 1 < argc) preview_path = argv[++i];
@@ -1950,6 +2029,14 @@ int main(int argc, char **argv)
 	if (!diatom_port_init(&g_caps)) {
 		fprintf(stderr, "diatom: port init failed\n");
 		return 2;
+	}
+	if (shader) {
+		char err[512] = "";
+
+		if (!shader_apply(shader, "nearest", err, sizeof err)) {
+			fprintf(stderr, "diatom: --shader: %s\n", err);
+			return 2;
+		}
 	}
 
 	/* Once for the life of the process, not per session: the first thing a

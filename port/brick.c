@@ -635,6 +635,16 @@ static size_t    g_ov_under_cap;     /* in pixels */
 static bool      g_ov_live;          /* drawn this frame: decided once, in present */
 
 static int ov_x0(void) { return ((int)g_vinfo.xres - g_ov_w) / 2; }
+/* No GPU path here: None only. ADR-0041. */
+bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linear,
+                            char *err, size_t cap)
+{
+	(void)p; (void)final_linear;
+	if (n == 0) return true;
+	snprintf(err, cap, "this port has no shaders");
+	return false;
+}
+
 static int ov_y0(void) { return (int)g_vinfo.yres - g_ov_h - (int)g_vinfo.yres / 24; }
 
 void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms)

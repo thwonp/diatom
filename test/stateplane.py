@@ -175,6 +175,37 @@ send("DISPLAY"); got = drain()
 check_that("mode did not move either",
            len(got) == 1 and got[0].startswith("DISPLAY\tmode=integer"), got)
 
+# Shaders, ADR-0041. The desktop port has no GPU path, so it takes None and
+# refuses any pass; what is checked here is the host's half - the spec, the
+# all-or-nothing, and DISPLAY saying it back. The GKD runs the real chain.
+check_that("display says the shader, None to start",
+           got[0].endswith("\tshader=none\tfinal=nearest"), got)
+send("SETDISPLAY\tmode=aspect\tshader=/s/lcd3x.glsl:nearest:0"); got = drain()
+check("a port with no shaders refuses one", got,
+      ["ERROR\tcode=bad_shader\tmsg=this port has no shaders"])
+send("DISPLAY"); got = drain()
+check_that("and the mode beside it did not move",
+           len(got) == 1 and got[0].startswith("DISPLAY\tmode=integer")
+           and got[0].endswith("\tshader=none\tfinal=nearest"), got)
+for spec, why in (("/s/a.glsl:nearest", "a pass without a scale"),
+                  ("/s/a.glsl:bilinear:0", "an unknown filter"),
+                  ("/s/a.glsl:nearest:5", "a scale past 4"),
+                  ("/s/a.glsl:nearest:-1", "a negative scale"),
+                  (":nearest:0", "a pass with no path"),
+                  (",".join(["/s/a.glsl:nearest:0"] * 4), "four passes")):
+    send("SETDISPLAY\tshader=" + spec); got = drain()
+    check("refused: " + why, got, ["ERROR\tcode=bad_shader\tmsg=bad spec: " + spec])
+send("SETDISPLAY\tfinal=bogus"); got = drain()
+check("refused: an unknown final filter", got,
+      ["ERROR\tcode=bad_shader\tmsg=final=bogus"])
+send("SETDISPLAY\tmode=aspect\tshader=none\tfinal=linear"); got = drain()
+check_that("None is taken anywhere, with the mode beside it",
+           len(got) == 1 and got[0].startswith("DISPLAY\tmode=aspect")
+           and got[0].endswith("\tshader=none\tfinal=linear"), got)
+send("SETDISPLAY\tmode=integer\tfinal=nearest"); got = drain()
+check_that("final alone keeps the shader",
+           len(got) == 1 and got[0].endswith("\tshader=none\tfinal=nearest"), got)
+
 send("LEVELS"); check("desktop has no levels", drain(), ["LEVELS\tcount=0"])
 send("SETLEVEL\tkind=brightness\tindex=3\tcount=12")
 check("setlevel refused with no control", drain(), ["ERROR\tcode=bad_level\tmsg=brightness"])

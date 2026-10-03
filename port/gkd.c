@@ -299,6 +299,14 @@ void diatom_port_shutdown(void)
 /* The overlay from diatom_port_overlay, uploaded once when it is set: for a
  * notice on a timer that is once. */
 static int            g_ov_w, g_ov_h;
+/* Straight through: gkd_gl already builds a chain all or nothing. Called
+ * from the message loop, on the thread that owns the context. ADR-0041. */
+bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linear,
+                            char *err, size_t cap)
+{
+	return gkdgl_set_chain(p, n, final_linear, err, cap);
+}
+
 static uint64_t       g_ov_until;
 
 void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms)

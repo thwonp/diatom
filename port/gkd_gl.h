@@ -19,13 +19,9 @@
 
 #include "diatom_port.h"
 
-#define GKDGL_MAX_PASSES 3
+#define GKDGL_MAX_PASSES DIATOM_SHADER_MAX_PASSES
 
-typedef struct {
-	const char *path;   /* a .glsl file: VERTEX and FRAGMENT in one */
-	bool linear;        /* how this pass samples its input */
-	int  scale;         /* output = input x scale; 0 = the display rect */
-} gkdgl_pass;
+typedef diatom_shader_pass gkdgl_pass;
 
 /* After SDL_GL_CreateContext. False if a function or the built-in pass is
  * missing - then nothing here may be called. */

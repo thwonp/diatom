@@ -240,6 +240,16 @@ static bool ensure_texture(int w, int h, diatom_pixfmt fmt, diatom_filter filter
 static const uint8_t *g_ov;
 static int            g_ov_w, g_ov_h;
 static uint64_t       g_ov_until;
+/* No GPU path here: None only. ADR-0041. */
+bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linear,
+                            char *err, size_t cap)
+{
+	(void)p; (void)final_linear;
+	if (n == 0) return true;
+	snprintf(err, cap, "this port has no shaders");
+	return false;
+}
+
 static SDL_Texture   *g_ov_tex;
 
 void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms)

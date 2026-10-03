@@ -134,6 +134,24 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
  * that looks like a design choice. */
 void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms);
 
+/* A shader chain, ADR-0041: up to three GLSL passes between the frame and the
+ * display rect. The launcher owns the list and its names; this is only the
+ * mechanism, so a pass is a file and two numbers. */
+#define DIATOM_SHADER_MAX_PASSES 3
+
+typedef struct {
+	const char *path;   /* a .glsl file: VERTEX and FRAGMENT in one */
+	bool linear;        /* how this pass samples its input */
+	int  scale;         /* output = input x scale; 0 = the display rect */
+} diatom_shader_pass;
+
+/* All or nothing: false leaves the previous chain drawing, and `err` says
+ * why. n == 0 is None, which every port accepts. `final_linear` is how the
+ * last copy scales when there is one (a last pass with a nonzero scale). A
+ * port with no GPU path refuses any n > 0. */
+bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linear,
+                            char *err, size_t cap);
+
 /* Stop presenting, without tearing down. Returns when nothing is pending and
  * nothing is in flight, so a SECOND presenter may take the display safely.
  * The port stays initialized and must serve the next diatom_port_present.
