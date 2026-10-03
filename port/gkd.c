@@ -36,6 +36,7 @@
 #include <sys/wait.h>
 
 #include "diatom_port.h"
+#include "gkd_gl.h"
 #include "port_clock.h"
 
 #define AUDIO_RATE 48000
@@ -45,11 +46,15 @@
 #define AUDIO_FRAME_BYTES   (2 * (int)sizeof(int16_t))
 
 static SDL_Window   *g_window;
-static SDL_Renderer *g_renderer;
-static SDL_Texture  *g_texture;
+/* Our own GLES context rather than SDL_Renderer, which was GLES2 under the
+ * hood anyway but cannot run a shader (plorpos-gkd.72). gkd_gl.c draws. */
+static SDL_GLContext g_gl;
+static int           g_sw, g_sh;
+/* The last frame's size and where it went, for the log and for capture. */
 static int           g_tex_w, g_tex_h;
-static Uint32        g_tex_fmt;
-static diatom_filter g_tex_filter;
+static diatom_pixfmt g_tex_fmt;
+static diatom_rect   g_last_dst;
+static bool          g_last_linear;
 static SDL_AudioDeviceID g_audio;
 static bool          g_quit;
 static uint32_t      g_buttons;
@@ -184,15 +189,26 @@ bool diatom_port_init(diatom_port_caps *out)
 		SDL_DisplayMode dm = { 0 };
 
 		if (SDL_GetDesktopDisplayMode(0, &dm) != 0) { dm.w = 0; dm.h = 0; }
+		/* GLES 3.0 - the shaders are compiled as 300 es (gkd_gl.c) - and NO
+		 * alpha channel: an opaque surface is what keeps the window from
+		 * compositing see-through, i.e. black, whatever a shader writes. */
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+		SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
 		g_window = SDL_CreateWindow("diatom",
-			SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-			dm.w, dm.h, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN);
+			SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, dm.w, dm.h,
+			SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN);
 	}
 	if (!g_window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return false; }
 
-	g_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_ACCELERATED);
-	if (!g_renderer) { fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); return false; }
-	SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+	/* No fallback to SDL_Renderer: one path to test, on a device whose GL
+	 * stack is fixed by its image. Failing here is loud - diatom exits and
+	 * this line says why. */
+	g_gl = SDL_GL_CreateContext(g_window);
+	if (!g_gl) { fprintf(stderr, "SDL_GL_CreateContext: %s\n", SDL_GetError()); return false; }
+	if (!gkdgl_init()) { fprintf(stderr, "display: GL setup failed\n"); return false; }
 	SDL_ShowCursor(SDL_DISABLE);
 
 	/* Wayland sizes a fullscreen window in the compositor's first configure,
@@ -201,13 +217,15 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * so a compositor that never does fails visibly instead of hanging. */
 	for (int i = 0; i < 100; i++) {
 		SDL_PumpEvents();
-		SDL_GetRendererOutputSize(g_renderer, &sw, &sh);
+		SDL_GL_GetDrawableSize(g_window, &sw, &sh);
 		if (sw > 1 && sh > 1) break;
 		SDL_Delay(10);
 	}
+	g_sw = sw;
+	g_sh = sh;
 	{
 		char msg[64];
-		snprintf(msg, sizeof msg, "display: surface %dx%d", sw, sh);
+		snprintf(msg, sizeof msg, "display: surface %dx%d (GLES)", sw, sh);
 		diatom_port_log(DIATOM_LOG_INFO, msg);
 	}
 
@@ -234,7 +252,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	 *
 	 * The host paces against a monotonic clock instead, and audio drift is
 	 * absorbed by rate control rather than by hoping the panel agrees. */
-	if (SDL_RenderSetVSync(g_renderer, 0) != 0)
+	if (SDL_GL_SetSwapInterval(0) != 0)
 		fprintf(stderr, "note: could not disable vsync: %s\n", SDL_GetError());
 
 	/* NOT fatal. A port that cannot open a sound device can still put pixels
@@ -268,87 +286,37 @@ bool diatom_port_init(diatom_port_caps *out)
 void diatom_port_shutdown(void)
 {
 	if (g_audio)    SDL_CloseAudioDevice(g_audio);
-	if (g_texture)  SDL_DestroyTexture(g_texture);
-	if (g_renderer) SDL_DestroyRenderer(g_renderer);
+	if (g_gl) {
+		gkdgl_shutdown();
+		SDL_GL_DeleteContext(g_gl);
+	}
 	if (g_window)   SDL_DestroyWindow(g_window);
 	if (g_pad_fd >= 0)  close(g_pad_fd);
 	if (g_keys_fd >= 0) close(g_keys_fd);
 	SDL_Quit();
 }
 
-static bool ensure_texture(int w, int h, diatom_pixfmt fmt, diatom_filter filter)
-{
-	/* RGB888 is SDL's name for XRGB8888: no alpha. ARGB8888 would read the
-	 * core's don't-care top byte (0 from mGBA) as alpha, and on a Wayland
-	 * surface a zero alpha is a transparent window - black on this device. */
-	Uint32 sdlfmt = (fmt == DIATOM_PIX_RGB565)
-	              ? SDL_PIXELFORMAT_RGB565
-	              : SDL_PIXELFORMAT_RGB888;
-	/* SDL has no sharp-bilinear, so this is an APPROXIMATION: linear blends
-	 * across the whole source pixel where sharp-bilinear blends across one
-	 * destination pixel, which reads as blurrier than the device will look.
-	 * Good enough to check the geometry is right on desktop; judgment about
-	 * how a filter actually looks belongs on the panel. */
-	SDL_ScaleMode mode = (filter == DIATOM_FILTER_SHARP)
-	                   ? SDL_ScaleModeLinear
-	                   : SDL_ScaleModeNearest;
-
-	if (g_texture && g_tex_w == w && g_tex_h == h && g_tex_fmt == sdlfmt) {
-		if (filter != g_tex_filter) {
-			SDL_SetTextureScaleMode(g_texture, mode);
-			g_tex_filter = filter;
-		}
-		return true;
-	}
-
-	if (g_texture) SDL_DestroyTexture(g_texture);
-	g_texture = SDL_CreateTexture(g_renderer, sdlfmt,
-	                              SDL_TEXTUREACCESS_STREAMING, w, h);
-	if (!g_texture) {
-		fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError());
-		return false;
-	}
-	SDL_SetTextureScaleMode(g_texture, mode);
-	g_tex_w = w; g_tex_h = h; g_tex_fmt = sdlfmt; g_tex_filter = filter;
-	{
-		char msg[96];
-		snprintf(msg, sizeof msg, "display: texture %dx%d %s", w, h,
-		         SDL_GetPixelFormatName(sdlfmt));
-		diatom_port_log(DIATOM_LOG_INFO, msg);
-	}
-	return true;
-}
-
-/* The overlay from diatom_port_overlay: a borrowed pointer, not a copy. The
- * texture is rebuilt only when the image changes, which for a notice on a
- * timer is once. */
-static const uint8_t *g_ov;
+/* The overlay from diatom_port_overlay, uploaded once when it is set: for a
+ * notice on a timer that is once. */
 static int            g_ov_w, g_ov_h;
 static uint64_t       g_ov_until;
-static SDL_Texture   *g_ov_tex;
 
 void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms)
 {
 	int sw = 0, sh = 0;
 
-	if (g_ov_tex) { SDL_DestroyTexture(g_ov_tex); g_ov_tex = NULL; }
-	g_ov = NULL;
+	gkdgl_overlay_set(NULL, 0, 0);
 	g_ov_until = 0;
 	if (!bgra || ms == 0 || w <= 0 || h <= 0) return;
 
-	SDL_GetRendererOutputSize(g_renderer, &sw, &sh);
+	sw = g_sw; sh = g_sh;
 	/* Refused, not clipped - see diatom_port.h. */
 	if ((sw && w > sw) || (sh && h > sh)) {
 		diatom_port_log(DIATOM_LOG_WARN, "overlay larger than the window; ignored");
 		return;
 	}
 
-	g_ov_tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ARGB8888,
-	                             SDL_TEXTUREACCESS_STATIC, w, h);
-	if (!g_ov_tex) return;
-	SDL_SetTextureBlendMode(g_ov_tex, SDL_BLENDMODE_BLEND);
-	SDL_UpdateTexture(g_ov_tex, NULL, bgra, w * 4);
-	g_ov = bgra;
+	gkdgl_overlay_set(bgra, w, h);
 	g_ov_w = w;
 	g_ov_h = h;
 	g_ov_until = diatom_port_now_us() + (uint64_t)ms * 1000ull;
@@ -356,40 +324,43 @@ void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms)
 
 static void draw_overlay(void)
 {
-	SDL_Rect r;
-	int sw = 0, sh = 0;
+	diatom_rect r;
 
-	if (!g_ov_tex || diatom_port_now_us() >= g_ov_until) return;
-	SDL_GetRendererOutputSize(g_renderer, &sw, &sh);
+	if (!g_ov_until || diatom_port_now_us() >= g_ov_until) return;
 	r.w = g_ov_w;
 	r.h = g_ov_h;
-	r.x = (sw - g_ov_w) / 2;
-	r.y = sh - g_ov_h - sh / 24;
-	SDL_RenderCopy(g_renderer, g_ov_tex, NULL, &r);
+	r.x = (g_sw - g_ov_w) / 2;
+	r.y = g_sh - g_ov_h - g_sh / 24;
+	gkdgl_overlay_draw(g_sw, g_sh, r);
 }
 
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
 {
-	SDL_Rect r;
-
 	/* Back from a handover (present_stop): map again before drawing. */
 	if (g_hidden) {
 		SDL_ShowWindow(g_window);
 		g_hidden = false;
 	}
-	if (w > 0 && h > 0 && !ensure_texture(w, h, fmt, filter)) return;
-	if (src && g_texture) SDL_UpdateTexture(g_texture, NULL, src, (int)pitch);
-
-	SDL_RenderClear(g_renderer);
-	if (g_texture) {
-		r.x = dst.x; r.y = dst.y; r.w = dst.w; r.h = dst.h;
-		SDL_RenderCopy(g_renderer, g_texture, NULL, &r);
+	if (src && w > 0 && h > 0) {
+		if (w != g_tex_w || h != g_tex_h || fmt != g_tex_fmt) {
+			char msg[96];
+			snprintf(msg, sizeof msg, "display: texture %dx%d %s", w, h,
+			         fmt == DIATOM_PIX_RGB565 ? "RGB565" : "XRGB8888");
+			diatom_port_log(DIATOM_LOG_INFO, msg);
+			g_tex_w = w; g_tex_h = h; g_tex_fmt = fmt;
+		}
+		gkdgl_upload(src, w, h, pitch, fmt);
 	}
+	/* SHARP is plain bilinear here, as it was under SDL_Renderer; the GKD
+	 * build no longer offers it (plorpos-gkd.73), shaders replace it. */
+	g_last_dst = dst;
+	g_last_linear = filter == DIATOM_FILTER_SHARP;
+	gkdgl_draw(g_sw, g_sh, dst, g_last_linear);
 	draw_overlay();
 	draw_osd();
-	SDL_RenderPresent(g_renderer);
+	SDL_GL_SwapWindow(g_window);
 }
 
 size_t diatom_port_audio_write(const int16_t *frames, size_t n)
@@ -608,19 +579,21 @@ bool     diatom_port_should_quit(void) { return g_quit; }
 bool diatom_port_capture(const char *path)
 {
 	SDL_Surface *s;
-	int w, h;
+	int w = g_sw, h = g_sh;
 	bool ok;
 
-	if (!g_renderer || !path) return false;
-	SDL_GetRendererOutputSize(g_renderer, &w, &h);
+	if (!g_gl || !path || w <= 0 || h <= 0) return false;
 
-	s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+	s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ABGR8888);
 	if (!s) return false;
 
-	/* Read back what was actually presented, so the capture shows the real
-	 * scaling and letterboxing rather than the core's raw framebuffer. */
-	if (SDL_RenderReadPixels(g_renderer, NULL, SDL_PIXELFORMAT_ARGB8888,
-	                         s->pixels, s->pitch) != 0) {
+	/* The last frame drawn again into the back buffer and read from there -
+	 * after a swap the back buffer's contents are undefined - so the capture
+	 * shows the real scaling, letterboxing and shader, not the core's raw
+	 * framebuffer. Without the overlay and level bars, which are not the
+	 * game. ABGR8888 is SDL's name for GL's R,G,B,A byte order. */
+	gkdgl_draw(w, h, g_last_dst, g_last_linear);
+	if (!gkdgl_read(w, h, s->pixels) || s->pitch != w * 4) {
 		SDL_FreeSurface(s);
 		return false;
 	}
@@ -803,30 +776,21 @@ static void bright_nudge(int dir)
  * launcher's two colors, so the tint says which key was pressed. */
 static void draw_osd(void)
 {
-	int sw = 0, sh = 0, pad, bar, fill;
-	SDL_Rect r;
+	int sw = g_sw, sh = g_sh, pad, bar, fill;
+	diatom_rect r;
 
 	if (diatom_port_now_us() >= g_osd_until) return;
-	SDL_GetRendererOutputSize(g_renderer, &sw, &sh);
 	pad = 3 * sh / 768;
 	bar = 6 * sh / 768;
 	fill = g_osd_max > 0 ? sw * g_osd_level / g_osd_max : 0;
 
-	SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 128);
 	r.x = 0; r.y = 0; r.w = sw; r.h = pad * 2 + bar;
-	SDL_RenderFillRect(g_renderer, &r);
-	SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_NONE);
-
-	SDL_SetRenderDrawColor(g_renderer, 60, 62, 72, 255);
+	gkdgl_fill(sw, sh, r, 0, 0, 0, 128);
 	r.y = pad; r.h = bar;
-	SDL_RenderFillRect(g_renderer, &r);
-	if (g_osd_kind) SDL_SetRenderDrawColor(g_renderer, 255, 206, 128, 255);
-	else            SDL_SetRenderDrawColor(g_renderer,  61, 214, 255, 255);
+	gkdgl_fill(sw, sh, r, 60, 62, 72, 255);
 	r.w = fill;
-	SDL_RenderFillRect(g_renderer, &r);
-
-	SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);   /* RenderClear's */
+	if (g_osd_kind) gkdgl_fill(sw, sh, r, 255, 206, 128, 255);
+	else            gkdgl_fill(sw, sh, r,  61, 214, 255, 255);
 }
 
 static void levels_init(void)

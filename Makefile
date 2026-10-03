@@ -24,7 +24,9 @@ LDFLAGS +=
 # Objects live under build/$(PORT)/ so host and cross builds cannot collide:
 # a leftover x86 main.o in a device link fails late and confusingly.
 BUILD := build/$(PORT)
-SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c port/$(PORT).c
+# A port's own second file: the GKD's GL present path (plorpos-gkd.72).
+PORT_EXTRA_gkd := port/gkd_gl.c
+SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
 CONFORM := $(BUILD)/diatom-conform
@@ -188,6 +190,16 @@ PROBES    := $(addprefix $(TOOLS_DIR)/,$(PROBE_SRC)) $(TOOLS_DIR)/eglpresent \
              $(TOOLS_DIR)/btaudio $(TOOLS_DIR)/coreprobe
 
 probes: $(PROBES)
+
+# What each shader costs on the GPU (plorpos-gkd.72.1). Desktop or GKD:
+#   tools/brick-make.sh PORT=gkd shaderbench
+.PHONY: shaderbench
+shaderbench: $(TOOLS_DIR)/shaderbench
+
+$(TOOLS_DIR)/shaderbench: tools/shaderbench.c port/gkd_gl.c port/gkd_gl.h
+	@mkdir -p $(TOOLS_DIR)
+	$(CC) $(TOOL_CFLAGS) -Iinclude -Iport $(filter -I% -D_%,$(CFLAGS)) -o $@ \
+		tools/shaderbench.c port/gkd_gl.c $(LDFLAGS)
 
 $(TOOLS_DIR)/savprobe: tools/savprobe.c
 	@mkdir -p $(TOOLS_DIR)
