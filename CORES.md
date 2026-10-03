@@ -9,7 +9,8 @@ ships nor depends on them, and loads whatever core it is handed. This file
 exists so the measurements in `docs/` name the exact bytes that produced
 them. The binaries themselves are gitignored.
 
-Source: `https://buildbot.libretro.com/nightly/linux/aarch64/latest` - libretro's own buildbot. The path is **unpinned**;
+Source: libretro's own buildbot builds, fetched from the mirror
+`https://github.com/thwonp/TortOS/releases/download/cores-2026-08` (mgba: `https://buildbot.libretro.com/nightly/linux/aarch64/latest`, which is **unpinned**);
 these hashes are the pin.
 
 Licenses are pinned with the hashes and re-checked on every run against

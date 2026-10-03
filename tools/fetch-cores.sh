@@ -45,6 +45,12 @@ set -eu
 
 ARCH=${ARCH:-linux/aarch64}
 BASE="https://buildbot.libretro.com/nightly/$ARCH/latest"
+# The buildbot republishes on any upstream commit, weekly translation syncs
+# included, and by 2026-10-03 had replaced every pinned core. The pinned bytes,
+# unmodified, are mirrored on a TortOS release (aarch64 only) and fetched from
+# there. mgba is the exception: no copy of the pinned buildbot build survived,
+# so it still comes from BASE and fails its pin until re-pinned (plorpos-gkd.79).
+MIRROR="https://github.com/thwonp/TortOS/releases/download/cores-2026-08"
 # Licenses are pinned below with the hashes, and re-checked on every run against
 # libretro's own core-info repo, which is where the `license` field a frontend
 # would display is maintained. Pinned rather than simply recorded: the question
@@ -118,27 +124,39 @@ for c in $CORES; do
 		continue
 	fi
 
-	z="$tmp/$c.zip"
+	case $c in
+	mgba) url="$BASE/${c}_libretro.so.zip" ;;
+	*)    url="$MIRROR/${c}_libretro.so" ;;
+	esac
+	dl="$tmp/${c}_libretro.so"
 	# A failed fetch is fatal. It used to `continue`, which dropped that core's
 	# row from the manifest and still exited 0.
-	if ! curl -sSfL --max-time 120 -o "$z" "$BASE/${c}_libretro.so.zip"; then
+	if ! curl -sSfL --max-time 120 -o "$tmp/$c.dl" "$url"; then
 		echo "FAILED"
-		echo "fetch-cores: could not fetch $c from $BASE" >&2
+		echo "fetch-cores: could not fetch $c from $url" >&2
 		exit 1
 	fi
-	unzip -oq "$z" -d "$OUT"
+	case $url in
+	*.zip) unzip -oq "$tmp/$c.dl" -d "$tmp" ;;
+	*)     mv "$tmp/$c.dl" "$dl" ;;
+	esac
 
-	got=$(shasum -a 256 "$so" | cut -d' ' -f1)
+	# Verified in $tmp and only then installed, so a mismatch leaves $OUT as
+	# it was.
+	got=$(shasum -a 256 "$dl" | cut -d' ' -f1)
 	if [ "$got" != "$want" ]; then
 		echo "MISMATCH"
 		echo "fetch-cores: $c does not match the pin" >&2
 		echo "    want $want" >&2
 		echo "    got  $got" >&2
-		echo "  The buildbot republished this core. Verify it, then update the" >&2
+		echo "  The source no longer serves the pinned bytes. Verify the new ones, put" >&2
+		echo "  them on a mirror release, then update the" >&2
 		echo "  hash here and in TortOS's mk/fetch-vendor.sh together, and" >&2
 		echo "  re-measure the core-facts.md rows that used it." >&2
 		exit 1
 	fi
+
+	cp "$dl" "$so"
 
 	got_sz=$(wc -c < "$so" | tr -d ' ')
 	if [ "$got_sz" != "$want_sz" ]; then
@@ -177,12 +195,13 @@ done
 	echo "\`tools/fetch-cores.sh\`, which is where the pin lives; this file is the"
 	echo "readable copy of it, and the script fails rather than rewriting it."
 	echo
-	echo "**Not part of Diatom.** These are third-party binaries; Diatom neither"
+	echo "**Not part of diatom.** These are third-party binaries; diatom neither"
 	echo "ships nor depends on them, and loads whatever core it is handed. This file"
 	echo "exists so the measurements in \`docs/\` name the exact bytes that produced"
 	echo "them. The binaries themselves are gitignored."
 	echo
-	echo "Source: \`$BASE\` - libretro's own buildbot. The path is **unpinned**;"
+	echo "Source: libretro's own buildbot builds, fetched from the mirror"
+	echo "\`$MIRROR\` (mgba: \`$BASE\`, which is **unpinned**);"
 	echo "these hashes are the pin."
 	echo
 	echo "Licenses are pinned with the hashes and re-checked on every run against"
@@ -196,7 +215,7 @@ done
 		printf '| `%s` | %s | %s | `%s` |\n' "$name" "$lic" "$sz" "$sha"
 	done
 	echo
-	echo "Each core also reports its own name and version, which Diatom logs at"
+	echo "Each core also reports its own name and version, which diatom logs at"
 	echo "load and which usually carries an upstream git hash. Those strings are"
 	echo "recorded alongside the measurements that used them."
 	echo
