@@ -269,6 +269,10 @@ bool diatom_state_save(diatom_core *c, const char *path)
 
 	if (!c->serialize_size || !c->serialize || !path) return false;
 
+	/* A tray still open from a disc pick would be in the state, and a game
+	 * resumed from it would wake to an open lid (plorpos-gkd.47.2). */
+	diatom_disk_close(c);
+
 	/* Called immediately before every serialize, never cached. Measured: mGBA
 	 * moved 528448 to 462912 within 600 frames of Golden Sun while reporting
 	 * quirks 0x0, having never declared CORE_VARIABLE_SIZE. A cached size that

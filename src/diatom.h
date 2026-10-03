@@ -52,6 +52,7 @@ typedef struct {
 	struct retro_disk_control_ext_callback disk;
 	bool          has_disk, disk_ext;
 	int           disk_close_in;   /* frames until the tray closes; 0 = shut */
+	uint64_t      disk_closed_us;  /* when the tray last closed; see settle */
 
 	void   (*set_environment)(retro_environment_t);
 	void   (*set_video_refresh)(retro_video_refresh_t);
@@ -95,6 +96,17 @@ bool diatom_disk_report(diatom_core *c, unsigned *index, unsigned *count,
                         bool *open, char *label, size_t label_n);
 bool diatom_disk_swap(diatom_core *c, unsigned index);
 void diatom_disk_tick(diatom_core *c);
+
+/* A closed tray is not closed at once. pcsx_rearmed reads the lid as open
+ * until 2 s of wall time after set_eject_state(false) (cdOpenCaseTime =
+ * time(NULL) + 2), and a drive reset inside that window latches it open for
+ * good: the BIOS shell, or a black screen for every later game on the
+ * resident core (plorpos-gkd.47.1/.47.2). close shuts a tray still waiting
+ * on its frames - for a reset, a state written to resume from, a stop -
+ * and settle waits out the window before anything that resets the drive. */
+#define DIATOM_DISC_SETTLE_US 2100000ull
+void diatom_disk_close(diatom_core *c);
+void diatom_disk_settle(diatom_core *c);
 
 /* Open once and keep - ADR-0006. Returns the same core for the same path, so a
  * repeat launch skips dlopen and retro_init. Never unloaded. */

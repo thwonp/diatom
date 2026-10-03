@@ -296,6 +296,9 @@ bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
 	}
 
 	c->disk_close_in = 0;
+	/* The core outlives its games: a tray the last one closed may still read
+	 * open, and loading resets the drive. */
+	diatom_disk_settle(c);
 	ok = c->load_game(&gi);
 
 	/* Held until the game unloads, as RetroArch holds it. Most cores copy the
@@ -327,6 +330,7 @@ bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
 			if (diatom_disk_swap(c, (unsigned)disc)) {
 				c->disk.set_eject_state(false);
 				c->disk_close_in = 0;
+				c->disk_closed_us = diatom_port_now_us();
 				fprintf(stderr, "diatom: disk: starting on image %u\n",
 				        c->disk.get_image_index());
 			} else {
@@ -350,6 +354,7 @@ bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
  * that is the whole of ADR-0006. */
 void diatom_core_stop(diatom_core *c)
 {
+	diatom_disk_close(c);
 	if (c->game_loaded) {
 		c->unload_game();
 		c->game_loaded = false;
@@ -408,7 +413,33 @@ void diatom_disk_tick(diatom_core *c)
 	if (!c || c->disk_close_in <= 0 || --c->disk_close_in > 0) return;
 	if (c->game_loaded && c->has_disk) {
 		c->disk.set_eject_state(false);
+		c->disk_closed_us = diatom_port_now_us();
 		fprintf(stderr, "diatom: disk: tray closed on image %u\n",
 		        c->disk.get_image_index());
 	}
+}
+
+/* Now, without waiting for the frames: the game will not run them. */
+void diatom_disk_close(diatom_core *c)
+{
+	if (!c || c->disk_close_in <= 0) return;
+	c->disk_close_in = 1;
+	diatom_disk_tick(c);
+}
+
+void diatom_disk_settle(diatom_core *c)
+{
+	uint64_t now, until;
+	struct timespec ts;
+
+	if (!c || !c->disk_closed_us) return;
+	until = c->disk_closed_us + DIATOM_DISC_SETTLE_US;
+	c->disk_closed_us = 0;
+	now = diatom_port_now_us();
+	if (now >= until) return;
+	ts.tv_sec  = (time_t)((until - now) / 1000000u);
+	ts.tv_nsec = (long)((until - now) % 1000000u) * 1000;
+	nanosleep(&ts, NULL);   /* a signal cuts it short: we are leaving */
+	fprintf(stderr, "diatom: disk: waited %llu ms for the lid\n",
+	        (unsigned long long)((until - now) / 1000u));
 }

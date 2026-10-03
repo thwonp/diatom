@@ -704,7 +704,11 @@ static bool menu_pause(const diatom_session *sn)
 			break;
 		case DIATOM_MSG_RESET:
 			/* The menu's Reset row. The game stays paused - the launcher
-			 * still owns the display and sends RESUME when it is done. */
+			 * still owns the display and sends RESUME when it is done.
+			 * A disc picked just before boots with its lid shut, not into
+			 * the BIOS shell (plorpos-gkd.47.1). */
+			diatom_disk_close(g_core);
+			diatom_disk_settle(g_core);
 			g_core->reset();
 			/* Same reason as a state load, one step further: the game is
 			 * back at the title screen and nothing in progress survived. */
@@ -1686,6 +1690,8 @@ static int run_session_inner(const diatom_session *sn)
 				                  : "ERROR\tcode=state_rejected\tmsg=%s", m.path);
 				break;
 			case DIATOM_MSG_RESET:
+				diatom_disk_close(g_core);
+				diatom_disk_settle(g_core);
 				g_core->reset();
 				/* Same reason as a state load, one step further: the game
 				 * is back at the title screen and nothing in progress
