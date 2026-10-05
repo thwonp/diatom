@@ -26,6 +26,9 @@ typedef diatom_shader_pass gkdgl_pass;
 /* After SDL_GL_CreateContext. False if a function or the built-in pass is
  * missing - then nothing here may be called. */
 bool gkdgl_init(void);
+/* The same, with GL's entry points from `getproc` rather than SDL - for a
+ * context SDL did not make (shaderbench pbuffer, plorpos-reo.4). */
+bool gkdgl_init_with(void *(*getproc)(const char *name));
 void gkdgl_shutdown(void);
 
 /* Compiles the whole chain or changes nothing; `err` says which file and why.

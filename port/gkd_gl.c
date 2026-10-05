@@ -275,6 +275,11 @@ static void drop_chain(void)
 
 bool gkdgl_init(void)
 {
+	return gkdgl_init_with(SDL_GL_GetProcAddress);
+}
+
+bool gkdgl_init_with(void *(*getproc)(const char *name))
+{
 	/* Two strips over all of clip space, as NextUI draws them
 	 * (generic_video.c): its shaders are written for an identity MVPMatrix,
 	 * and stock.glsl ignores the matrix outright, so a quad that needed the
@@ -296,7 +301,7 @@ bool gkdgl_init(void)
 	const char *ext;
 
 #define X(type, name) \
-	if (!(p_##name = (type)SDL_GL_GetProcAddress(#name))) { \
+	if (!(p_##name = (type)getproc(#name))) { \
 		fprintf(stderr, "gkdgl: no %s\n", #name); return false; }
 	GKDGL_FUNCS(X)
 #undef X

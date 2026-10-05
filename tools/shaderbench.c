@@ -21,7 +21,15 @@
  * Aborts itself past 300 MB resident (memory cap on device runs).
  * SHADERBENCH_ONLY=<prefix> runs only the chains named so ("none").
  * TSV on stdout; progress on stderr. SHADERBENCH_WINDOW=WxH for a window
- * instead of fullscreen (desktop, under xvfb). */
+ * instead of fullscreen (desktop, under xvfb).
+ *
+ *   shaderbench pbuffer <shader dir> [frames]
+ *
+ * The Brick's candidate (plorpos-reo.4, option A): no window and no SDL video
+ * at all, so nothing here touches the display - an EGL pbuffer the panel's
+ * size (SHADERBENCH_PBUFFER=WxH, 1024x768) is the surface, and in place of
+ * the swap each frame is read back with glReadPixels, as diatom would read it
+ * into an fbdev page. The swap column is that readback. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +44,65 @@
 #include <SDL_opengles2.h>
 
 #include "gkd_gl.h"
+
+#include <dlfcn.h>
+#include <SDL_egl.h>
+
+/* ---- pbuffer: an offscreen EGL context, no SDL video ---- */
+static void *g_egl, *g_gles;
+static void *(*p_eglGetProcAddress)(const char *);
+
+static void *pb_getproc(const char *name)
+{
+	void *f = p_eglGetProcAddress ? p_eglGetProcAddress(name) : NULL;
+	return f ? f : dlsym(g_gles, name);
+}
+
+#define PB_LOAD(lib, name) \
+	__typeof__(&name) q_##name = (__typeof__(&name))dlsym(lib, #name); \
+	if (!q_##name) { fprintf(stderr, "pbuffer: no %s\n", #name); return false; }
+
+static bool pb_open(int w, int h)
+{
+	g_egl = dlopen("libEGL.so.1", RTLD_NOW | RTLD_GLOBAL);
+	if (!g_egl) g_egl = dlopen("libEGL.so", RTLD_NOW | RTLD_GLOBAL);
+	g_gles = dlopen("libGLESv2.so.2", RTLD_NOW | RTLD_GLOBAL);
+	if (!g_gles) g_gles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+	if (!g_egl || !g_gles) { fprintf(stderr, "pbuffer: %s\n", dlerror()); return false; }
+	{
+		PB_LOAD(g_egl, eglGetDisplay)
+		PB_LOAD(g_egl, eglInitialize)
+		PB_LOAD(g_egl, eglBindAPI)
+		PB_LOAD(g_egl, eglChooseConfig)
+		PB_LOAD(g_egl, eglCreatePbufferSurface)
+		PB_LOAD(g_egl, eglCreateContext)
+		PB_LOAD(g_egl, eglMakeCurrent)
+		PB_LOAD(g_egl, eglGetError)
+		const EGLint cfg_attr[] = {
+			EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+			EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_NONE };
+		const EGLint surf_attr[] = { EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE };
+		const EGLint ctx_attr[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+		EGLint maj = 0, min = 0, n = 0;
+		EGLConfig cfg;
+		EGLDisplay d = q_eglGetDisplay(EGL_DEFAULT_DISPLAY);
+		EGLSurface s;
+		EGLContext c;
+
+		p_eglGetProcAddress = (void *(*)(const char *))dlsym(g_egl, "eglGetProcAddress");
+		if (d == EGL_NO_DISPLAY || !q_eglInitialize(d, &maj, &min)) {
+			fprintf(stderr, "pbuffer: eglInitialize 0x%x\n", q_eglGetError()); return false; }
+		q_eglBindAPI(EGL_OPENGL_ES_API);
+		if (!q_eglChooseConfig(d, cfg_attr, &cfg, 1, &n) || n < 1) {
+			fprintf(stderr, "pbuffer: no config 0x%x\n", q_eglGetError()); return false; }
+		s = q_eglCreatePbufferSurface(d, cfg, surf_attr);
+		c = q_eglCreateContext(d, cfg, EGL_NO_CONTEXT, ctx_attr);
+		if (s == EGL_NO_SURFACE || c == EGL_NO_CONTEXT || !q_eglMakeCurrent(d, s, s, c)) {
+			fprintf(stderr, "pbuffer: surface/context 0x%x\n", q_eglGetError()); return false; }
+		fprintf(stderr, "pbuffer: EGL %d.%d, %dx%d\n", maj, min, w, h);
+	}
+	return true;
+}
 
 #define RSS_CAP_MB 300
 
@@ -377,9 +444,66 @@ int main(int argc, char **argv)
 	const char *win_env = getenv("SHADERBENCH_WINDOW");
 
 	bool selftest = argc > 2 && !strcmp(argv[1], "selftest");
+	bool pbuffer = argc > 2 && !strcmp(argv[1], "pbuffer");
+	uint8_t *rb = NULL;
+	unsigned rb_fmt = GL_RGBA;
+	void (*gl_read)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *) = NULL;
+	/* SHADERBENCH_PBO=1: read through two pixel-pack buffers, each frame
+	 * starting its own read and copying out the one before it. */
+	bool pbo = getenv("SHADERBENCH_PBO") != NULL;
+	unsigned pbos[2] = { 0, 0 };
+	void (*gl_genbuf)(GLsizei, GLuint *) = NULL;
+	void (*gl_bindbuf)(GLenum, GLuint) = NULL;
+	void (*gl_bufdata)(GLenum, GLsizeiptr, const void *, GLenum) = NULL;
+	void *(*gl_map)(GLenum, GLintptr, GLsizeiptr, GLbitfield) = NULL;
+	GLboolean (*gl_unmap)(GLenum) = NULL;
 
 	if (argc < 2) { fprintf(stderr, "usage: shaderbench <shader dir> [frames]\n"); return 2; }
 	if (frames < 10) frames = 10;
+	if (pbuffer) {
+		const char *sz = getenv("SHADERBENCH_PBUFFER");
+		void (*gl_int)(GLenum, GLint *);
+		GLint f = 0, t = 0;
+
+		sw = 1024; sh = 768;
+		if (sz) sscanf(sz, "%dx%d", &sw, &sh);
+		frames = argc > 3 ? atoi(argv[3]) : 120;
+		if (frames < 10) frames = 10;
+		snprintf(g_dir, sizeof g_dir, "%s", argv[2]);
+		if (!pb_open(sw, sh)) return 1;
+		gl_finish = (void (*)(void))pb_getproc("glFinish");
+		gl_string = (const GLubyte *(*)(GLenum))pb_getproc("glGetString");
+		gl_read = (void (*)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *))pb_getproc("glReadPixels");
+		gl_int = (void (*)(GLenum, GLint *))pb_getproc("glGetIntegerv");
+		if (!gl_finish || !gl_string || !gl_read || !gl_int || !gkdgl_init_with(pb_getproc)) {
+			fprintf(stderr, "GL init failed\n"); return 1; }
+		gl_int(0x8B9B /* IMPLEMENTATION_COLOR_READ_FORMAT */, &f);
+		gl_int(0x8B9A /* IMPLEMENTATION_COLOR_READ_TYPE */, &t);
+		if (f == 0x80E1 /* BGRA_EXT */ && t == GL_UNSIGNED_BYTE) rb_fmt = 0x80E1;
+		rb = malloc((size_t)sw * (size_t)sh * 4);
+		if (!rb) return 1;
+		if (pbo) {
+			gl_genbuf = (void (*)(GLsizei, GLuint *))pb_getproc("glGenBuffers");
+			gl_bindbuf = (void (*)(GLenum, GLuint))pb_getproc("glBindBuffer");
+			gl_bufdata = (void (*)(GLenum, GLsizeiptr, const void *, GLenum))pb_getproc("glBufferData");
+			gl_map = (void *(*)(GLenum, GLintptr, GLsizeiptr, GLbitfield))pb_getproc("glMapBufferRange");
+			gl_unmap = (GLboolean (*)(GLenum))pb_getproc("glUnmapBuffer");
+			if (!gl_genbuf || !gl_bindbuf || !gl_bufdata || !gl_map || !gl_unmap) {
+				fprintf(stderr, "PBO: no ES3 buffer mapping\n"); return 1; }
+			gl_genbuf(2, pbos);
+			for (int i = 0; i < 2; i++) {
+				gl_bindbuf(0x88EB /* PIXEL_PACK_BUFFER */, pbos[i]);
+				gl_bufdata(0x88EB, (GLsizeiptr)sw * sh * 4, NULL, 0x88E1 /* STREAM_READ */);
+			}
+			gl_bindbuf(0x88EB, 0);
+			fprintf(stderr, "PBO: two pack buffers, read lags one frame\n");
+		}
+		win = NULL; ctx = NULL;
+		fprintf(stderr, "GL: %s | %s | pbuffer %dx%d | read format 0x%x type 0x%x -> %s | %d frames each\n",
+		        gl_string(GL_RENDERER), gl_string(GL_VERSION), sw, sh, f, t,
+		        rb_fmt == GL_RGBA ? "RGBA" : "BGRA", frames);
+		goto bench;
+	}
 	setenv("MALI_WAYLAND_AFBC", "0", 0);   /* as port/gkd.c */
 	if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
 	if (!strcmp(argv[1], "sdl")) return run_sdl(frames);
@@ -417,6 +541,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "GL: %s | %s | surface %dx%d | %d frames each\n",
 	        gl_string(GL_RENDERER), gl_string(GL_VERSION), sw, sh, frames);
 	if (selftest) return run_selftest(win, sw, sh);
+bench:
 
 	/* None, both ways; every single shader into the screen; the presets'
 	 * distinct chains (real-gameboy and real-gba are the same two shaders). */
@@ -477,13 +602,22 @@ int main(int argc, char **argv)
 				 * frame, but the screen shows still static, not flicker. */
 				if (f == -10) fill(buf, s, 0);
 				else buf[(size_t)((unsigned)f % (unsigned)s->h) * pitch] ^= 0xff;
-				SDL_PumpEvents();
+				if (!pbuffer) SDL_PumpEvents();
 				t0 = now_us();
 				gkdgl_upload(buf, s->w, s->h, pitch, s->fmt);
 				gkdgl_draw(sw, sh, dst, ch->none_linear);
 				gl_finish();
 				t1 = now_us();
-				SDL_GL_SwapWindow(win);
+				if (pbuffer && pbo) {
+					void *m;
+					gl_bindbuf(0x88EB, pbos[f & 1]);
+					gl_read(0, 0, sw, sh, rb_fmt, GL_UNSIGNED_BYTE, NULL);
+					gl_bindbuf(0x88EB, pbos[(f + 1) & 1]);
+					m = gl_map(0x88EB, 0, (GLintptr)sw * sh * 4, 0x0001 /* MAP_READ */);
+					if (m) { memcpy(rb, m, (size_t)sw * (size_t)sh * 4); gl_unmap(0x88EB); }
+					gl_bindbuf(0x88EB, 0);
+				} else if (pbuffer) gl_read(0, 0, sw, sh, rb_fmt, GL_UNSIGNED_BYTE, rb);
+				else SDL_GL_SwapWindow(win);
 				t2 = now_us();
 				if (f >= 0) { ready[f] = t1 - t0; swap[f] = t2 - t1; }
 
@@ -506,6 +640,7 @@ int main(int argc, char **argv)
 	}
 
 	gkdgl_shutdown();
+	if (pbuffer) return 0;   /* the process exit takes the EGL context */
 	SDL_GL_DeleteContext(ctx);
 	SDL_DestroyWindow(win);
 	SDL_Quit();
