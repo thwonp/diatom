@@ -98,6 +98,9 @@ ifeq ($(PORT),brick)
     $(error brick sysroot missing: run tools/fetch-brick-sysroot.sh)
   endif
   CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
+  # Resident cores: 16, as on the GKD. Since plorpos-reo the Brick ships all
+  # nine cores, and the ninth was refused at 8 (plorpos-gkd.83.12).
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
   LDFLAGS += -L$(SYSROOT)/usr/trimui/lib -Wl,-rpath-link,$(SYSROOT)/usr/trimui/lib
   # Explicit -ldl/-lpthread: the toolchain's glibc 2.31 predates their merge
   # into libc proper (2.34).

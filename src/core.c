@@ -107,8 +107,8 @@ bool diatom_core_open(diatom_core *c, const char *path)
  * Bounded rather than dynamic because the bound is the point: six cores mapped
  * plus one running measured 15.0 MB against 975 MB of RAM, and a registry that
  * grows without limit would quietly turn a measured decision into an unmeasured
- * one. The bound is per port: 8 is the Brick's, measured; a port with the
- * memory to spare sets DIATOM_MAX_RESIDENT from the Makefile.
+ * one. The bound is per port: 8 is the default; the Brick and the GKD set 16
+ * from the Makefile, each measured with every core it ships mapped.
  */
 #ifndef DIATOM_MAX_RESIDENT
 #define DIATOM_MAX_RESIDENT 8
