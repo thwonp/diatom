@@ -507,6 +507,11 @@ Two amendments ADR-0007 makes to the table above:
       `final=`); diatom compiles and draws it, all or nothing, and says it
       back in `DISPLAY`. No list file, flag or query on this side. GKD only;
       desktop and Brick take None. User's call, 2026-10-02.
+- [x] **[LB]** **Shaders on the Brick: how it presents them** →
+      **[ADR-0043](decisions/0043-brick-draws-through-egl-while-a-shader-is-set.md)** *(Accepted)*.
+      fbdev for None as before; an EGL window only while a chain is set,
+      switched at the next present, never two presenters. Same fifteen chains
+      as the GKD, all measured at full speed on real cores. User's call, 2026-10-05.
 - [x] **[OPEN]** Aspect-ratio and overscan policy → **the user chooses**, from
       seven modes defaulting to `stretch`
       ([ADR-0014](decisions/0014-display-modes-and-default.md),
