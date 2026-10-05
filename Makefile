@@ -216,6 +216,16 @@ $(TOOLS_DIR)/shaderbench: tools/shaderbench.c port/gkd_gl.c port/gkd_gl.h
 	$(CC) $(TOOL_CFLAGS) -Iinclude -Iport $(filter -I% -D_%,$(CFLAGS)) -o $@ \
 		tools/shaderbench.c port/gkd_gl.c $(LDFLAGS)
 
+# fbdev <-> EGL window, in one process, back and forth (plorpos-reo.4.1):
+#   tools/brick-make.sh glswitch
+.PHONY: glswitch
+glswitch: $(TOOLS_DIR)/glswitch
+
+$(TOOLS_DIR)/glswitch: tools/glswitch.c port/gkd_gl.c port/gkd_gl.h
+	@mkdir -p $(TOOLS_DIR)
+	$(CC) $(TOOL_CFLAGS) -Iinclude -Iport $(filter -I% -D_%,$(CFLAGS)) -o $@ \
+		tools/glswitch.c port/gkd_gl.c $(LDFLAGS)
+
 $(TOOLS_DIR)/savprobe: tools/savprobe.c
 	@mkdir -p $(TOOLS_DIR)
 	$(CC) $(TOOL_CFLAGS) -o $@ $< $(TOOL_LDFLAGS)
