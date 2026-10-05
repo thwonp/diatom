@@ -234,6 +234,24 @@ static void gl_phase(int cycle, int frames, const char *shader)
 		last = b;
 		pace(t0, i);
 	}
+	/* GLSWITCH_DUMP: the last frame drawn again and read back - how much of
+	 * it is not black, and the middle pixel - so a shader that draws nothing
+	 * on this GPU shows up without anyone looking. */
+	if (getenv("GLSWITCH_DUMP")) {
+		uint8_t *px = malloc((size_t)sw * sh * 4);
+		diatom_rect dst = { 0, 0, sw, sh };
+		size_t k, lit = 0;
+
+		gkdgl_draw(sw, sh, dst, false);
+		if (px && gkdgl_read(sw, sh, px)) {
+			for (k = 0; k < (size_t)sw * sh; k++)
+				if (px[k * 4] > 8 || px[k * 4 + 1] > 8 || px[k * 4 + 2] > 8) lit++;
+			k = ((size_t)(sh / 2) * sw + sw / 2) * 4;
+			printf("dump\t%s\tlit %zu of %d\tmid %u,%u,%u\n", shader ? shader : "none",
+			       lit, sw * sh, px[k], px[k + 1], px[k + 2]);
+		}
+		free(px);
+	}
 	mark("gl down begin");
 	a = now_ms();
 	gkdgl_shutdown();

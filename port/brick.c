@@ -34,6 +34,7 @@
  */
 #include <SDL.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <linux/input.h>
@@ -47,6 +48,7 @@
 #include <unistd.h>
 
 #include "diatom_port.h"
+#include "gkd_gl.h"
 #include "port_clock.h"
 
 #define AUDIO_RATE 48000
@@ -635,15 +637,59 @@ static uint32_t *g_ov_under;
 static size_t    g_ov_under_cap;     /* in pixels */
 static bool      g_ov_live;          /* drawn this frame: decided once, in present */
 
+static bool g_gl_ov_dirty;           /* a new notice the GL path has not uploaded */
+
 static int ov_x0(void) { return ((int)g_vinfo.xres - g_ov_w) / 2; }
-/* No GPU path here: None only. ADR-0041. */
+/* Shaders (plorpos-reo.4). None is today's fbdev path, untouched. A chain
+ * draws through an EGL window instead - gkd_gl, as on the GKD - which exists
+ * only while a chain is set.
+ *
+ * Here the chain is only RECORDED. The switch happens at the next present,
+ * because this is called while the launcher's menu is on glass and the
+ * launcher waits for the answer: building a GL context now would put a second
+ * process on the GPU and, for a moment, on the panel - the two-presenter wedge
+ * (ADR-0013, the display-handoff spike). At the next present Diatom owns the
+ * display again and does the whole handover in one thread, never both at once:
+ * the flip thread drained, then the window up; the window down, then pans.
+ * Measured with tools/glswitch: window up 99-159 ms, down 104-181 ms.
+ *
+ * So the files are checked here and the compile happens later. A chain that
+ * then fails to compile draws None and says so in the log - the launcher's
+ * list is fixed and tested, so that is a bug to find, not a player's mistake. */
+static char               g_sh_path[DIATOM_SHADER_MAX_PASSES][1024];
+static diatom_shader_pass g_sh_pass[DIATOM_SHADER_MAX_PASSES];
+static int                g_sh_n;          /* wanted; 0 is None */
+static bool               g_sh_final_linear;
+static bool               g_sh_dirty;      /* wanted is not what is drawing */
+
 bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linear,
                             char *err, size_t cap)
 {
-	(void)p; (void)final_linear;
-	if (n == 0) return true;
-	snprintf(err, cap, "this port has no shaders");
-	return false;
+	int i;
+
+	if (n < 0 || n > DIATOM_SHADER_MAX_PASSES) {
+		snprintf(err, cap, "%d passes", n);
+		return false;
+	}
+	for (i = 0; i < n; i++) {
+		if (strlen(p[i].path) >= sizeof g_sh_path[i]) {
+			snprintf(err, cap, "path too long: %s", p[i].path);
+			return false;
+		}
+		if (access(p[i].path, R_OK) != 0) {
+			snprintf(err, cap, "%s: %s", p[i].path, strerror(errno));
+			return false;
+		}
+	}
+	for (i = 0; i < n; i++) {
+		snprintf(g_sh_path[i], sizeof g_sh_path[i], "%s", p[i].path);
+		g_sh_pass[i] = p[i];
+		g_sh_pass[i].path = g_sh_path[i];
+	}
+	g_sh_n = n;
+	g_sh_final_linear = final_linear;
+	g_sh_dirty = true;
+	return true;
 }
 
 static int ov_y0(void) { return (int)g_vinfo.yres - g_ov_h - (int)g_vinfo.yres / 24; }
@@ -672,6 +718,7 @@ void diatom_port_overlay(const uint8_t *bgra, int w, int h, unsigned ms)
 	g_ov_w = w;
 	g_ov_h = h;
 	g_ov_until = diatom_port_now_us() + (uint64_t)ms * 1000ull;
+	g_gl_ov_dirty = true;
 }
 
 /* Straight into the page after the blit and before publish, riding the same
@@ -789,6 +836,172 @@ static uint8_t *page_base(int page)
 
 static void clear_pages(void);
 
+/* ---- The GL window, while a shader is set ---- */
+static SDL_Window   *g_win;
+static SDL_GLContext g_glc;
+static bool          g_gl_ok;          /* gkdgl_init succeeded */
+static int           g_gl_w, g_gl_h;
+static diatom_rect   g_gl_dst;         /* the last frame's, for a grab */
+
+/* Whichever page the window left on glass becomes our front: the window pans
+ * fb0 itself, in its own pages 0 and 1 (glswitch's layer log), and present and
+ * park must not draw into the page being scanned out. */
+static void gl_sync_front(void)
+{
+	struct fb_var_screeninfo v;
+
+	if (ioctl(g_fb_fd, FBIOGET_VSCREENINFO, &v) != 0) return;
+	if (v.yoffset / g_vinfo.yres >= (unsigned)g_pages) return;
+	pthread_mutex_lock(&g_flip_mx);
+	g_front = (int)(v.yoffset / g_vinfo.yres);
+	pthread_mutex_unlock(&g_flip_mx);
+}
+
+static void gl_down(void)
+{
+	if (!g_win) return;
+	if (g_gl_ok) gkdgl_shutdown();
+	if (g_glc) SDL_GL_DeleteContext(g_glc);
+	SDL_DestroyWindow(g_win);
+	SDL_QuitSubSystem(SDL_INIT_VIDEO);
+	g_win = NULL;
+	g_glc = NULL;
+	g_gl_ok = false;
+	gl_sync_front();
+	/* The window drew into pages 0 and 1: wipe them before fbdev uses them,
+	 * as a mode change does. */
+	g_map_valid = false;
+}
+
+static bool gl_up(void)
+{
+	SDL_DisplayMode dm = { 0 };
+	uint64_t t0 = diatom_port_now_us();
+	char msg[96];
+
+	/* Nothing of ours in flight before the window pans. */
+	flip_drain();
+	if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+		snprintf(msg, sizeof msg, "shader: no video: %s", SDL_GetError());
+		diatom_port_log(DIATOM_LOG_WARN, msg);
+		return false;
+	}
+	if (SDL_GetDesktopDisplayMode(0, &dm) != 0) {
+		dm.w = (int)g_vinfo.xres;
+		dm.h = (int)g_vinfo.yres;
+	}
+	/* As port/gkd.c and glswitch: GLES 3.0 for gkd_gl's 300 es shaders, and
+	 * no alpha - a zero alpha byte is invisible on this panel. */
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
+	g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
+	                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+	if (!g_win) {
+		snprintf(msg, sizeof msg, "shader: no window: %s", SDL_GetError());
+		diatom_port_log(DIATOM_LOG_WARN, msg);
+		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+		return false;
+	}
+	g_glc = SDL_GL_CreateContext(g_win);
+	g_gl_ok = g_glc && gkdgl_init();
+	if (!g_gl_ok) {
+		snprintf(msg, sizeof msg, "shader: no GL: %s", SDL_GetError());
+		diatom_port_log(DIATOM_LOG_WARN, msg);
+		gl_down();
+		return false;
+	}
+	/* Interval 0: the swap returns at once (~1.2 ms) and the frame loop keeps
+	 * its own clock, as the flip thread lets it. No tearing measured. */
+	SDL_GL_SetSwapInterval(0);
+	SDL_GL_GetDrawableSize(g_win, &g_gl_w, &g_gl_h);
+	g_gl_ov_dirty = true;
+	snprintf(msg, sizeof msg, "shader: GL window %dx%d up in %llu ms", g_gl_w, g_gl_h,
+	         (unsigned long long)((diatom_port_now_us() - t0) / 1000));
+	diatom_port_log(DIATOM_LOG_INFO, msg);
+	return true;
+}
+
+/* Make what was asked for what is drawing. */
+static void shader_reconcile(void)
+{
+	char err[512], *c;
+
+	g_sh_dirty = false;
+	if (g_sh_n == 0) {
+		if (g_win) {
+			gl_down();
+			diatom_port_log(DIATOM_LOG_INFO, "shader: None, GL window down");
+		}
+		return;
+	}
+	if (!g_win && !gl_up()) { g_sh_n = 0; return; }
+	if (!gkdgl_set_chain(g_sh_pass, g_sh_n, g_sh_final_linear, err, sizeof err)) {
+		char msg[600];
+
+		for (c = err; *c; c++) if (*c == '\n' || *c == '\t' || *c == '\r') *c = ' ';
+		snprintf(msg, sizeof msg, "shader: %s; drawing None", err);
+		diatom_port_log(DIATOM_LOG_WARN, msg);
+		g_sh_n = 0;
+		gl_down();
+	}
+}
+
+/* Before a handover with the window up: the GPU done, and the window's last
+ * flip landed - its swap returns before the pan does - so the park below is
+ * the only pan in flight. Two refreshes, not a teardown: the window stays,
+ * idle, as the launcher's own does while a game runs (glswitch peer), and
+ * Continue costs nothing. */
+static void gl_quiesce(void)
+{
+	void (*finish)(void) = (void (*)(void))SDL_GL_GetProcAddress("glFinish");
+
+	if (finish) finish();
+	usleep(34000);
+	gl_sync_front();
+}
+
+/* The GKD's level bar (port/gkd.c draw_osd) at this panel's size, which is the
+ * fbdev bar's (draw_gain_bar): same rows, same tints. */
+static void gl_osd(void)
+{
+	const int pad = 3, bar = 6;
+	diatom_rect r;
+
+	if (diatom_port_now_us() >= g_osd_until) return;
+	r.x = 0; r.y = 0; r.w = g_gl_w; r.h = pad * 2 + bar;
+	gkdgl_fill(g_gl_w, g_gl_h, r, 0, 0, 0, 128);
+	r.y = pad; r.h = bar;
+	gkdgl_fill(g_gl_w, g_gl_h, r, 60, 62, 72, 255);
+	r.w = g_osd_level < 0 || g_osd_max <= 0 ? 0 : g_gl_w * g_osd_level / g_osd_max;
+	if (g_osd_kind) gkdgl_fill(g_gl_w, g_gl_h, r, 255, 206, 128, 255);
+	else            gkdgl_fill(g_gl_w, g_gl_h, r,  61, 214, 255, 255);
+}
+
+static void gl_present(const void *src, int w, int h, size_t pitch,
+                       diatom_pixfmt fmt, diatom_rect dst)
+{
+	gkdgl_upload(src, w, h, pitch, fmt);
+	g_gl_dst = dst;
+	gkdgl_draw(g_gl_w, g_gl_h, dst, false);
+	if (g_ov && diatom_port_now_us() < g_ov_until) {
+		diatom_rect r = { ov_x0(), ov_y0(), g_ov_w, g_ov_h };
+
+		if (g_gl_ov_dirty) {
+			gkdgl_overlay_set(g_ov, g_ov_w, g_ov_h);
+			g_gl_ov_dirty = false;
+		}
+		gkdgl_overlay_draw(g_gl_w, g_gl_h, r);
+	}
+	gl_osd();
+	SDL_GL_SwapWindow(g_win);
+	pthread_mutex_lock(&g_flip_mx);
+	g_presented = true;
+	pthread_mutex_unlock(&g_flip_mx);
+}
+
 void diatom_port_present_stop(diatom_park park_mode)
 {
 	int front, park;
@@ -796,6 +1009,7 @@ void diatom_port_present_stop(diatom_park park_mode)
 	bool was_presenting;
 
 	if (!g_fb) return;
+	if (g_win && g_presented) gl_quiesce();   /* else not ours on glass */
 	front = flip_drain();
 
 	was_presenting = g_presented;
@@ -1113,6 +1327,7 @@ bool diatom_port_init(diatom_port_caps *out)
 
 void diatom_port_shutdown(void)
 {
+	gl_down();
 	if (g_flip_running) {
 		pthread_mutex_lock(&g_flip_mx);
 		g_flip_stop = true;
@@ -1477,6 +1692,8 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * to flip. */
 	if (!src || w <= 0 || h <= 0) return;
 
+	if (g_sh_dirty) shader_reconcile();
+
 	rect_changed = !g_map_valid || memcmp(&dst, &g_map_dst, sizeof dst) != 0;
 
 	/* What the PORT was handed, which is not the same claim as what the host
@@ -1523,6 +1740,12 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		 * and the panel holds whatever was there, which looks like the game
 		 * having frozen rather than like an allocation having failed. */
 		diatom_port_log(DIATOM_LOG_WARN, "present: no scale map; frame dropped");
+		return;
+	}
+	/* After the log and the maps, which keep that log line to one per change
+	 * on this path too. */
+	if (g_win) {
+		gl_present(src, w, h, pitch, fmt, dst);
 		return;
 	}
 	/* A smaller rect leaves the old picture around the new one. Only on a mode
@@ -1941,6 +2164,23 @@ bool diatom_port_grab(uint8_t **rgb, int *w_out, int *h_out)
 	uint8_t *px, *d;
 
 	if (!g_fb || w <= 0 || h <= 0) return false;
+	if (g_win) {
+		/* The last frame drawn again and read back, as port/gkd.c does: the
+		 * shader included, the notice and level bar not. */
+		size_t i, n = (size_t)g_gl_w * (size_t)g_gl_h;
+
+		px = malloc(n * 4);
+		if (!px) return false;
+		gkdgl_draw(g_gl_w, g_gl_h, g_gl_dst, false);
+		if (!gkdgl_read(g_gl_w, g_gl_h, px)) { free(px); return false; }
+		for (i = 0; i < n; i++) {
+			px[i * 3 + 0] = px[i * 4 + 0];
+			px[i * 3 + 1] = px[i * 4 + 1];
+			px[i * 3 + 2] = px[i * 4 + 2];
+		}
+		*rgb = px; *w_out = g_gl_w; *h_out = g_gl_h;
+		return true;
+	}
 	px = malloc((size_t)w * (size_t)h * 3);
 	if (!px) return false;
 

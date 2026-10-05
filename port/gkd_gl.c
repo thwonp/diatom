@@ -351,6 +351,13 @@ void gkdgl_shutdown(void)
 	g_src = g_vbo = 0;
 	g_swiz = NULL;
 	g_swiz_cap = 0;
+	/* The sizes the textures were allocated at go with them. Kept, the next
+	 * init's first upload of the same size skips the allocation and every
+	 * pass samples an empty texture: black (plorpos-reo.4.2, the Brick, which
+	 * brings the window down and up in one process; the GKD never does). */
+	g_src_w = g_src_h = 0;
+	g_src_fmt = DIATOM_PIX_RGB565;
+	g_ov_w = g_ov_h = 0;
 }
 
 bool gkdgl_set_chain(const gkdgl_pass *p, int n, bool final_linear,
