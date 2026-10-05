@@ -85,7 +85,7 @@ enum { A_VERTEX = 0, A_TEXCOORD = 1, A_COLOR = 2 };
 typedef struct {
 	unsigned prog;
 	int u_mvp, u_dir, u_count, u_out, u_tex, u_in, u_sampler;
-	int u_origtex, u_origin;
+	int u_origtex, u_origin, u_origsamp;
 	bool linear;
 	int  scale;
 	/* Its output, when it does not draw into the rect itself. */
@@ -250,6 +250,7 @@ static void locate(pass *ps)
 	ps->u_sampler = p_glGetUniformLocation(ps->prog, "Texture");
 	ps->u_origtex = p_glGetUniformLocation(ps->prog, "OrigTextureSize");
 	ps->u_origin  = p_glGetUniformLocation(ps->prog, "OrigInputSize");
+	ps->u_origsamp = p_glGetUniformLocation(ps->prog, "OrigTexture");
 }
 
 static void drop_target(pass *ps)
@@ -496,6 +497,16 @@ static void run(const pass *ps, unsigned in, bool linear,
 	if (ps->u_sampler >= 0) p_glUniform1i(ps->u_sampler, 0);
 	if (ps->u_origtex >= 0) p_glUniform2f(ps->u_origtex, (float)g_src_w, (float)g_src_h);
 	if (ps->u_origin >= 0)  p_glUniform2f(ps->u_origin, (float)g_src_w, (float)g_src_h);
+	/* The core's frame itself on unit 1, whatever this pass's input is: a
+	 * shader that is a chain's last pass - Pixel Transparency after LCD 3x -
+	 * reads the raw frame through OrigTexture (plorpos-gkd.86.1). Left unset
+	 * it was unit 0, the previous pass. */
+	if (ps->u_origsamp >= 0) {
+		p_glActiveTexture(GL_TEXTURE1);
+		p_glBindTexture(GL_TEXTURE_2D, g_src);
+		p_glActiveTexture(GL_TEXTURE0);
+		p_glUniform1i(ps->u_origsamp, 1);
+	}
 	p_glDrawArrays(GL_TRIANGLE_STRIP, to_screen ? 4 : 0, 4);
 }
 

@@ -370,7 +370,7 @@ int main(int argc, char **argv)
 	const GLubyte *(*gl_string)(GLenum);
 	int frames = argc > 2 ? atoi(argv[2]) : 120;
 	int sw = 0, sh = 0, ww = 0, wh = 0;
-	chain chains[2 + 19 + 4];
+	chain chains[2 + 19 + 4 + 2];
 	int nchains = 0, c, si;
 	uint8_t *buf;
 	uint64_t *ready, *swap;
@@ -433,6 +433,11 @@ int main(int argc, char **argv)
 	chains[nchains++] = (chain){ "preset old-tv", 2,
 		{ { "barrel-distortion", false, 0 }, { "res-independent-scanlines", false, 0 } }, false, false };
 	/* scanlines.cfg is res-independent-scanlines alone - measured as a single. */
+	/* Not NextUI's: SkyWalker541's pixel transparency, alone and after lcd3x
+	 * (plorpos-gkd.86.1). */
+	chains[nchains++] = (chain){ "pt", 1, { { "PT_SkyWalker541", false, 0 } }, false, false };
+	chains[nchains++] = (chain){ "pt after lcd3x", 2,
+		{ { "lcd3x", false, 0 }, { "PT_SkyWalker541", false, 0 } }, false, false };
 
 	buf = malloc(640 * 480 * 4);
 	ready = malloc(sizeof *ready * (size_t)frames);
