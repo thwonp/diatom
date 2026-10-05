@@ -163,7 +163,7 @@ def main():
         d.send("HOTKEYS")
         ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=\tmodifier=menu",
            "no bindings, and MENU is the default modifier")
-        spec = "l1:ff,r1:rewind,a:savestate,b:loadstate"
+        spec = "l1:ff,r1:rewind,a:savestate,b:loadstate,x:screenshot"
         want = "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu"
         d.send("SETHOTKEYS\thotkeys=" + spec)
         ck(d.line("HOTKEYS") == want,
@@ -178,7 +178,7 @@ def main():
         # before that still binds everything else in it, even a full set.
         for old, why in (("sright:ff,sleft:rewind,x:display,a:filter",
                           "a saved spec with display and filter keeps its other bindings"),
-                         ("y:filter,l1:ff,r1:rewind,a:savestate,b:loadstate",
+                         ("y:filter,l1:ff,r1:rewind,a:savestate,b:loadstate,x:screenshot",
                           "a full set plus a retired entry is still a full set")):
             d.send("SETHOTKEYS\thotkeys=" + old)
             ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + old + "\tmodifier=menu", why)

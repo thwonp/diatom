@@ -230,3 +230,16 @@ are unchanged.
 
 GKD branch only (feature/gkd). On the Brick, `sharp` is a real sharp-bilinear
 and the hotkey is its only way in, so dev keeps both actions.
+
+## Revisited 2026-10-04 (plorpos-gkd.86.2)
+
+`screenshot` is a fifth action; `HK_MAX` is 5. Edge-triggered like
+`savestate`: the press grabs what is on glass (`diatom_port_grab` - the
+display's size, its scaling and shader, no overlay) and a thread of its own
+writes `<shots>/<rom's name>-YYYYMMDD-HHMMSS.png`, so the game stops only for
+the grab (~30 ms on the GKD at 1600x1440), not the encode (~0.35-1 s). A press
+while the last one is still being written is dropped and logged. The folder is
+RUN's `shots=` (ADR-0024's rule: the launcher says where things go) or
+`--shots`; Diatom makes it if it is missing. With neither, the action does
+nothing. No `proto=` bump: a new value of an existing field and a new optional
+RUN key, and the launcher and Diatom ship together.

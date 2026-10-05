@@ -13,6 +13,7 @@
  * directory on the include path, and this is the form SDL documents. */
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <pthread.h>
 #include <string.h>
 
@@ -402,36 +403,25 @@ void diatom_port_input_poll(void)
 uint32_t diatom_port_input_state(void) { return g_buttons; }
 bool     diatom_port_should_quit(void) { return g_quit; }
 
-bool diatom_port_capture(const char *path)
+bool diatom_port_grab(uint8_t **rgb, int *w_out, int *h_out)
 {
-	SDL_Surface *s;
+	uint8_t *px;
 	int w, h;
-	bool ok;
 
-	if (!g_renderer || !path) return false;
+	if (!g_renderer) return false;
 	SDL_GetRendererOutputSize(g_renderer, &w, &h);
+	if (w <= 0 || h <= 0) return false;
+	px = malloc((size_t)w * (size_t)h * 3);
+	if (!px) return false;
 
-	s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
-	if (!s) return false;
-
-	/* Read back what was actually presented, so the capture shows the real
+	/* Read back what was actually presented, so the grab shows the real
 	 * scaling and letterboxing rather than the core's raw framebuffer. */
-	if (SDL_RenderReadPixels(g_renderer, NULL, SDL_PIXELFORMAT_ARGB8888,
-	                         s->pixels, s->pitch) != 0) {
-		SDL_FreeSurface(s);
+	if (SDL_RenderReadPixels(g_renderer, NULL, SDL_PIXELFORMAT_RGB24, px, w * 3) != 0) {
+		free(px);
 		return false;
 	}
-	/* Save as plain 24-bit RGB. A 32-bit BMP carries a V4/V5 header with alpha
-	 * masks that several readers - macOS ImageIO among them - refuse, and the
-	 * alpha channel is meaningless here anyway. */
-	{
-		SDL_Surface *rgb = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_RGB24, 0);
-		SDL_FreeSurface(s);
-		if (!rgb) return false;
-		ok = SDL_SaveBMP(rgb, path) == 0;
-		SDL_FreeSurface(rgb);
-	}
-	return ok;
+	*rgb = px; *w_out = w; *h_out = h;
+	return true;
 }
 
 uint64_t diatom_port_now_us(void)

@@ -242,6 +242,7 @@ typedef struct {
 	char exit_state[1024]; /* RUN: state written on every way out */
 	char save[1024];       /* RUN: this game's save dir; absent = --save */
 	char preview[1024];    /* RUN: BMP of the frame, on pause and on exit */
+	char shots[512];       /* RUN: the screenshot hotkey's folder, made if missing */
 	/* Achievements, ADR-0026. `console` is a RetroAchievements console id and
 	 * is not optional for them: an RA address is an offset into a per-console
 	 * space, so 0x06f3 means nothing until the launcher says which console. */

@@ -26,6 +26,7 @@
 #include "cheevos.h"
 #include "diatom.h"
 #include "hotkeys.h"
+#include "shot.h"
 #include "rewind.h"
 
 /* --- the frame the core last handed us ----------------------------------- */
@@ -47,6 +48,7 @@ static char        g_run_save[1024];
 typedef struct diatom_session {
 	const char   *core, *rom, *shot, *state_load, *state_exit;
 	const char   *preview;    /* BMP of the frame, written on pause and exit */
+	const char   *shots;      /* the screenshot hotkey's folder, plorpos-gkd.86.2 */
 	const char   *firmware;   /* what the launcher says this content needs */
 	const char   *cheevos;    /* an achievement set to watch, ADR-0026 */
 	int           console;    /* which console's address space it is written against */
@@ -480,6 +482,7 @@ static void usage(void)
 		"              [--firmware <name>]  required in --system, checked first\n"
 		"              [--disc <n>]         multi-disc content: start on image n (0-based)\n"
 		"              [--frames <n>] [--shot <file.bmp>] [--preview-on-exit <file.bmp>]\n"
+		"              [--shots <dir>]     the screenshot hotkey's folder, made if missing\n"
 		"              [--socket <path>]   launcher protocol, ADR-0009\n"
 		"              [--cores <dir>]     map every core there before listening\n"
 		"              [--core-option key=value] ...   repeatable\n"
@@ -841,6 +844,9 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_LOADSTATE:
 			if ((pressed & bit) && sn->state_exit)
 				diatom_state_load(g_core, sn->state_exit);
+			break;
+		case HK_SCREENSHOT:
+			if (pressed & bit) shot_take(sn->shots, sn->rom);
 			break;
 		default: break;
 		}
@@ -1875,12 +1881,13 @@ static int run_session_inner(const diatom_session *sn)
 	if (sn->preview && write_preview(sn->preview))
 		diatom_proto_send("PREVIEW\tpath=%s", sn->preview);
 
+	shot_wait();     /* a screenshot still being written is on the card first */
 	{
 		uint64_t t_end = diatom_port_now_us();
 
 		if (sn->shot)
 			printf("diatom: capture %s: %s\n", sn->shot,
-			       diatom_port_capture(sn->shot) ? "ok" : "FAILED");
+			       shot_capture_bmp(sn->shot) ? "ok" : "FAILED");
 
 		uint64_t span = t_end - t_start;
 		double secs = (span > paused_us ? span - paused_us : 0) / 1000000.0;
@@ -1987,6 +1994,7 @@ int main(int argc, char **argv)
 	 * and is the only thing that has made this loop miss a frame. */
 	const char *display = "stretch", *filter = "nearest";
 	const char *state_load = NULL, *state_exit = NULL, *firmware = NULL, *tap = NULL;
+	const char *shots = NULL;
 	const char *preview_path = NULL, *cheevos_path = NULL;
 	const char *sock = getenv("DIATOM_SOCKET");
 	const char *cores_dir = NULL, *shader = NULL;
@@ -2008,6 +2016,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--load-state") && i + 1 < argc) state_load = argv[++i];
 		else if (!strcmp(argv[i], "--state-on-exit") && i + 1 < argc) state_exit = argv[++i];
 		else if (!strcmp(argv[i], "--preview-on-exit") && i + 1 < argc) preview_path = argv[++i];
+		else if (!strcmp(argv[i], "--shots") && i + 1 < argc) shots = argv[++i];
 		else if (!strcmp(argv[i], "--firmware") && i + 1 < argc) firmware = argv[++i];
 		/* ADR-0026. Present on the command line as well as the protocol so a
 		 * set can be exercised on the desktop with no launcher at all, which
@@ -2165,6 +2174,7 @@ int main(int argc, char **argv)
 			         m.save[0] ? m.save : g_save_default);
 			g_policy.save_dir = g_run_save;
 			sn.preview    = m.preview[0]    ? m.preview    : NULL;
+			sn.shots      = m.shots[0]      ? m.shots      : NULL;
 			sn.cheevos    = m.cheevos[0]    ? m.cheevos    : NULL;
 			sn.console    = m.console;
 			sn.disc       = m.disc;
@@ -2185,7 +2195,7 @@ int main(int argc, char **argv)
 		diatom_session sn = {
 			.core = core_path, .rom = rom_path, .shot = shot_path,
 			.state_load = state_load, .state_exit = state_exit,
-			.preview = preview_path, .firmware = firmware,
+			.preview = preview_path, .firmware = firmware, .shots = shots,
 			.cheevos = cheevos_path, .console = console, .disc = disc,
 			.limit = limit, .mode = start_mode, .filter = start_filter,
 			.list_only = list_options,

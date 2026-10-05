@@ -13,7 +13,7 @@ PORT ?= desktop
 
 CC      ?= cc
 CFLAGS  += -std=gnu11 -Wall -Wextra -Wno-unused-parameter -O2
-CFLAGS  += -Iinclude -Isrc -Ivendor/rcheevos/include -Ivendor/lz4
+CFLAGS  += -Iinclude -Isrc -Ivendor/rcheevos/include -Ivendor/lz4 -Ivendor/stb
 # Header dependency tracking. Without it, changing a struct in diatom.h leaves
 # stale objects calling through old member offsets - which on 2026-08-26 turned
 # serialize_size() into a call to a different function entirely and made state
@@ -26,7 +26,7 @@ LDFLAGS +=
 BUILD := build/$(PORT)
 # A port's own second file: the GKD's GL present path (plorpos-gkd.72).
 PORT_EXTRA_gkd := port/gkd_gl.c
-SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
+SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/shot.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
 CONFORM := $(BUILD)/diatom-conform
@@ -63,6 +63,12 @@ $(RC_OBJ): CFLAGS := $(RC_CFLAGS)
 LZ4_DIR := vendor/lz4
 LZ4_OBJ := $(BUILD)/$(LZ4_DIR)/lz4.o
 $(LZ4_OBJ): CFLAGS := -std=gnu11 -O2 -MMD -MP
+
+# stb_image_write (vendor/stb/README.md): the screenshot hotkey's PNG encoder.
+# Same terms - its own flags, the header never patched.
+STB_DIR := vendor/stb
+STB_OBJ := $(BUILD)/$(STB_DIR)/stb_image_write.o
+$(STB_OBJ): CFLAGS := -std=gnu11 -O2 -MMD -MP -I$(STB_DIR)
 
 ifeq ($(PORT),desktop)
   # sdl2-config ships with SDL2 itself; pkg-config is a separate install and is
@@ -240,9 +246,9 @@ $(STUB): test/stubcore.c
 run-stub: $(BIN) $(STUB)
 	./$(BIN) --core $(STUB)
 
-$(BIN): $(OBJ) $(RC_OBJ) $(LZ4_OBJ)
+$(BIN): $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(STB_OBJ)
 	@mkdir -p $(BUILD)
-	$(CC) -o $@ $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(LDFLAGS)
+	$(CC) -o $@ $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(STB_OBJ) $(LDFLAGS)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -401,7 +407,7 @@ $(TOOLS_DIR)/allocwatch.o: tools/allocwatch.c
 	@mkdir -p $(TOOLS_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(CONFORM): $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(TOOLS_DIR)/allocwatch.o
+$(CONFORM): $(OBJ) $(RC_OBJ) $(LZ4_OBJ) $(STB_OBJ) $(TOOLS_DIR)/allocwatch.o
 	$(CC) -o $@ $^ $(LDFLAGS) \
 	  -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
 
@@ -418,4 +424,4 @@ conform-device:
 # would otherwise become the default goal, and `make` would silently build one
 # object and stop - which it did, on 2026-08-26, and looked exactly like the
 # docker mtime staleness it was added to prevent.
--include $(OBJ:.o=.d) $(RC_OBJ:.o=.d) $(LZ4_OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(RC_OBJ:.o=.d) $(LZ4_OBJ:.o=.d) $(STB_OBJ:.o=.d)

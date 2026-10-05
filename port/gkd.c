@@ -585,38 +585,31 @@ void diatom_port_input_poll(void)
 uint32_t diatom_port_input_state(void) { return g_buttons; }
 bool     diatom_port_should_quit(void) { return g_quit; }
 
-bool diatom_port_capture(const char *path)
+bool diatom_port_grab(uint8_t **rgb, int *w_out, int *h_out)
 {
-	SDL_Surface *s;
 	int w = g_sw, h = g_sh;
-	bool ok;
+	uint8_t *px;
+	size_t i, n;
 
-	if (!g_gl || !path || w <= 0 || h <= 0) return false;
-
-	s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ABGR8888);
-	if (!s) return false;
+	if (!g_gl || w <= 0 || h <= 0) return false;
+	n = (size_t)w * (size_t)h;
+	px = malloc(n * 4);
+	if (!px) return false;
 
 	/* The last frame drawn again into the back buffer and read from there -
-	 * after a swap the back buffer's contents are undefined - so the capture
+	 * after a swap the back buffer's contents are undefined - so the grab
 	 * shows the real scaling, letterboxing and shader, not the core's raw
 	 * framebuffer. Without the overlay and level bars, which are not the
-	 * game. ABGR8888 is SDL's name for GL's R,G,B,A byte order. */
+	 * game. GL reads R,G,B,A; packed down to R,G,B in place. */
 	gkdgl_draw(w, h, g_last_dst, g_last_linear);
-	if (!gkdgl_read(w, h, s->pixels) || s->pitch != w * 4) {
-		SDL_FreeSurface(s);
-		return false;
+	if (!gkdgl_read(w, h, px)) { free(px); return false; }
+	for (i = 0; i < n; i++) {
+		px[i * 3 + 0] = px[i * 4 + 0];
+		px[i * 3 + 1] = px[i * 4 + 1];
+		px[i * 3 + 2] = px[i * 4 + 2];
 	}
-	/* Save as plain 24-bit RGB. A 32-bit BMP carries a V4/V5 header with alpha
-	 * masks that several readers - macOS ImageIO among them - refuse, and the
-	 * alpha channel is meaningless here anyway. */
-	{
-		SDL_Surface *rgb = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_RGB24, 0);
-		SDL_FreeSurface(s);
-		if (!rgb) return false;
-		ok = SDL_SaveBMP(rgb, path) == 0;
-		SDL_FreeSurface(rgb);
-	}
-	return ok;
+	*rgb = px; *w_out = w; *h_out = h;
+	return true;
 }
 
 uint64_t diatom_port_now_us(void)

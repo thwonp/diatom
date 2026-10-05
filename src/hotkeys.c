@@ -64,6 +64,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "rewind"))    return HK_REWIND;
 	if (!strcmp(s, "savestate")) return HK_SAVESTATE;
 	if (!strcmp(s, "loadstate")) return HK_LOADSTATE;
+	if (!strcmp(s, "screenshot")) return HK_SCREENSHOT;
 	return HK_NONE;
 }
 
@@ -92,8 +93,8 @@ bool hotkeys_set(const char *spec)
 		if (!colon) return false;
 		/* Retired by plorpos-gkd.73, still in specs saved before it. Skipped
 		 * rather than refused, or one stale entry would cost that system
-		 * every binding it has. Before the HK_MAX check: a full set of four
-		 * plus a stale one is still four. */
+		 * every binding it has. Before the HK_MAX check: a full set
+		 * plus a stale one is still a full set. */
 		if (!strcmp(colon + 1, "display") || !strcmp(colon + 1, "filter"))
 			continue;
 		if (n >= HK_MAX) return false;

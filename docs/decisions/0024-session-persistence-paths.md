@@ -69,3 +69,9 @@ prevent.
   file format.
 - Anything wants `PREVIEW` on demand mid-game (a live thumbnail), which is a
   different feature: this one is deliberately tied to pause and exit.
+
+## Revisited 2026-10-04 (plorpos-gkd.86.2)
+
+One more optional RUN path: `shots=<dir>`, where the screenshot hotkey
+(ADR-0035) writes its PNGs. A folder rather than a file, because a press names
+its own file (the ROM's name and the time); Diatom makes it if it is missing.

@@ -96,6 +96,18 @@ Permissive, like rcheevos: compatible with this fork's license and brings no
 copyleft in. Only `lib/lz4.c` and `lib/lz4.h` of v1.10.0 are carried, unmodified;
 `vendor/lz4/README.md` says why the frame and HC formats are not.
 
+## `vendor/stb/`
+
+`stb_image_write.h` v1.16, the screenshot hotkey's PNG encoder (`src/shot.c`,
+plorpos-gkd.86.2), vendored because neither device image ships a libpng.
+
+- **Sean Barrett** and contributors
+- **Public domain (Unlicense) or MIT**, the reader's choice; taken as MIT. Both
+  texts are at the end of the header.
+
+Unmodified. `vendor/stb/stb_image_write.c` is this repo's own one-line wrapper
+that compiles the implementation; `vendor/stb/README.md` says why.
+
 ## Cores
 
 **Diatom ships no cores and has no core list.** It loads whatever shared library

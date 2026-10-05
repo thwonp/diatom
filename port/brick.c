@@ -1935,14 +1935,14 @@ bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 }
 bool     diatom_port_should_quit(void) { return g_quit; }
 
-bool diatom_port_capture(const char *path)
+bool diatom_port_grab(uint8_t **rgb, int *w_out, int *h_out)
 {
-	SDL_Surface *s, *rgb;
-	bool ok;
+	int w = (int)g_vinfo.xres, h = (int)g_vinfo.yres, front, x, y;
+	uint8_t *px, *d;
 
-	int front;
-
-	if (!g_fb || !path) return false;
+	if (!g_fb || w <= 0 || h <= 0) return false;
+	px = malloc((size_t)w * (size_t)h * 3);
+	if (!px) return false;
 
 	/* Wait for the mailbox to drain before reading the front page.
 	 *
@@ -1955,24 +1955,21 @@ bool diatom_port_capture(const char *path)
 	 * defect. An instrument that is not deterministic cannot verify anything. */
 	front = flip_drain();
 
-	/* Read back the page on glass. Masks come from the driver's reported
-	 * channel offsets, same as the blit writes. */
-	s = SDL_CreateRGBSurfaceFrom(page_base(front),
-	                             (int)g_vinfo.xres, (int)g_vinfo.yres, 32,
-	                             (int)g_finfo.line_length,
-	                             0xffu << g_vinfo.red.offset,
-	                             0xffu << g_vinfo.green.offset,
-	                             0xffu << g_vinfo.blue.offset, 0);
-	if (!s) return false;
-
-	/* Plain 24-bit RGB: a 32-bit BMP carries a V4/V5 header several readers
-	 * refuse, and the alpha channel is meaningless here anyway. */
-	rgb = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_RGB24, 0);
-	SDL_FreeSurface(s);
-	if (!rgb) return false;
-	ok = SDL_SaveBMP(rgb, path) == 0;
-	SDL_FreeSurface(rgb);
-	return ok;
+	/* Read back the page on glass, channels where the driver says they are,
+	 * the same offsets the blit writes. */
+	d = px;
+	for (y = 0; y < h; y++) {
+		const uint32_t *s = (const uint32_t *)((const uint8_t *)page_base(front)
+		                                       + (size_t)y * g_finfo.line_length);
+		for (x = 0; x < w; x++) {
+			uint32_t v = s[x];
+			*d++ = (uint8_t)(v >> g_vinfo.red.offset);
+			*d++ = (uint8_t)(v >> g_vinfo.green.offset);
+			*d++ = (uint8_t)(v >> g_vinfo.blue.offset);
+		}
+	}
+	*rgb = px; *w_out = w; *h_out = h;
+	return true;
 }
 
 uint64_t diatom_port_now_us(void)
