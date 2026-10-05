@@ -31,11 +31,14 @@
 #include "cheevos.h"
 #include "diatom.h"
 
-/* Long enough that a churning game is not writing constantly, short enough
- * that a hard power cut cannot cost much. Graceful shutdown is covered
- * separately: SIGTERM arrives about 810 ms before death (measured), which is
- * ~95x what an 8 KB flush needs. */
-#define WRITE_INTERVAL_US 1000000
+/* What a hard power cut or a crash can cost, at most. Was 1 s, which games
+ * that use battery RAM as work RAM (Final Fantasy, Kirby's Adventure) turned
+ * into a synced write every second for as long as they ran - and each sync
+ * rewrites exFAT's dirty flag in the boot sector (plorpos-gkd.88). The moments
+ * a player stops are covered without the timer: PAUSE (menu and sleep) writes
+ * through diatom_save_now, and SIGTERM arrives about 810 ms before death
+ * (measured), ~95x what an 8 KB flush needs. */
+#define WRITE_INTERVAL_US 60000000
 
 #define STATE_MAGIC   "DIATOMST"
 #define STATE_VERSION 1u
@@ -61,7 +64,8 @@ static uint64_t    g_last_write;
 static pthread_t       g_writer;
 static pthread_mutex_t g_mx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_cv = PTHREAD_COND_INITIALIZER;
-static bool            g_pending, g_stop, g_running;
+static pthread_cond_t  g_done = PTHREAD_COND_INITIALIZER;
+static bool            g_pending, g_busy, g_stop, g_running;
 
 static uint64_t now_us(void)
 {
@@ -126,11 +130,14 @@ static void *writer(void *arg)
 			pthread_cond_wait(&g_cv, &g_mx);
 		if (g_stop && !g_pending) break;
 		g_pending = false;
+		g_busy = true;
 		pthread_mutex_unlock(&g_mx);
 
 		write_atomic(g_sram_path, g_staging, g_sram_size);
 
 		pthread_mutex_lock(&g_mx);
+		g_busy = false;
+		pthread_cond_broadcast(&g_done);
 	}
 	pthread_mutex_unlock(&g_mx);
 	return arg;
@@ -202,7 +209,7 @@ bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path
 	 * the new writer quit on arrival and every later save waited on a thread
 	 * that was gone - or wrote this game's uninitialized staging buffer once,
 	 * when an orphaned g_pending let it past the check (plorpos-gkd.75). */
-	g_stop = g_pending = false;
+	g_stop = g_pending = g_busy = false;
 	if (pthread_create(&g_writer, NULL, writer, NULL) == 0)
 		g_running = true;
 	else
@@ -221,10 +228,37 @@ void diatom_save_tick(void)
 	if (now_us() - g_last_write < WRITE_INTERVAL_US) return;
 
 	pthread_mutex_lock(&g_mx);
+	/* Still writing the last one, which it reads from g_staging unlocked.
+	 * Try again next frame rather than tear it. */
+	if (g_busy) { pthread_mutex_unlock(&g_mx); return; }
 	memcpy(g_staging, g_sram, g_sram_size);
 	memcpy(g_shadow,  g_sram, g_sram_size);
 	g_pending = true;
 	pthread_cond_signal(&g_cv);
+	pthread_mutex_unlock(&g_mx);
+	g_last_write = now_us();
+}
+
+/* Now rather than at the next interval, and returns once it is on the card.
+ * Through the writer, never beside it: a second writer would share its .tmp,
+ * and a write it had queued could land after this newer one. */
+void diatom_save_now(void)
+{
+	if (!g_sram_size) return;
+	if (!g_running) { diatom_save_flush(); return; }
+
+	pthread_mutex_lock(&g_mx);
+	/* The writer reads g_staging outside the lock while it is busy. */
+	while (g_busy)
+		pthread_cond_wait(&g_done, &g_mx);
+	if (memcmp(g_sram, g_shadow, g_sram_size)) {
+		memcpy(g_staging, g_sram, g_sram_size);
+		memcpy(g_shadow,  g_sram, g_sram_size);
+		g_pending = true;
+		pthread_cond_signal(&g_cv);
+	}
+	while (g_pending || g_busy)
+		pthread_cond_wait(&g_done, &g_mx);
 	pthread_mutex_unlock(&g_mx);
 	g_last_write = now_us();
 }

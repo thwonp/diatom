@@ -67,10 +67,17 @@ the user owns the five.
 | Event | SRAM | State |
 |---|---|---|
 | Game load | read | resume slot read, if the launcher asks |
-| During play | write when changed, at most every 1 s, on a writer thread | manual only |
-| MENU pressed | - | user's choice from the launcher menu |
+| During play | write when changed, at most every 60 s, on a writer thread | manual only |
+| MENU pressed / sleep (PAUSE) | write if changed, through the writer, before PAUSED | user's choice from the launcher menu |
 | Clean exit | flush | resume slot written |
 | SIGTERM | flush | resume slot written |
+
+**60 s, not 1 s (plorpos-gkd.88).** Games that use battery RAM as work RAM
+(NES Final Fantasy, Kirby's Adventure) change it every frame, so 1 s meant a
+synced write every second for the whole session - measured on the GKD, ~10
+write ios/s and exFAT's boot-sector dirty flag rewritten about twice a second.
+The interval now bounds only what a crash or hard power cut can lose; the
+moments a player stops (menu, sleep, exit, SIGTERM) write without waiting for it.
 
 **Resume is the default on launch.** A launcher that wants a fresh start says
 so; the common case needs no thought.

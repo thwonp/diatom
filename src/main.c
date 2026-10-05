@@ -661,6 +661,12 @@ static bool menu_pause(const diatom_session *sn)
 	 * invisible, which is why this handover never flashed. */
 	diatom_port_present_stop(DIATOM_PARK_KEEP);
 
+	/* A menu or a sleep is where a player stops, and a sleeping device may
+	 * never wake. SRAM is on the card before the launcher hears PAUSED, so
+	 * the 60 s autosave interval never decides what a pause loses
+	 * (plorpos-gkd.88, ADR-0016). */
+	diatom_save_now();
+
 	/* Symmetrical with RUNNING: the launcher may draw from here. */
 	diatom_proto_send("PAUSED");
 

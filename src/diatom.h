@@ -323,6 +323,7 @@ void diatom_proto_emit_fatal(const char *line);
  * slot, a game or a system, and the launcher owns all three (ADR-0016). */
 bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path);
 void diatom_save_tick(void);       /* once per frame; may schedule a write */
+void diatom_save_now(void);        /* synchronous, through the writer; PAUSE */
 void diatom_save_flush(void);      /* synchronous; exit and signal paths */
 void diatom_save_shutdown(void);
 bool diatom_state_save(diatom_core *c, const char *path);
