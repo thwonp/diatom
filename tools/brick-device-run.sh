@@ -65,16 +65,36 @@ if [ -n "${DIATOM_GAIN:-}" ]; then
     amixer sset 'Soft Volume Master' 255 >/dev/null 2>&1
 fi
 
+# SUP is SEVERAL pids: the launch.sh loop and its background subshells,
+# which ps names the same. Quoted, "$SUP" is one argument with newlines in it,
+# busybox kill rejects it, 2>/dev/null hides that - and nothing was frozen.
+# Measured 2026-10-05 (plorpos-reo.4.6): a respawned tortos.elf presenting
+# inside the "freeze" through a whole afternoon of probe runs. Hence one kill
+# per pid, and the check below that the freeze actually held.
 restore() {
-    [ -n "$SUP" ] && kill -CONT "$SUP" 2>/dev/null
+    for p in $SUP; do kill -CONT "$p" 2>/dev/null; done
     exit "${1:-0}"
 }
 trap 'restore 130' INT TERM HUP
 
 # Freeze the supervisor FIRST, or it respawns the UI underneath us.
-[ -n "$SUP" ] && kill -STOP "$SUP" 2>/dev/null
+for p in $SUP; do kill -STOP "$p" 2>/dev/null; done
 killall -9 tortos.elf playos.elf minarch.elf 2>/dev/null   # see SUP above
 sleep 1
+
+# Check STATE, not the kills (see BUSY above): every supervisor stopped (T)
+# and no UI left. Anything else means the UI can present under us - refuse.
+for p in $SUP; do
+    grep -q '^State:.*T' "/proc/$p/status" 2>/dev/null && continue
+    [ -d "/proc/$p" ] || continue
+    echo "brick-run: REFUSING - supervisor $p did not stop" >&2
+    restore 4
+done
+# A zombie is fine: killed, unreaped only because its parent is stopped.
+if ps | grep -E 'tortos\.elf|playos\.elf|minarch\.elf' | grep -v grep | grep -v ' Z ' >&2; then
+    echo "brick-run: REFUSING - the UI is still running (above)" >&2
+    restore 4
+fi
 
 # --exec runs an arbitrary command inside the same freeze, instead of diatom.
 # It exists because the alternative is hand-writing an unguarded `adb shell`
