@@ -67,6 +67,17 @@ bool diatom_rewind_step_back(diatom_core *c);
  * For the launcher's UI (a rewind indicator) and for tests. */
 size_t diatom_rewind_depth(void);
 
+/* What this session's rewind cost and holds, for the end-of-game summary:
+ * the frame loop's serialize time and the captures skipped because the
+ * worker was behind, against the entries and bytes in the ring. */
+typedef struct {
+	size_t        entries, bytes, budget;
+	unsigned      every;
+	unsigned long captures, dropped;
+	unsigned      serialize_avg_us, serialize_max_us;
+} diatom_rewind_stat;
+void diatom_rewind_stats(diatom_rewind_stat *st);
+
 /* Frees the ring and stops the worker thread. For process exit. */
 void diatom_rewind_shutdown(void);
 

@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "lz4.h"
 #include "rewind.h"
@@ -100,6 +101,17 @@ static uint8_t *g_ring;
 static entry    g_ent[DIATOM_REWIND_MAX_DEPTH];
 static size_t   g_ent_tail, g_count;   /* oldest entry, entries held */
 static size_t   g_whead;          /* byte offset the next entry tries first */
+
+/* What forward play paid this session, for diatom_rewind_stats. */
+static unsigned long g_ser_n, g_drops;
+static uint64_t      g_ser_us, g_ser_max_us;
+
+static uint64_t mono_us(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000000u + (uint64_t)t.tv_nsec / 1000u;
+}
 
 /* XOR a word at a time - byte-wise was 5.7 ms per PlayStation rewind step
  * in the bench, all of it in the frame loop. memcpy keeps it alignment-safe
@@ -302,6 +314,8 @@ void diatom_rewind_reset(diatom_core *c)
 	(void)c;   /* sized lazily, against each capture's own serialize_size() */
 	free_all();
 	g_every = DIATOM_REWIND_CAPTURE_EVERY;
+	g_ser_n = g_drops = 0;
+	g_ser_us = g_ser_max_us = 0;
 }
 
 void diatom_rewind_shutdown(void)
@@ -372,10 +386,19 @@ void diatom_rewind_capture(diatom_core *c)
 	pthread_mutex_unlock(&g_qmx);
 
 	/* The only cost forward play pays: the core's own serialize. */
-	if (!c->serialize(g_slots[s].buf, n)) {
-		pthread_mutex_lock(&g_qmx);
-		g_slots[s].state = SLOT_FREE;
-		goto drop;
+	{
+		uint64_t t0 = mono_us(), dt;
+		bool ok = c->serialize(g_slots[s].buf, n);
+
+		dt = mono_us() - t0;
+		g_ser_n++;
+		g_ser_us += dt;
+		if (dt > g_ser_max_us) g_ser_max_us = dt;
+		if (!ok) {
+			pthread_mutex_lock(&g_qmx);
+			g_slots[s].state = SLOT_FREE;
+			goto drop;
+		}
 	}
 
 	pthread_mutex_lock(&g_qmx);
@@ -384,7 +407,10 @@ void diatom_rewind_capture(diatom_core *c)
 	g_q[(g_qh + g_qn) % POOL] = s;
 	g_qn++;
 	pthread_cond_signal(&g_qcv);
+	pthread_mutex_unlock(&g_qmx);
+	return;
 drop:
+	g_drops++;
 	pthread_mutex_unlock(&g_qmx);
 }
 
@@ -427,6 +453,24 @@ bool diatom_rewind_step_back(diatom_core *c)
 	if (!ok) return false;
 	g_popped = true;
 	return c->unserialize(g_dec, g_size);
+}
+
+void diatom_rewind_stats(diatom_rewind_stat *st)
+{
+	size_t i;
+
+	pthread_mutex_lock(&g_rmx);
+	st->entries = g_count;
+	st->bytes = 0;
+	for (i = 0; i < g_count; i++)
+		st->bytes += g_ent[(g_ent_tail + i) % DIATOM_REWIND_MAX_DEPTH].len;
+	pthread_mutex_unlock(&g_rmx);
+	st->budget = DIATOM_REWIND_BUDGET_BYTES;
+	st->every = g_every;
+	st->captures = g_ser_n;
+	st->dropped = g_drops;
+	st->serialize_avg_us = g_ser_n ? (unsigned)(g_ser_us / g_ser_n) : 0;
+	st->serialize_max_us = (unsigned)g_ser_max_us;
 }
 
 size_t diatom_rewind_depth(void)

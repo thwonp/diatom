@@ -101,6 +101,12 @@ ifeq ($(PORT),brick)
   # Resident cores: 16, as on the GKD. Since plorpos-reo the Brick ships all
   # nine cores, and the ninth was refused at 8 (plorpos-gkd.83.12).
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  # Rewind as on the GKD - a snapshot every 5 frames, 1800 entries, ~30 s of
+  # hold - on half its budget (plorpos-gkd.38). 128 MiB against ~600 MB free
+  # in a game; only PlayStation (~110 KB a delta) reaches it, at ~1160
+  # entries, ~19 s. The ring is freed at the end of every game.
+  CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(128u * 1024 * 1024)' \
+             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
   LDFLAGS += -L$(SYSROOT)/usr/trimui/lib -Wl,-rpath-link,$(SYSROOT)/usr/trimui/lib
   # Explicit -ldl/-lpthread: the toolchain's glibc 2.31 predates their merge
   # into libc proper (2.34).

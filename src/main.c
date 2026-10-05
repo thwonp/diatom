@@ -1274,6 +1274,9 @@ static int run_session_inner(const diatom_session *sn)
 	struct retro_system_info si;
 	double   frame_us, next_us;
 	uint64_t t_start, paused_us = 0;   /* menu time, excluded from the rate */
+	diatom_rewind_stat rw_stat = { 0 };   /* taken before the ring is freed */
+	uint64_t rw_t0 = 0;                    /* this rewind hold's start, 0 = none */
+	long     rw_steps = 0;
 	uint32_t buttons = 0, prev_buttons = 0, held_at_entry = 0;
 	bool menu_tap = false;   /* MENU down with nothing else pressed yet */
 	bool menu_now;
@@ -1566,13 +1569,25 @@ static int run_session_inner(const diatom_session *sn)
 		 * do nothing, rather than hold the frame the way an exhausted ring
 		 * does - there is no history to have run out of. */
 		if (g_rewind_active && diatom_rewind_every()) {
+			if (!rw_t0) { rw_t0 = diatom_port_now_us(); rw_steps = 0; }
 			/* Ring exhausted: diatom_rewind_step_back()'s own contract is to
 			 * hold here, not to be called again - skipping run() keeps
 			 * g_frame exactly as it was instead of quietly resuming forward
 			 * play the player never un-paused. */
-			if (diatom_rewind_step_back(g_core))
+			if (diatom_rewind_step_back(g_core)) {
 				g_core->run();   /* renders the frame the restore left us at */
+				rw_steps++;
+			}
 		} else {
+			/* How fast a hold played back: below 60 steps a second where a
+			 * step costs more than a frame (PlayStation on the Brick,
+			 * plorpos-gkd.38.2). */
+			if (rw_t0) {
+				double s = (diatom_port_now_us() - rw_t0) / 1000000.0;
+				printf("diatom: rewind %ld step(s) in %.2fs = %.1f/s\n",
+				       rw_steps, s, s > 0 ? rw_steps / s : 0.0);
+				rw_t0 = 0;
+			}
 			g_core->run();   /* renders forward play */
 			diatom_rewind_capture(g_core);
 			diatom_disk_tick(g_core);   /* a swapped disc's tray closes */
@@ -1882,6 +1897,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * it is a defect, then the state, which is a convenience. */
 	diatom_save_shutdown();
 	if (sn->state_exit) diatom_state_save(g_core, sn->state_exit);
+	diatom_rewind_stats(&rw_stat);   /* for the summary, before the ring goes */
 	diatom_rewind_shutdown();
 	if (g_ff_quieted_us) { diatom_audio_quiet(false); g_ff_quieted_us = false; }
 
@@ -1913,6 +1929,16 @@ static int run_session_inner(const diatom_session *sn)
 		printf("diatom: %ld geometry change(s), last rect %dx%d at %d,%d\n",
 		       geom_changes, g_dst.w, g_dst.h, g_dst.x, g_dst.y);
 		printf("diatom: %ld resync(s)\n", resyncs);
+		{
+			const diatom_rewind_stat rs = rw_stat;
+
+			printf("diatom: rewind every %u: %zu entries (%.1fs hold), %zu KB of %u MB;"
+			       " %lu captures, %lu skipped, serialize avg %.2f max %.2f ms\n",
+			       rs.every, rs.entries, rs.entries / 60.0, rs.bytes / 1024,
+			       (unsigned)(rs.budget >> 20), rs.captures,
+			       rs.dropped, rs.serialize_avg_us / 1000.0,
+			       rs.serialize_max_us / 1000.0);
+		}
 		printf("diatom: per display mode:\n");
 		for (i = 0; i < diatom_mode_count; i++) {
 			report_slot(i, DIATOM_FILTER_NEAREST);
