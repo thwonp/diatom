@@ -25,4 +25,10 @@ bool shot_take(const char *dir, const char *rom);
 /* Until the last shot is on the card - before a process exits. */
 void shot_wait(void);
 
+/* Once per shot, on the thread that called shot_take, after its file is
+ * written (or failed): true, with whether it worked and where it went, so the
+ * launcher can say so on screen (plorpos-gkd.86.2). False otherwise. *path is
+ * valid until the next shot_take. */
+bool shot_done(bool *ok, const char **path);
+
 #endif

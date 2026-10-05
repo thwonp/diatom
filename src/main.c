@@ -1729,6 +1729,17 @@ static int run_session_inner(const diatom_session *sn)
 		diatom_env_suppress(hotkey_chord(buttons, prev_buttons, sn)
 		                    | held_at_entry);
 
+		/* A screenshot that has reached the card, for the launcher to say so
+		 * (it has the font). From here rather than the writer's thread:
+		 * this is the thread that talks to the launcher. */
+		{
+			const char *shot;
+			bool ok;
+
+			if (shot_done(&ok, &shot))
+				diatom_proto_send("SHOT\tpath=%s\tok=%d", shot, ok ? 1 : 0);
+		}
+
 		/* MENU is Diatom's own key and the ports no longer act on it, because
 		 * what it means is host policy: standalone it ends the session, under
 		 * the launcher it opens the launcher's menu. Edge-triggered, or holding

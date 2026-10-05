@@ -70,12 +70,14 @@ typedef struct {
 	uint8_t *rgb;
 	int      w, h;
 	uint64_t grab_us;
+	bool     ok;
 	char     path[1024];
 } shot_job;
 
 enum { IDLE, WRITING, DONE };
 static atomic_int g_state;
 static pthread_t  g_thread;
+static bool       g_joinable;     /* g_thread is one to join */
 static shot_job   g_job;
 
 /* mkdir -p: the folder is the launcher's to name and nobody's to make
@@ -126,6 +128,7 @@ static void *writer(void *arg)
 	        j->grab_us / 1000.0, (diatom_port_now_us() - t0) / 1000.0);
 	free(j->rgb);
 	j->rgb = NULL;
+	j->ok = ok;
 	atomic_store(&g_state, DONE);
 	return NULL;
 }
@@ -177,17 +180,24 @@ bool shot_take(const char *dir, const char *rom)
 	}
 	g_job.grab_us = diatom_port_now_us() - t0;
 	atomic_store(&g_state, WRITING);
-	if (pthread_create(&g_thread, NULL, writer, &g_job) != 0) {
-		atomic_store(&g_state, IDLE);
-		writer(&g_job);                  /* no thread: write it here instead */
-		atomic_store(&g_state, IDLE);
-	}
+	g_joinable = pthread_create(&g_thread, NULL, writer, &g_job) == 0;
+	if (!g_joinable) writer(&g_job);     /* no thread: write it here instead */
+	return true;
+}
+
+bool shot_done(bool *ok, const char **path)
+{
+	if (atomic_load(&g_state) != DONE) return false;
+	shot_wait();
+	*ok = g_job.ok;
+	*path = g_job.path;
 	return true;
 }
 
 void shot_wait(void)
 {
 	if (atomic_load(&g_state) == IDLE) return;
-	pthread_join(g_thread, NULL);
+	if (g_joinable) pthread_join(g_thread, NULL);
+	g_joinable = false;
 	atomic_store(&g_state, IDLE);
 }

@@ -243,3 +243,9 @@ RUN's `shots=` (ADR-0024's rule: the launcher says where things go) or
 `--shots`; Diatom makes it if it is missing. With neither, the action does
 nothing. No `proto=` bump: a new value of an existing field and a new optional
 RUN key, and the launcher and Diatom ship together.
+
+When the file is on the card (or the write failed), Diatom says
+`SHOT\tpath=<png>\tok=1|0`, from its main thread, so the launcher - which has
+the font - can show "Screenshot saved" as an OVERLAY (ADR-0027). After the
+write, not at the press: the message is only true once the file is there, and
+it is never in the shot.
