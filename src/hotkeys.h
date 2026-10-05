@@ -10,7 +10,8 @@
  * layers (ADR-0039): with the modifier held (`x:ff`, the only layer there was
  * before plorpos-gkd.43.2, so a stored spec keeps its meaning) or direct
  * (`d.x:ff`). Directions - the d-pad's and the stick's - are modifier-only,
- * so the d-pad can never stop working for a game.
+ * so the d-pad can never stop working for a game. The Brick Pro's right
+ * stick binds on either layer: no game sees it (ADR-0044).
  *
  * No SDL, no port header, no diatom_core - deliberately, so a test can drive
  * the real parser with no display and no core, the way rewind.c's ring is

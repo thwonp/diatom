@@ -1920,8 +1920,8 @@ static const struct { int idx; int btn; } joymap[] = {
 #define JOY_FN_R   10
 
 /* The Brick Pro (TG4040) is this machine with two sticks. There 9/10 are the
- * stick clicks - 9 reports DIATOM_BTN_L3 (a hotkey-modifier choice, never a
- * core input), 10 is unmapped - and its function keys
+ * stick clicks - 9 reports DIATOM_BTN_L3 and 10 DIATOM_BTN_R3 (hotkey
+ * choices, never core inputs; ADR-0044) - and its function keys
  * are KEY_F1/KEY_F2, indices 11 and 12 in the table above. Pressed and logged
  * on the device 2026-09-28. */
 #define JOY_PRO_FN_L 11
@@ -1945,16 +1945,22 @@ static bool is_brick_pro(void)
 
 /* The Pro's left stick: reported as the stick's own four bits, which the host
  * folds onto the d-pad for the core (all the shipped cores are digital) - kept
- * apart so each can be a hotkey trigger of its own (ADR-0039). Half travel to
- * press, a third to let go, so a stick resting near the line cannot chatter. */
+ * apart so each can be a hotkey trigger of its own (ADR-0039). The right
+ * stick's four bits are hotkeys only and fold onto nothing (ADR-0044). Half
+ * travel to press, a third to let go, so a stick resting near the line cannot
+ * chatter. */
 #define AXIS_LX 0
 #define AXIS_LY 1
+#define AXIS_RX 3
+#define AXIS_RY 4
 #define STICK_PRESS   16384
 #define STICK_RELEASE 10923
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
                  | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT))
 #define STICK_BITS (DIATOM_BIT(DIATOM_BTN_SUP) | DIATOM_BIT(DIATOM_BTN_SDOWN) \
-                  | DIATOM_BIT(DIATOM_BTN_SLEFT) | DIATOM_BIT(DIATOM_BTN_SRIGHT))
+                  | DIATOM_BIT(DIATOM_BTN_SLEFT) | DIATOM_BIT(DIATOM_BTN_SRIGHT) \
+                  | DIATOM_BIT(DIATOM_BTN_RSUP) | DIATOM_BIT(DIATOM_BTN_RSDOWN) \
+                  | DIATOM_BIT(DIATOM_BTN_RSLEFT) | DIATOM_BIT(DIATOM_BTN_RSRIGHT))
 static uint32_t g_stick_bits;
 
 static void stick_axis(int value, int neg_btn, int pos_btn)
@@ -2019,12 +2025,15 @@ void diatom_port_input_poll(void)
 				break;
 			}
 
-			/* The Pro's left stick click: L3, the hotkey-modifier candidate
-			 * (plorpos-gkd.43.1). The same index is the plain Brick's front
-			 * brightness key, handled above. */
-			if (is_brick_pro() && ev.jbutton.button == JOY_FN_L) {
-				if (down) g_buttons |=  DIATOM_BIT(DIATOM_BTN_L3);
-				else      g_buttons &= ~DIATOM_BIT(DIATOM_BTN_L3);
+			/* The Pro's stick clicks: L3 and R3, hotkey choices
+			 * (plorpos-gkd.43.1, ADR-0044). The same indexes are the plain
+			 * Brick's front brightness keys, handled above. */
+			if (is_brick_pro() && (ev.jbutton.button == JOY_FN_L
+			                       || ev.jbutton.button == JOY_FN_R)) {
+				uint32_t bit = DIATOM_BIT(ev.jbutton.button == JOY_FN_L
+				                          ? DIATOM_BTN_L3 : DIATOM_BTN_R3);
+				if (down) g_buttons |=  bit;
+				else      g_buttons &= ~bit;
 				break;
 			}
 
@@ -2056,11 +2065,14 @@ void diatom_port_input_poll(void)
 			} else if (ev.jaxis.axis == AXIS_R2) {
 				if (pressed) g_buttons |=  DIATOM_BIT(DIATOM_BTN_R2);
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_R2);
-			} else if (ev.jaxis.axis == AXIS_LX || ev.jaxis.axis == AXIS_LY) {
-				if (ev.jaxis.axis == AXIS_LX)
-					stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT, DIATOM_BTN_SRIGHT);
-				else
-					stick_axis(ev.jaxis.value, DIATOM_BTN_SUP, DIATOM_BTN_SDOWN);
+			} else {
+				switch (ev.jaxis.axis) {
+				case AXIS_LX: stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);  break;
+				case AXIS_LY: stick_axis(ev.jaxis.value, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);   break;
+				case AXIS_RX: stick_axis(ev.jaxis.value, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); break;
+				case AXIS_RY: stick_axis(ev.jaxis.value, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);  break;
+				default: break;
+				}
 				g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
 			}
 			break;

@@ -215,6 +215,12 @@ def main():
         d.send("SETHOTKEYS\thotkeys=x:ff\tmodifier=home")
         ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=x:ff\tmodifier=home",
            "the GKD's Home is a modifier choice")
+        # The Brick Pro's right stick (plorpos-pky.17, ADR-0044): R3 is a
+        # modifier choice, and its directions bind on either layer.
+        spec = "d.rsup:ff,rsdown:rewind,d.rsleft:savestate,rsright:loadstate"
+        d.send("SETHOTKEYS\thotkeys=" + spec + "\tmodifier=r3")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + "\tmodifier=r3",
+           "R3 is a modifier and the right stick binds direct and with the modifier")
 
         d.send("NOSUCHVERB\tdevice=x")
         d.send("AUDIO")

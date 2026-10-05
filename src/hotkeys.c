@@ -9,7 +9,8 @@
  *
  * Triggers: the face buttons and shoulders (L1/R1/L2/R2/A/B/X/Y) on either
  * layer, and the d-pad's and stick's directions with the modifier only
- * (ADR-0039). START and the modifier itself stay out. L1/R1/A joined when
+ * (ADR-0039). The Brick Pro's right stick's directions on either layer
+ * (ADR-0044). START and the modifier itself stay out. L1/R1/A joined when
  * plorpos-gkd.22 retired the fixed display chord that used to own them.
  * Display mode and filter were bindable actions here from then until
  * plorpos-gkd.73: the mode is the launcher's menus' job, and the filter's
@@ -31,12 +32,14 @@ static const struct { const char *name; int btn; } g_modifiers[] = {
 	{ "menu",   DIATOM_BTN_MENU   },
 	{ "select", DIATOM_BTN_SELECT },
 	{ "l3",     DIATOM_BTN_L3     },
+	{ "r3",     DIATOM_BTN_R3     },   /* the Brick Pro's right stick, ADR-0044 */
 	{ "home",   DIATOM_BTN_HOTKEY },   /* the GKD's Home, ADR-0037 */
 };
 
 /* `direct` says whether the input may be a direct trigger. Directions may
  * not: a direct binding hides its input from the game, and the d-pad (the
- * stick folds onto it) must never stop working. */
+ * stick folds onto it) must never stop working. The Pro's right stick may:
+ * no game sees it, so binding it alone hides nothing (ADR-0044). */
 static const struct { const char *name; int btn; bool direct; } g_inputs[] = {
 	{ "l1", DIATOM_BTN_L1, true }, { "r1", DIATOM_BTN_R1, true },
 	{ "l2", DIATOM_BTN_L2, true }, { "r2", DIATOM_BTN_R2, true },
@@ -46,6 +49,8 @@ static const struct { const char *name; int btn; bool direct; } g_inputs[] = {
 	{ "left",   DIATOM_BTN_LEFT,   false }, { "right",  DIATOM_BTN_RIGHT,  false },
 	{ "sup",    DIATOM_BTN_SUP,    false }, { "sdown",  DIATOM_BTN_SDOWN,  false },
 	{ "sleft",  DIATOM_BTN_SLEFT,  false }, { "sright", DIATOM_BTN_SRIGHT, false },
+	{ "rsup",   DIATOM_BTN_RSUP,   true  }, { "rsdown", DIATOM_BTN_RSDOWN, true  },
+	{ "rsleft", DIATOM_BTN_RSLEFT, true  }, { "rsright", DIATOM_BTN_RSRIGHT, true },
 };
 
 static int hk_btn_from_name(const char *s, bool direct)

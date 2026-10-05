@@ -92,3 +92,4 @@ never started.
 | [0041](0041-shader-chains-are-sent-not-named.md) | Send the shader chain itself over SETDISPLAY; the launcher owns the list and its names | Accepted |
 | [0042](0042-license-per-file-mit-default.md) | License per file: MIT by default, PolyForm Noncommercial only where NextUI's code is | Accepted |
 | [0043](0043-brick-draws-through-egl-while-a-shader-is-set.md) | The Brick draws through an EGL window while a shader is set, and through fbdev otherwise | Accepted |
+| [0044](0044-the-pro-right-stick-is-hotkeys-only.md) | The Brick Pro's right stick and R3 are hotkeys only | Accepted |

@@ -985,6 +985,11 @@ Two levers the spike discovered:
       *(Accepted)*. `d.x:ff` is a direct trigger, hidden from the game every
       frame. Directions bind with the modifier only, and the stick gets its own
       bits, folded onto the d-pad for the core (plorpos-gkd.43.2).
+- [x] **[OPEN]** The Brick Pro's right stick and R3 →
+      **[ADR-0044](decisions/0044-the-pro-right-stick-is-hotkeys-only.md)**
+      *(Accepted)*. Hotkeys only: R3 is a modifier choice, and the right
+      stick's directions bind on either layer, since no game sees them. They
+      are never folded and never mapped (plorpos-pky.17).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,

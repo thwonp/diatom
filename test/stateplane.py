@@ -116,6 +116,13 @@ check("a stick direction is refused as a source", got,
 send("SETMAP\tmap=a:sup"); got = drain()
 check("and as a target", got,
       ["ERROR\tcode=bad_map\tmsg=a:sup", "MAP\tmap=x:b,y:a"])
+# Nor the Brick Pro's right stick and R3 (ADR-0044): hotkeys only.
+send("SETMAP\tmap=rsup:b"); got = drain()
+check("a right-stick direction is refused as a source", got,
+      ["ERROR\tcode=bad_map\tmsg=rsup:b", "MAP\tmap=x:b,y:a"])
+send("SETMAP\tmap=a:r3"); got = drain()
+check("and R3 as a target", got,
+      ["ERROR\tcode=bad_map\tmsg=a:r3", "MAP\tmap=x:b,y:a"])
 
 send("SETMAP\tmap=a:b,nonsense:x"); got = drain()
 check("bad pair refuses whole message", got,

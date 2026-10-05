@@ -95,6 +95,12 @@ enum {
 	 * folds them onto UP/DOWN/LEFT/RIGHT after the suppress mask, so to a game
 	 * the stick is still the d-pad. Same order as UP/DOWN/LEFT/RIGHT. */
 	DIATOM_BTN_SUP, DIATOM_BTN_SDOWN, DIATOM_BTN_SLEFT, DIATOM_BTN_SRIGHT,
+	/* The Brick Pro's second stick: its click and its four directions.
+	 * Diatom's own like L3, and NOT folded onto anything - no shipped core
+	 * wants a second stick, so these exist only to be hotkeys (a modifier
+	 * choice, and triggers on either layer; ADR-0044). */
+	DIATOM_BTN_R3,
+	DIATOM_BTN_RSUP, DIATOM_BTN_RSDOWN, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT,
 	DIATOM_BTN_COUNT
 };
 #define DIATOM_BIT(b) (1u << (b))

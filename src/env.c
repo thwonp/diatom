@@ -57,7 +57,8 @@ static uint32_t core_input(void)
 static bool unmappable(int b)
 {
 	return b == DIATOM_BTN_MENU || b == DIATOM_BTN_HOTKEY || b == DIATOM_BTN_L3
-	    || (b >= DIATOM_BTN_SUP && b <= DIATOM_BTN_SRIGHT);
+	    || (b >= DIATOM_BTN_SUP && b <= DIATOM_BTN_SRIGHT)
+	    || (b >= DIATOM_BTN_R3 && b <= DIATOM_BTN_RSRIGHT);
 }
 
 bool diatom_env_geometry_changed(void)
@@ -341,7 +342,7 @@ static void cb_input_poll(void)
 static const char *const button_names[DIATOM_BTN_COUNT] = {
 	"up", "down", "left", "right", "a", "b", "x", "y",
 	"l1", "r1", "l2", "r2", "select", "start", "menu", "hotkey", "l3",
-	"sup", "sdown", "sleft", "sright"
+	"sup", "sdown", "sleft", "sright", "r3", "rsup", "rsdown", "rsleft", "rsright"
 };
 
 /* Canonical Diatom buttons -> retropad. Near-identity by design; its purpose is
@@ -372,6 +373,11 @@ static int button_map[DIATOM_BTN_COUNT] = {
 	[DIATOM_BTN_SDOWN]  = -1,          /* by core_input(), never mapped */
 	[DIATOM_BTN_SLEFT]  = -1,
 	[DIATOM_BTN_SRIGHT] = -1,
+	[DIATOM_BTN_R3]      = -1,         /* the Pro's right stick: hotkeys only, */
+	[DIATOM_BTN_RSUP]    = -1,         /* never folded, never mapped (ADR-0044) */
+	[DIATOM_BTN_RSDOWN]  = -1,
+	[DIATOM_BTN_RSLEFT]  = -1,
+	[DIATOM_BTN_RSRIGHT] = -1,
 };
 
 static int identity_map[DIATOM_BTN_COUNT];
@@ -513,8 +519,8 @@ bool diatom_input_set_map(const char *spec)
 		 * fourth rule. Refusing it on either side is the only place that rule
 		 * can actually be enforced, and letting it through would let a user
 		 * map away the button that opens the screen which would undo it.
-		 * HOTKEY, L3 and the stick are Diatom's own for the same reason
-		 * (ADR-0037, 0038, 0039). */
+		 * HOTKEY, L3, R3 and the sticks are Diatom's own for the same
+		 * reason (ADR-0037, 0038, 0039, 0044). */
 		if (from < 0 || unmappable(from)) return false;
 
 		/* ADR-0028's pulse. Split the target from its period BEFORE naming the
