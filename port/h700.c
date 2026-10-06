@@ -37,10 +37,17 @@
 #include "port_clock.h"
 
 #define AUDIO_RATE 48000
-/* Capacity in FRAMES (one frame = two int16 samples). 4096 at 48kHz is ~85ms,
- * with rate control aiming to hold it near half that. Same figure as desktop:
- * nothing about the device argues for a different one yet. */
+/* Capacity in FRAMES (one frame = two int16 samples), as the host is told:
+ * rate control aims at half, so this sets the latency. 4096 at 48kHz is ~85ms,
+ * held near ~43ms. Same figure as desktop. */
 #define AUDIO_BUFFER_FRAMES 4096
+/* What diatom_port_audio_write really accepts, above that. The codec takes a
+ * 2048-frame period at a time (see audio_open_id), so the queue swings ~2900
+ * frames between its pulls, and around a 2048 target the sawtooth's peaks
+ * reached ~3500-4900: clamped at 4096, Advance Wars dropped 97-227 frames after
+ * a Continue (plorpos-7ny.23). Raising the capacity itself to 6144 fixed it but
+ * moved the target, +21 ms the user would not take; only the guard moves. */
+#define AUDIO_QUEUE_LIMIT 6144
 #define AUDIO_FRAME_BYTES   (2 * (int)sizeof(int16_t))
 
 #define FB_PAGES 3
@@ -1356,6 +1363,21 @@ static void audio_debug_tick(void)
 	}
 }
 
+/* Adopted from the handover thread, the codec has been playing SDL's own
+ * silence and holds nothing of ours: start the queue at rate control's target,
+ * in silence. Started empty, it only ever refilled at the controller's 0.5% -
+ * seconds below target, winding the integral to -0.45 - and the overshoot that
+ * followed put the 2048-frame sawtooth's peaks over capacity: Advance Wars
+ * dropped 97-227 frames after each Continue (plorpos-7ny.23). Queued when the
+ * thread opens instead, it was played out before the loop adopted it. The
+ * latency is the target's, as in steady play. */
+static void audio_prime(void)
+{
+	static const int16_t silence[AUDIO_BUFFER_FRAMES / 2 * 2];
+
+	SDL_QueueAudio(g_audio, silence, sizeof silence);
+}
+
 static bool audio_claim(void)
 {
 	uint64_t now;
@@ -1378,6 +1400,7 @@ static bool audio_claim(void)
 			g_hand_opened = 0;
 			pthread_mutex_unlock(&g_hand_mx);
 			g_audio_refused = false;
+			audio_prime();
 			return true;
 		}
 		if (!g_hand_failed) {
@@ -2166,8 +2189,8 @@ size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 	if (g_sh_dirty) shader_reconcile();
 	if (!audio_claim()) return n;
 	queued = diatom_port_audio_queued();
-	room   = queued >= (size_t)AUDIO_BUFFER_FRAMES
-	       ? 0 : (size_t)AUDIO_BUFFER_FRAMES - queued;
+	room   = queued >= (size_t)AUDIO_QUEUE_LIMIT
+	       ? 0 : (size_t)AUDIO_QUEUE_LIMIT - queued;
 	if (n > room) n = room;
 	if (!n) return 0;
 
