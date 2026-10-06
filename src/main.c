@@ -1296,6 +1296,9 @@ static int run_session_inner(const diatom_session *sn)
 	long frames = 0, geom_changes = 0, resyncs = 0;
 	size_t q_min = (size_t)-1, q_max = 0;
 	bool stop = false;
+#ifdef DIATOM_PORT_PACED
+	bool paced = false, pace_ok = false;
+#endif
 	int i;
 
 	/* Per-game state that must not carry over from the previous session. */
@@ -1422,8 +1425,18 @@ static int run_session_inner(const diatom_session *sn)
 	       (double)av.geometry.aspect_ratio,
 	       av.timing.fps, av.timing.sample_rate, g_caps.audio_rate);
 
+#ifdef DIATOM_PORT_PACED
+	/* A core faster than the panel runs at the panel's rate, every frame
+	 * shown; the resampler is told so, as RetroArch scales its input rate by
+	 * refresh/fps under vsync. A slower core keeps its own clock. */
+	pace_ok = av.timing.fps > diatom_port_refresh_hz();
+	diatom_audio_configure(av.timing.sample_rate *
+	                       (pace_ok ? diatom_port_refresh_hz() / av.timing.fps : 1.0),
+	                       g_caps.audio_rate, g_caps.audio_buffer_frames);
+#else
 	diatom_audio_configure(av.timing.sample_rate, g_caps.audio_rate,
 	                       g_caps.audio_buffer_frames);
+#endif
 	diatom_audio_prime();
 
 	/* The rect is computed from BASE geometry and does not move again unless
@@ -1656,6 +1669,9 @@ static int run_session_inner(const diatom_session *sn)
 
 		{
 			uint64_t p0 = diatom_port_now_us();
+#ifdef DIATOM_PORT_PACED
+			paced = diatom_port_pace(pace_ok && g_ff_speed == 1);
+#endif
 			diatom_port_present(g_frame_fresh ? g_frame : NULL,
 			                    g_frame_w, g_frame_h, g_frame_pitch,
 			                    g_policy.pixfmt, g_dst,
@@ -1856,6 +1872,13 @@ static int run_session_inner(const diatom_session *sn)
 
 			next_us += target_us;
 			now = diatom_port_now_us();
+#ifdef DIATOM_PORT_PACED
+			/* The panel is the clock: present has just waited for it, so
+			 * neither sleep (that phase can miss the next refresh) nor count
+			 * being behind (always, by the panel's shortfall) as a stall.
+			 * Rate control follows the panel's rate instead. */
+			if (paced) next_us = (double)now;
+#endif
 
 			if (next_us > (double)now) {
 				struct timespec ts;

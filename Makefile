@@ -30,7 +30,7 @@ BUILD := build/$(PORT)
 # Brick uses too while a shader is set (plorpos-reo.4).
 PORT_EXTRA_gkd   := port/gkd_gl.c
 PORT_EXTRA_brick := port/gkd_gl.c
-# Linked but never brought up: port/h700.c declines shaders for now.
+# The GL window while a shader is set, as the Brick (port/h700.c).
 PORT_EXTRA_h700  := port/gkd_gl.c
 SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/shot.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
@@ -107,6 +107,9 @@ ifeq ($(PORT),h700)
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(128u * 1024 * 1024)' \
              -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+  # The SP's panel runs at ~59.6 Hz, below most cores: play is paced by the
+  # panel (every frame shown, ~0.8% slow) - diatom_port_pace.
+  CFLAGS  += -DDIATOM_PORT_PACED
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
 endif

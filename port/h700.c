@@ -13,8 +13,9 @@
  *     brightness keys - Menu held turns the volume keys into them;
  *   - fb0's virtual height is two pages; the mailbox wants three, so init asks
  *     for them (the memory holds five);
- *   - no shaders: the GL path is a second EGL client beside the launcher's,
- *     which the Brick's Mali does not survive. Declined until measured.
+ *   - shaders: the Brick's GL window, a second EGL client beside the
+ *     launcher's, which this Mali survives. But it is made on two pages, and
+ *     its first frames after a handover are marked - see gl_te_mark.
  */
 #include <SDL.h>
 
@@ -58,11 +59,15 @@ static bool                      g_pan_broken; /* pan failed; draw to front */
  *   g_pending  published by present(), waiting for the thread, -1 if none
  * present() draws into any page holding none of those roles; when all three
  * are taken it steals g_pending back, which is safe precisely because the
- * thread only takes pending under the same lock. Latest wins, nothing waits. */
+ * thread only takes pending under the same lock. Latest wins, nothing waits -
+ * unless the host asks for pacing (diatom_port_pace): then present waits for
+ * the thread to take the pending page, so every frame is shown and the panel,
+ * not the core, sets the rate. */
 static pthread_t        g_flip_thread;
 static pthread_mutex_t  g_flip_mx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t   g_flip_cv = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   g_flip_idle = PTHREAD_COND_INITIALIZER;
+static bool             g_pace;        /* diatom_port_pace: wait, don't steal */
 static int              g_front;
 static int              g_inflight = -1;
 static int              g_pending  = -1;
@@ -518,11 +523,6 @@ bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linea
 {
 	int i;
 
-	/* None on this port yet - see the header. Clearing to None is fine. */
-	if (n > 0) {
-		snprintf(err, cap, "no shaders on this device yet");
-		return false;
-	}
 	if (n < 0 || n > DIATOM_SHADER_MAX_PASSES) {
 		snprintf(err, cap, "%d passes", n);
 		return false;
@@ -698,6 +698,20 @@ static SDL_GLContext g_glc;
 static bool          g_gl_ok;          /* gkdgl_init succeeded */
 static int           g_gl_w, g_gl_h;
 static diatom_rect   g_gl_dst;         /* the last frame's, for a grab */
+static int           g_te_mark;        /* frames still to mark (gl_te_mark) */
+static unsigned      g_te_prog;        /* its program; 0 = cannot mark */
+
+/* What gkdgl_set_chain last compiled. The launcher sends the chain before
+ * every RUN, and a compile in the first frames, with the codec already
+ * draining, cost 70-150 ms of warmup and an underrun now and then. */
+static char g_drawn_path[DIATOM_SHADER_MAX_PASSES][1024];
+static diatom_shader_pass g_drawn_pass[DIATOM_SHADER_MAX_PASSES];
+static int  g_drawn_n;
+static bool g_drawn_final_linear;
+static void (*g_glUseProgram)(unsigned);
+static void (*g_glDrawArrays)(unsigned, int, int);
+static void (*g_glViewport)(int, int, int, int);
+static void (*g_glBindFramebuffer)(unsigned, unsigned);
 
 /* Whichever page the window left on glass becomes our front: the window pans
  * fb0 itself, in its own pages 0 and 1 (glswitch's layer log), and present and
@@ -713,6 +727,84 @@ static void gl_sync_front(void)
 	pthread_mutex_unlock(&g_flip_mx);
 }
 
+/* Mali transaction elimination: the GPU skips writing a 16x16 tile whose
+ * content matches what it last wrote to that buffer. The launcher draws into
+ * the same two pages while we are paused, so a tile we re-render unchanged
+ * after Continue would keep the launcher's pixels (2026-10-06, egltest3: CPU
+ * red survived in whole tiles). One pixel per tile in a near-black no frame
+ * of ours would put there, on one frame per buffer, makes every tile differ;
+ * the next frame writes them all. Meant to be invisible: 1/256 of the pixels,
+ * near-black, for two frames.
+ *
+ * One draw of gkd_gl's quad (attribute 0, vertices 0-3, already bound) with
+ * every other pixel discarded. 1350 scissored clears did the same job at
+ * ~55 ms a frame - a 110 ms hitch at every Continue. Its own program, here
+ * and not in gkd_gl.c, so the GKD's diatom stays as it is. */
+static unsigned gl_te_program(void)
+{
+	static const char *vs =
+		"#version 300 es\n"
+		"in vec4 VertexCoord;\n"
+		"void main() { gl_Position = VertexCoord; }\n";
+	static const char *fs =
+		"#version 300 es\n"
+		"precision mediump float;\n"
+		"out vec4 FragColor;\n"
+		"void main() {\n"
+		"\tivec2 p = ivec2(gl_FragCoord.xy);\n"
+		"\tif (((p.x | p.y) & 15) != 0) discard;\n"
+		"\tFragColor = vec4(0.0, 0.0, 1.0 / 255.0, 1.0);\n"
+		"}\n";
+	unsigned (*create_shader)(unsigned) = (unsigned (*)(unsigned))SDL_GL_GetProcAddress("glCreateShader");
+	void (*source)(unsigned, int, const char *const *, const int *) =
+		(void (*)(unsigned, int, const char *const *, const int *))SDL_GL_GetProcAddress("glShaderSource");
+	void (*compile)(unsigned) = (void (*)(unsigned))SDL_GL_GetProcAddress("glCompileShader");
+	unsigned (*create_program)(void) = (unsigned (*)(void))SDL_GL_GetProcAddress("glCreateProgram");
+	void (*attach)(unsigned, unsigned) = (void (*)(unsigned, unsigned))SDL_GL_GetProcAddress("glAttachShader");
+	void (*bind_attrib)(unsigned, unsigned, const char *) =
+		(void (*)(unsigned, unsigned, const char *))SDL_GL_GetProcAddress("glBindAttribLocation");
+	void (*link)(unsigned) = (void (*)(unsigned))SDL_GL_GetProcAddress("glLinkProgram");
+	void (*get_programiv)(unsigned, unsigned, int *) =
+		(void (*)(unsigned, unsigned, int *))SDL_GL_GetProcAddress("glGetProgramiv");
+	void (*delete_shader)(unsigned) = (void (*)(unsigned))SDL_GL_GetProcAddress("glDeleteShader");
+	unsigned v, f, p;
+	int ok = 0;
+
+	g_glUseProgram       = (void (*)(unsigned))SDL_GL_GetProcAddress("glUseProgram");
+	g_glDrawArrays       = (void (*)(unsigned, int, int))SDL_GL_GetProcAddress("glDrawArrays");
+	g_glViewport         = (void (*)(int, int, int, int))SDL_GL_GetProcAddress("glViewport");
+	g_glBindFramebuffer  = (void (*)(unsigned, unsigned))SDL_GL_GetProcAddress("glBindFramebuffer");
+	if (!create_shader || !source || !compile || !create_program || !attach ||
+	    !bind_attrib || !link || !get_programiv || !delete_shader ||
+	    !g_glUseProgram || !g_glDrawArrays || !g_glViewport || !g_glBindFramebuffer)
+		return 0;
+	v = create_shader(0x8B31);              /* GL_VERTEX_SHADER */
+	f = create_shader(0x8B30);              /* GL_FRAGMENT_SHADER */
+	source(v, 1, &vs, NULL);
+	source(f, 1, &fs, NULL);
+	compile(v);
+	compile(f);
+	p = create_program();
+	attach(p, v);
+	attach(p, f);
+	bind_attrib(p, 0, "VertexCoord");       /* gkd_gl's A_VERTEX */
+	link(p);
+	delete_shader(v);
+	delete_shader(f);
+	get_programiv(p, 0x8B82, &ok);          /* GL_LINK_STATUS */
+	return ok ? p : 0;
+}
+
+static void gl_te_mark(void)
+{
+	if (g_te_mark <= 0 || !g_te_prog) return;
+	g_te_mark--;
+	g_glBindFramebuffer(0x8D40, 0);         /* GL_FRAMEBUFFER */
+	g_glViewport(0, 0, g_gl_w, g_gl_h);
+	g_glUseProgram(g_te_prog);
+	g_glDrawArrays(0x0005, 0, 4);           /* GL_TRIANGLE_STRIP */
+}
+
 static void gl_down(void)
 {
 	if (!g_win) return;
@@ -723,6 +815,8 @@ static void gl_down(void)
 	g_win = NULL;
 	g_glc = NULL;
 	g_gl_ok = false;
+	g_te_prog = 0;
+	g_drawn_n = 0;
 	gl_sync_front();
 	/* The window drew into pages 0 and 1: wipe them before fbdev uses them,
 	 * as a mode change does. */
@@ -753,8 +847,26 @@ static bool gl_up(void)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
-	g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
-	                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+	/* On pages 0 and 1, as the launcher's (TortOS plat_video_init): Mali's
+	 * fbdev window takes every page the virtual height offers, fixed when it
+	 * is made, and page 2 is the park page. Height put back afterwards. */
+	{
+		struct fb_var_screeninfo two = g_vinfo, back = g_vinfo;
+
+		two.yres_virtual = 2 * g_vinfo.yres;
+		two.yoffset = 0;
+		if (g_pages > 2 && ioctl(g_fb_fd, FBIOPUT_VSCREENINFO, &two) == 0) {
+			g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
+			                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+			back.yoffset = 0;
+			if (ioctl(g_fb_fd, FBIOPUT_VSCREENINFO, &back) != 0)
+				diatom_port_log(DIATOM_LOG_WARN, "shader: fb height not restored");
+			gl_sync_front();
+		}
+	}
+	if (!g_win)
+		g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
+		                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
 	if (!g_win) {
 		snprintf(msg, sizeof msg, "shader: no window: %s", SDL_GetError());
 		diatom_port_log(DIATOM_LOG_WARN, msg);
@@ -774,9 +886,26 @@ static bool gl_up(void)
 	SDL_GL_SetSwapInterval(0);
 	SDL_GL_GetDrawableSize(g_win, &g_gl_w, &g_gl_h);
 	g_gl_ov_dirty = true;
+	g_te_prog = gl_te_program();
+	if (!g_te_prog) diatom_port_log(DIATOM_LOG_WARN, "shader: no TE mark program");
+	g_te_mark = 2;
 	snprintf(msg, sizeof msg, "shader: GL window %dx%d up in %llu ms", g_gl_w, g_gl_h,
 	         (unsigned long long)((diatom_port_now_us() - t0) / 1000));
 	diatom_port_log(DIATOM_LOG_INFO, msg);
+	return true;
+}
+
+static bool chain_is_drawn(void)
+{
+	int i;
+
+	if (!g_win || g_sh_n != g_drawn_n || g_sh_final_linear != g_drawn_final_linear)
+		return false;
+	for (i = 0; i < g_sh_n; i++)
+		if (g_sh_pass[i].linear != g_drawn_pass[i].linear ||
+		    g_sh_pass[i].scale != g_drawn_pass[i].scale ||
+		    strcmp(g_sh_path[i], g_drawn_path[i]) != 0)
+			return false;
 	return true;
 }
 
@@ -784,8 +913,10 @@ static bool gl_up(void)
 static void shader_reconcile(void)
 {
 	char err[512], *c;
+	int i;
 
 	g_sh_dirty = false;
+	if (chain_is_drawn()) return;
 	if (g_sh_n == 0) {
 		if (g_win) {
 			gl_down();
@@ -794,7 +925,15 @@ static void shader_reconcile(void)
 		return;
 	}
 	if (!g_win && !gl_up()) { g_sh_n = 0; return; }
-	if (!gkdgl_set_chain(g_sh_pass, g_sh_n, g_sh_final_linear, err, sizeof err)) {
+	g_drawn_n = 0;
+	if (gkdgl_set_chain(g_sh_pass, g_sh_n, g_sh_final_linear, err, sizeof err)) {
+		for (i = 0; i < g_sh_n; i++) {
+			memcpy(g_drawn_path[i], g_sh_path[i], sizeof g_drawn_path[i]);
+			g_drawn_pass[i] = g_sh_pass[i];
+		}
+		g_drawn_n = g_sh_n;
+		g_drawn_final_linear = g_sh_final_linear;
+	} else {
 		char msg[600];
 
 		for (c = err; *c; c++) if (*c == '\n' || *c == '\t' || *c == '\r') *c = ' ';
@@ -852,6 +991,7 @@ static void gl_present(const void *src, int w, int h, size_t pitch,
 		gkdgl_overlay_draw(g_gl_w, g_gl_h, r);
 	}
 	gl_osd();
+	gl_te_mark();
 	SDL_GL_SwapWindow(g_win);
 	pthread_mutex_lock(&g_flip_mx);
 	g_presented = true;
@@ -868,6 +1008,7 @@ void diatom_port_present_stop(diatom_park park_mode)
 
 	if (!g_fb) return;
 	if (g_win && g_presented) gl_quiesce();   /* else not ours on glass */
+	if (g_win) g_te_mark = 2;                 /* the launcher draws next */
 	front = flip_drain();
 
 	was_presenting = g_presented;
@@ -952,6 +1093,7 @@ static void *flip_worker(void *arg)
 		page = g_pending;
 		g_pending  = -1;
 		g_inflight = page;
+		pthread_cond_broadcast(&g_flip_idle);   /* a paced present waits on this */
 		pthread_mutex_unlock(&g_flip_mx);
 
 		/* Blocks until the address latches at a vsync - the whole reason
@@ -1618,6 +1760,25 @@ static void clear_pages(void)
 	for (i = 0; i < n; i++) p[i] = g_opaque;
 }
 
+/* The SP's panel scans out at ~59.6 Hz (596 vsync interrupts in 10.0 s), below
+ * the 60.0985 of an SNES or NES. Either a frame is dropped now and then, or the
+ * game runs ~0.8% slow with every frame shown: the user chose the second. The
+ * GL window paces by itself - its swap waits for a free buffer whatever the
+ * swap interval - and fbdev does once present waits rather than steals. */
+double diatom_port_refresh_hz(void)
+{
+	/* Measured on the RG SP: the flip thread's pans, 59.57-59.67 per second
+	 * over 600-pan windows. fb0's own timings say 59.156 and disp2's status
+	 * 60.2; neither is what the panel does. Rate control covers the rest. */
+	return 59.57;
+}
+
+bool diatom_port_pace(bool want)
+{
+	g_pace = want && !g_pan_broken;
+	return g_pace || (want && g_win);
+}
+
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
@@ -1715,6 +1876,8 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * thread has not started panning it, so overwriting it just replaces a
 	 * frame nobody saw with a newer one. Latest wins. */
 	pthread_mutex_lock(&g_flip_mx);
+	while (g_pace && g_flip_running && g_pending >= 0)
+		pthread_cond_wait(&g_flip_idle, &g_flip_mx);
 	for (page = 0; page < g_pages; page++)
 		if (page != g_front && page != g_inflight && page != g_pending)
 			break;
@@ -1795,6 +1958,9 @@ size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 	}
 	if (!frames || !n) return 0;
 	if (diatom_audio_quiet_get()) { audio_release(); return n; }
+	/* A chain to compile is compiled before the codec is ours, so its stall
+	 * drains nothing: present would do it a moment later anyway. */
+	if (g_sh_dirty) shader_reconcile();
 	if (!audio_claim()) return n;
 	queued = diatom_port_audio_queued();
 	room   = queued >= (size_t)AUDIO_BUFFER_FRAMES
