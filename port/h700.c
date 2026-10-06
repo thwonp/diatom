@@ -45,6 +45,25 @@
 
 #define FB_PAGES 3
 
+/* How long after a pan returns the next one may be issued (plorpos-7ny.25).
+ *
+ * The H700's disp2 takes a new scanout address at any point of the vertical
+ * blanking, not once at its start. The flip thread nearly always has the next
+ * page waiting, so it used to pan ~0.03 ms after the previous pan's vsync -
+ * inside that blanking (53 of 533 lines, ~1.7 ms) - and the new address
+ * replaced the one just latched before a line of it was scanned out: a frame
+ * skipped, the next held twice. Visible as micro-stutter and "tearing" in any
+ * scroll (Super Ghouls, 2026-10-06), while every software probe - the pan
+ * register, the page contents, the pan intervals - read perfect, because none
+ * of them sees the glass. The Mali GL path pans after its render, mid-frame,
+ * and was smooth on the same game; so is the Brick, whose disp2 makes a
+ * mid-frame pan wait a vsync more (port/brick.c header).
+ *
+ * Held to 4 ms, safely past the blanking. A pan issued mid-frame here still
+ * latches at the next vsync (1799 of 1799 one interval apart, 59.60 fps), so
+ * the hold costs no latency. */
+#define PAN_GUARD_US 4000
+
 static int                       g_fb_fd = -1;
 static uint8_t                  *g_fb;
 static size_t                    g_fb_size;
@@ -1086,10 +1105,12 @@ void diatom_port_present_stop(diatom_park park_mode)
 static void *flip_worker(void *arg)
 {
 	struct fb_var_screeninfo v = g_vinfo;
+	uint64_t returned = 0;   /* when the last pan came back from its vsync */
 
 	pthread_mutex_lock(&g_flip_mx);
 	while (!g_flip_stop) {
 		int page;
+		uint64_t now;
 
 		if (g_pending < 0) {
 			pthread_cond_wait(&g_flip_cv, &g_flip_mx);
@@ -1101,12 +1122,18 @@ static void *flip_worker(void *arg)
 		pthread_cond_broadcast(&g_flip_idle);   /* a paced present waits on this */
 		pthread_mutex_unlock(&g_flip_mx);
 
+		/* Out of the blanking first: see PAN_GUARD_US. */
+		now = diatom_port_now_us();
+		if (returned && now < returned + PAN_GUARD_US)
+			usleep((useconds_t)(returned + PAN_GUARD_US - now));
+
 		/* Blocks until the address latches at a vsync - the whole reason
 		 * this thread exists. */
 		v.yoffset  = (uint32_t)page * v.yres;
 		v.activate = FB_ACTIVATE_VBL;
 		if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &v) != 0)
 			diatom_port_log(DIATOM_LOG_WARN, "pan failed in flip thread");
+		returned = diatom_port_now_us();
 
 		pthread_mutex_lock(&g_flip_mx);
 		g_front    = page;
