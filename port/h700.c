@@ -74,6 +74,10 @@ static bool             g_flip_running;
 static bool             g_presented;
 
 static SDL_AudioDeviceID g_audio;
+static void audio_release(void);   /* the codec handover, at diatom_port_audio_set */
+/* The host's quiet (ADR-0032), read here because a quiet game lets go of the
+ * codec on h700 rather than playing silence into it. */
+bool diatom_audio_quiet_get(void);
 static SDL_Joystick     *g_joy;
 static bool              g_quit;
 static uint32_t          g_buttons;
@@ -852,6 +856,8 @@ void diatom_port_present_stop(diatom_park park_mode)
 	struct fb_var_screeninfo v;
 	bool was_presenting;
 
+	audio_release();   /* a pause or the end of a game: see audio_claim */
+
 	if (!g_fb) return;
 	if (g_win && g_presented) gl_quiesce();   /* else not ours on glass */
 	front = flip_drain();
@@ -1017,6 +1023,51 @@ static bool audio_open(const char *name)
 	return true;
 }
 
+/* THE CODEC IS HANDED OVER, NOT SHARED (plorpos-7ny.10). BaseOS's `default`
+ * is the codec itself, one opener at a time, and no dmix can be put in front
+ * of it: the kernel has no SysV IPC, which dmix needs for its semaphore
+ * ("unable to create IPC semaphore: Function not implemented", 2026-10-06).
+ * Held from boot as on the Brick, it kept Muse ("open default: Device or
+ * resource busy") and native PICO-8 (no sound at all) off the speaker.
+ *
+ * So it is held only while a game is running and not quieted: claimed by the
+ * first frames that arrive, let go at every present_stop (a pause or the end
+ * of a game) and while the launcher has the game quiet because Muse plays.
+ * A claim that finds it busy - Muse still letting go - is retried once a
+ * second; until then the frames are taken and go nowhere, as a quiet game's
+ * do. */
+static uint64_t g_audio_retry_us;
+static bool     g_audio_refused;
+
+static void audio_release(void)
+{
+	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
+	g_audio_retry_us = 0;
+}
+
+static bool audio_claim(void)
+{
+	uint64_t now;
+
+	if (g_audio) return true;
+	now = diatom_port_now_us();
+	if (now < g_audio_retry_us) return false;
+	if (audio_open(g_audio_dev[0] ? g_audio_dev : NULL)) {
+		g_audio_refused = false;
+		return true;
+	}
+	if (!g_audio_refused) {      /* once per refusal, not once a second */
+		char msg[160];
+
+		snprintf(msg, sizeof msg, "audio: codec busy (%s); retrying each second",
+		         SDL_GetError());
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+	}
+	g_audio_refused = true;
+	g_audio_retry_us = now + 1000000ull;
+	return false;
+}
+
 bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 {
 	const char *want = name ? name : "";
@@ -1028,6 +1079,12 @@ bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 	 * are not hypothetical - a launcher that recomputes its routing on a timer
 	 * sends one whenever it thinks the answer might have moved. */
 	if (g_audio && !strcmp(want, g_audio_dev)) {
+		diatom_port_audio_get(actual, cap);
+		return true;
+	}
+	/* Not holding the codec: remembered for the next claim, not opened. */
+	if (!g_audio) {
+		snprintf(g_audio_dev, sizeof g_audio_dev, "%s", want);
 		diatom_port_audio_get(actual, cap);
 		return true;
 	}
@@ -1147,7 +1204,9 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * off dynamic rate control, which would otherwise read a permanently empty
 	 * queue as a permanent deficit and hold the resampler at its deviation
 	 * limit forever, correcting for a buffer that does not exist. */
-	if (!audio_open(NULL))
+	/* Only the subsystem here: the codec itself is claimed by the first
+	 * frames of a game and let go between games (audio_claim, below). */
+	if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
 		fprintf(stderr, "audio unavailable (%s); continuing without sound\n",
 		        SDL_GetError());
 
@@ -1175,7 +1234,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * was asked for: the resampler still needs a target to convert into,
 	 * and a zero here would divide. */
 	out->audio_rate          = AUDIO_RATE;
-	out->audio_buffer_frames = g_audio ? AUDIO_BUFFER_FRAMES : 0;
+	out->audio_buffer_frames = SDL_WasInit(SDL_INIT_AUDIO) ? AUDIO_BUFFER_FRAMES : 0;
 	out->present_blocks      = false;
 	return true;
 }
@@ -1691,7 +1750,9 @@ size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 		g_audio_dev[0] = '\0';
 		audio_open(NULL);
 	}
-	if (!g_audio || !frames || !n) return 0;
+	if (!frames || !n) return 0;
+	if (diatom_audio_quiet_get()) { audio_release(); return n; }
+	if (!audio_claim()) return n;
 	queued = diatom_port_audio_queued();
 	room   = queued >= (size_t)AUDIO_BUFFER_FRAMES
 	       ? 0 : (size_t)AUDIO_BUFFER_FRAMES - queued;
