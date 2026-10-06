@@ -83,6 +83,14 @@ static bool              g_quit;
 static uint32_t          g_buttons;
 static bool              g_input_debug;
 static bool              g_present_debug;
+/* DIATOM_AUDIO_DEBUG: every 5 s, the loop's real frame rate and the codec's
+ * real consumption, read from SDL's queue rather than assumed - the summary's
+ * fps includes the exit saves, and drift alone cannot say which clock is off
+ * (plorpos-7ny.17). */
+static bool              g_audio_debug;
+static uint64_t          g_ad_t0, g_ad_written;
+static long              g_ad_frames;
+static size_t            g_ad_q0;
 
 /* Opaque value for the framebuffer's alpha channel, zero if it has none.
  * The disp2 engine composites the fb layer in PER-PIXEL alpha mode: pixels
@@ -1048,6 +1056,34 @@ static void audio_release(void)
 {
 	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
 	g_audio_retry_us = 0;
+	g_ad_t0 = 0;
+}
+
+static void audio_debug_tick(void)
+{
+	uint64_t now;
+	size_t q;
+
+	if (!g_audio_debug) return;
+	if (!g_audio) { g_ad_t0 = 0; return; }
+	now = diatom_port_now_us();
+	q = diatom_port_audio_queued();
+	g_ad_frames++;
+	if (!g_ad_t0) {
+		g_ad_t0 = now; g_ad_written = 0; g_ad_frames = 0; g_ad_q0 = q;
+		return;
+	}
+	if (now - g_ad_t0 >= 5000000ull) {
+		double secs = (double)(now - g_ad_t0) / 1e6;
+		char msg[192];
+
+		snprintf(msg, sizeof msg,
+		         "audio debug: %.3f fps, wrote %.1f/s, codec took %.1f/s, queued %zu",
+		         g_ad_frames / secs, g_ad_written / secs,
+		         ((double)g_ad_written + (double)g_ad_q0 - (double)q) / secs, q);
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+		g_ad_t0 = now; g_ad_written = 0; g_ad_frames = 0; g_ad_q0 = q;
+	}
 }
 
 static bool audio_claim(void)
@@ -1125,6 +1161,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	jack_open();
 	g_input_debug   = getenv("DIATOM_INPUT_DEBUG") != NULL;
 	g_present_debug = getenv("DIATOM_PRESENT_DEBUG") != NULL;
+	g_audio_debug   = getenv("DIATOM_AUDIO_DEBUG") != NULL;
 
 	/* No SDL_INIT_VIDEO: presentation does not go through SDL at all, and the
 	 * mali video driver would otherwise claim the display. */
@@ -1589,6 +1626,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	bool rect_changed;
 	int page;
 
+	audio_debug_tick();
 	/* Dupe frame: the front page already shows it. Nothing to draw, nothing
 	 * to flip. */
 	if (!src || w <= 0 || h <= 0) return;
@@ -1765,6 +1803,7 @@ size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 	if (!n) return 0;
 
 	SDL_QueueAudio(g_audio, frames, (Uint32)(n * AUDIO_FRAME_BYTES));
+	g_ad_written += n;
 	return n;
 }
 
