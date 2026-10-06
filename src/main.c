@@ -1295,6 +1295,7 @@ static int run_session_inner(const diatom_session *sn)
 	diatom_port_level_invalidate();
 	long frames = 0, geom_changes = 0, resyncs = 0;
 	size_t q_min = (size_t)-1, q_max = 0;
+	bool q_live = false;
 	bool stop = false;
 #ifdef DIATOM_PORT_PACED
 	bool paced = false, pace_ok = false;
@@ -1811,6 +1812,7 @@ static int run_session_inner(const diatom_session *sn)
 					 * loop believes it is thousands of frames late and spends the
 					 * next second catching up. */
 					next_us = (double)diatom_port_now_us();
+					q_live = false;   /* a pause may have released the codec */
 
 					/* Re-read input and treat it as already-seen, so MENU must be
 					 * RELEASED before it can open the menu again.
@@ -1850,11 +1852,24 @@ static int run_session_inner(const diatom_session *sn)
 				}
 			}
 		}
+		/* A quit from the menu lands here after the pause drained and
+		 * released the queue: sampling it would record an empty buffer as the
+		 * session's minimum and pin rate control at full deviation, neither of
+		 * which happened during play. */
+		if (stop) break;
 		prev_buttons = buttons;
 
 		{
 			size_t q = diatom_port_audio_queued();
-			if (q < q_min) q_min = q;
+
+			/* Empty until the codec opens - on the h700 a handover thread
+			 * opens it some 250 ms after a start or Continue - and then
+			 * drained to nothing by its first period while the loop is still
+			 * filling it: measured 810 -> 0 at frame 17. Neither says
+			 * anything about underrun margin in play, so the minimum counts
+			 * from the first time the queue reaches its target. */
+			if (q >= (size_t)(g_caps.audio_buffer_frames / 2)) q_live = true;
+			if (q_live && q < q_min) q_min = q;
 			if (q > q_max) q_max = q;
 		}
 		diatom_audio_sync();
@@ -1904,7 +1919,11 @@ static int run_session_inner(const diatom_session *sn)
 	 * BMP costs hundreds of milliseconds, and it happens after the last frame.
 	 * Measured on the Brick: leaving it inside the timed span understated a
 	 * perfectly paced 59.73fps loop as 58.1 - a measurement bug wearing the
-	 * costume of a pacing bug. */
+	 * costume of a pacing bug. The exit saves below are the same cost by
+	 * another name: ActRaiser's 826 KB state took 0.58s, read as 59.53 for a
+	 * 60.10 loop. */
+	const uint64_t t_end = diatom_port_now_us();
+
 	if (g_terminate)
 		printf("diatom: terminated by signal; saving\n");
 
@@ -1925,8 +1944,6 @@ static int run_session_inner(const diatom_session *sn)
 
 	shot_wait();     /* a screenshot still being written is on the card first */
 	{
-		uint64_t t_end = diatom_port_now_us();
-
 		if (sn->shot)
 			printf("diatom: capture %s: %s\n", sn->shot,
 			       shot_capture_bmp(sn->shot) ? "ok" : "FAILED");
@@ -1934,8 +1951,15 @@ static int run_session_inner(const diatom_session *sn)
 		uint64_t span = t_end - t_start;
 		double secs = (span > paused_us ? span - paused_us : 0) / 1000000.0;
 
-		printf("diatom: %ld frames in %.2fs = %.2f fps (target %.4f)\n",
-		       frames, secs, secs > 0 ? frames / secs : 0.0, av.timing.fps);
+		double target = av.timing.fps;
+#ifdef DIATOM_PORT_PACED
+		/* Paced play runs at the panel's rate on purpose; the core's own
+		 * figure would make every paced run read as slow. */
+		if (pace_ok) target = diatom_port_refresh_hz();
+#endif
+		printf("diatom: %ld frames in %.2fs = %.2f fps (target %.4f%s)\n",
+		       frames, secs, secs > 0 ? frames / secs : 0.0, target,
+		       target != av.timing.fps ? ", paced by the panel" : "");
 		/* Stated rather than silently subtracted, so the line cannot be read
 		 * as wall clock by anyone who does not know it is not. */
 		if (paused_us)
