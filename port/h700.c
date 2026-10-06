@@ -68,6 +68,10 @@ static pthread_mutex_t  g_flip_mx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t   g_flip_cv = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   g_flip_idle = PTHREAD_COND_INITIALIZER;
 static bool             g_pace;        /* diatom_port_pace: wait, don't steal */
+/* The launcher has drawn since we last presented (a pause, a game's end):
+ * which page is on glass is its doing, and pages 0 and 1 hold its menu. */
+static bool             g_handed_over;
+static bool             g_page_stale[FB_PAGES];
 static int              g_front;
 static int              g_inflight = -1;
 static int              g_pending  = -1;
@@ -1012,6 +1016,7 @@ void diatom_port_present_stop(diatom_park park_mode)
 	front = flip_drain();
 
 	was_presenting = g_presented;
+	if (was_presenting) g_handed_over = true;
 	g_presented = false;
 
 	/* Nothing presented since the last stop means somebody else has the
@@ -2012,6 +2017,27 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		return;
 	}
 
+	/* Back from the launcher. It no longer clears its pages before RESUME on
+	 * this port (TortOS main.c): two black frames through its GL window ended
+	 * in page flips that landed after ours, putting its menu back on glass
+	 * for a frame about every other Continue (2026-10-06). So the page really
+	 * on glass is read, never drawn into, and every page is wiped before its
+	 * first use - what the black frames were for: Diatom writes only its
+	 * rect, and around it the menu would show. */
+	if (g_handed_over) {
+		struct fb_var_screeninfo v;
+		int i;
+
+		g_handed_over = false;
+		if (ioctl(g_fb_fd, FBIOGET_VSCREENINFO, &v) == 0 &&
+		    v.yoffset / g_vinfo.yres < (unsigned)g_pages) {
+			pthread_mutex_lock(&g_flip_mx);
+			g_front = (int)(v.yoffset / g_vinfo.yres);
+			pthread_mutex_unlock(&g_flip_mx);
+		}
+		for (i = 0; i < g_pages; i++) g_page_stale[i] = true;
+	}
+
 	/* Pick a page holding no role. If every page is spoken for - the panel is
 	 * consuming slower than the core produces - steal the pending one: the
 	 * thread has not started panning it, so overwriting it just replaces a
@@ -2030,6 +2056,15 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 
 	if (g_present_debug) t0 = diatom_port_now_us();
 
+	if (g_page_stale[page]) {
+		uint32_t *q = (uint32_t *)page_base(page);
+		size_t n = (size_t)g_vinfo.yres * g_finfo.line_length / sizeof *q, i;
+
+		for (i = 0; i < n; i++) q[i] = g_opaque;
+		g_osd_painted[page] = false;
+		memset(&g_ov_painted[page], 0, sizeof g_ov_painted[page]);
+		g_page_stale[page] = false;
+	}
 	blit(page_base(page), src, w, h, pitch, fmt, dst);
 	/* Painted, or unpainted. A page keeps whatever was last written outside
 	 * dst, so the bar has to be taken off the same page it was put on - and
