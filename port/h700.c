@@ -6,8 +6,8 @@
  * and SDL2 only for audio, joystick and the clock. What differs:
  *
  *   - the codec: `lineout volume` is the level (0-31, 31 = 0 dB, 0 = mute),
- *     on the launcher's ladder (TortOS src/platform_h700.c); the jack is an
- *     extcon file, not an input switch;
+ *     on the launcher's ladder (TortOS src/platform_h700.c); the jack is the
+ *     PMIC's spk_state, not an input switch;
  *   - the pad: ANBERNIC-keys, which our SDL2 (TortOS mk/patches/
  *     sdl2-h700.patch) calls a joystick; L2/R2 are buttons, and there are no
  *     brightness keys - Menu held turns the volume keys into them;
@@ -160,7 +160,7 @@ struct dm_ctl_elem_value {
 /* Position 1. MUST equal VOL_RAW_FLOOR in TortOS src/platform_h700.c: the
  * two sides share one ladder so a level crossing the socket needs no
  * conversion. Provisional, to be set by ear (plorpos-7ny.6). */
-#define GAIN_RAW_FLOOR 1
+#define GAIN_RAW_FLOOR 3
 #define GAIN_LEVELS    20       /* what the USER moves in: 20 steps of 5% */
 static bool g_muted;
 
@@ -231,7 +231,9 @@ static bool     g_osd_painted[FB_PAGES];
  * Found by capability, not by number. It is /dev/input/event2 today, but that
  * is an enumeration order rather than a promise, and being wrong would mean a
  * ladder calibrated for the wrong output with no sign that anything is off. */
-#define JACK_STATE "/sys/class/extcon/extcon0/state"   /* "HEADPHONE=0|1" */
+/* The jack: the PMIC's speaker state, 0 while a plug is in (extcon0's
+ * HEADPHONE never moves on the SP; measured 2026-10-06). */
+#define JACK_STATE "/sys/class/power_supply/axp2202-battery/spk_state"
 static int g_jack_fd = -1;
 
 static void jack_open(void)
@@ -250,7 +252,7 @@ static int jack_present(void)
 	n = pread(g_jack_fd, st, sizeof st - 1, 0);
 	if (n <= 0) return 0;
 	st[n] = '\0';
-	return strstr(st, "HEADPHONE=1") != NULL;
+	return st[0] == '0';
 }
 
 /* The launcher's apply_volume, exactly: 0 is the register's mute, 1..20
