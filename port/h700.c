@@ -730,6 +730,16 @@ static int           g_gl_w, g_gl_h;
 static diatom_rect   g_gl_dst;         /* the last frame's, for a grab */
 static int           g_te_mark;        /* frames still to mark (gl_te_mark) */
 static unsigned      g_te_prog;        /* its program; 0 = cannot mark */
+/* Unpaced (fast-forward, or a core slower than the panel), a frame that comes
+ * sooner than this after the last swap returned is not drawn (plorpos-7ny.19).
+ * The Mali swap waits for the next vsync whatever the swap interval, so every
+ * swap capped FF at the panel's rate; now the core runs ahead between swaps and
+ * the next one waits only the rest of the interval, as None's mailbox does.
+ * Three quarters of the panel's ~16.8 ms: a slower core's frames are >= 20 ms
+ * apart and never skip. */
+#define GL_SKIP_US 12600
+static bool          g_gl_unpaced;     /* the host's last diatom_port_pace */
+static uint64_t      g_gl_swapped;     /* when the last swap returned */
 
 /* What gkdgl_set_chain last compiled. The launcher sends the chain before
  * every RUN, and a compile in the first frames, with the codec already
@@ -1023,6 +1033,7 @@ static void gl_present(const void *src, int w, int h, size_t pitch,
 	gl_osd();
 	gl_te_mark();
 	SDL_GL_SwapWindow(g_win);
+	g_gl_swapped = diatom_port_now_us();
 	pthread_mutex_lock(&g_flip_mx);
 	g_presented = true;
 	pthread_mutex_unlock(&g_flip_mx);
@@ -1972,6 +1983,7 @@ double diatom_port_refresh_hz(void)
 bool diatom_port_pace(bool want)
 {
 	g_pace = want && !g_pan_broken;
+	g_gl_unpaced = !want;
 	return g_pace || (want && g_win);
 }
 
@@ -2041,7 +2053,9 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	/* After the log and the maps, which keep that log line to one per change
 	 * on this path too. */
 	if (g_win) {
-		gl_present(src, w, h, pitch, fmt, dst);
+		if (!g_gl_unpaced
+		    || diatom_port_now_us() - g_gl_swapped >= GL_SKIP_US)
+			gl_present(src, w, h, pitch, fmt, dst);
 		return;
 	}
 	/* A smaller rect leaves the old picture around the new one. Only on a mode
