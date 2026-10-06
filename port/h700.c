@@ -997,7 +997,12 @@ static bool audio_open(const char *name)
 	want.freq     = AUDIO_RATE;
 	want.format   = AUDIO_S16SYS;
 	want.channels = 2;
-	want.samples  = 1024;
+	/* 2048, not the Brick's 1024: at 1024 the RG SP's codec underran about
+	 * once a minute in play (ActRaiser and Adventure Island IV, 60 s each,
+	 * one "underrun occurred" apiece, the NES one 19 s in); at 2048 none in
+	 * the same runs nor in Advance Wars. Costs ~21 ms of latency
+	 * (plorpos-7ny.12, 2026-10-06). */
+	want.samples  = 2048;
 
 	if (SDL_WasInit(SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
 		return false;
