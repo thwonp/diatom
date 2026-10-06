@@ -8,6 +8,8 @@
 #   make PORT=gkd        device build for the GKD 350H Ultra (tools/fetch-gkd-sysroot.sh)
 #   make PORT=brick      device build for the TrimUI Brick (TG3040); needs the
 #                        cross toolchain, so run it as  tools/brick-make.sh
+#   make PORT=h700       device build for Anbernic H700 on BaseOS (tools/fetch-h700-sysroot.sh);
+#                        same toolchain:  PORT=h700 tools/brick-make.sh
 
 PORT ?= desktop
 
@@ -28,6 +30,8 @@ BUILD := build/$(PORT)
 # Brick uses too while a shader is set (plorpos-reo.4).
 PORT_EXTRA_gkd   := port/gkd_gl.c
 PORT_EXTRA_brick := port/gkd_gl.c
+# Linked but never brought up: port/h700.c declines shaders for now.
+PORT_EXTRA_h700  := port/gkd_gl.c
 SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/shot.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
@@ -89,6 +93,23 @@ ifeq ($(PORT),desktop)
   endif
 endif
 
+ifeq ($(PORT),h700)
+  # The SDL2 TortOS ships on the card, built from source with its mali
+  # driver and gamepad patch: TortOS mk/fetch-h700-sysroot.sh, which
+  # tools/fetch-h700-sysroot.sh runs into sysroot/h700.
+  CROSS   ?= aarch64-linux-gnu-
+  CC       = $(CROSS)gcc
+  SYSROOT ?= sysroot/h700
+  ifeq ($(wildcard $(SYSROOT)/usr/lib/libSDL2.so),)
+    $(error h700 sysroot missing: run tools/fetch-h700-sysroot.sh)
+  endif
+  CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(128u * 1024 * 1024)' \
+             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+  LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
+  LDFLAGS += -lSDL2 -lm -ldl -lpthread
+endif
 ifeq ($(PORT),brick)
   # TrimUI Brick (TG3040) - ADR-0012. Stock Debian cross-compiler; SDL2 is the
   # device's own library plus version-matched upstream headers, assembled into
