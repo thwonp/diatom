@@ -1135,11 +1135,11 @@ static char g_audio_dev[128];
  * or not anything closes. Fixing that means not letting the write stall, which
  * is the sink question, not the teardown question.
  */
-static bool audio_open(const char *name)
+static SDL_AudioDeviceID audio_open_id(const char *name)
 {
 	SDL_AudioSpec want, have;
+	SDL_AudioDeviceID id;
 
-	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
 	if (name && *name) setenv("AUDIODEV", name, 1);
 	else               unsetenv("AUDIODEV");
 
@@ -1155,13 +1155,13 @@ static bool audio_open(const char *name)
 	want.samples  = 2048;
 
 	if (SDL_WasInit(SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
-		return false;
+		return 0;
 	/* allowed_changes 0: SDL hands back exactly this spec and converts behind
 	 * it, so a sink running at another rate never reaches the resampler and
 	 * caps.audio_rate stays true across a reopen. */
-	g_audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-	if (!g_audio) return false;
-	SDL_PauseAudioDevice(g_audio, 0);
+	id = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+	if (!id) return 0;
+	SDL_PauseAudioDevice(id, 0);
 	/* What SDL actually negotiated, not what was asked for. A sink can open
 	 * cleanly and then not carry sound, and when that happened on 2026-09-05
 	 * there was no way to tell from outside whether SDL had agreed to
@@ -1175,7 +1175,16 @@ static bool audio_open(const char *name)
 		         have.freq, have.channels, have.samples, have.size);
 		diatom_port_log(DIATOM_LOG_INFO, msg);
 	}
-	return true;
+	return id;
+}
+
+/* Synchronous, for the rare paths that switch a held sink (audio_set, a sink
+ * that died); a claim and a release go through the handover thread below. */
+static bool audio_open(const char *name)
+{
+	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
+	g_audio = audio_open_id(name);
+	return g_audio != 0;
 }
 
 /* THE CODEC IS HANDED OVER, NOT SHARED (plorpos-7ny.10). BaseOS's `default`
@@ -1194,11 +1203,98 @@ static bool audio_open(const char *name)
 static uint64_t g_audio_retry_us;
 static bool     g_audio_refused;
 
+/* And handed over OFF the frame loop. Through BaseOS's `default` an open costs
+ * ~250 ms and a close ~250 ms - its hooks switch the speaker and line-out amp
+ * (2026-10-06, pcmtime: hw:0,0 opens and closes in 0 ms) - and SDL adds two
+ * periods' sleep to a close. Done inline that was 415 ms between Menu and the
+ * menu, and a 250 ms freeze at every Continue and game start. So a thread does
+ * both, one at a time and in the order asked; the loop only says what it wants
+ * and adopts a device once it is open. Until then frames go nowhere, as above:
+ * the picture resumes at once and the sound ~0.3 s later. */
+static pthread_t         g_hand_thread;
+static bool              g_hand_running;
+static pthread_mutex_t   g_hand_mx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t    g_hand_cv = PTHREAD_COND_INITIALIZER;
+static bool              g_hand_stop;
+static bool              g_hand_want;        /* the loop wants the codec */
+static bool              g_hand_open_req;    /* ...and the thread has not started on it */
+static bool              g_hand_inflight;    /* the thread is opening */
+static char              g_hand_dev[128];
+static SDL_AudioDeviceID g_hand_close_id;    /* to close next */
+static SDL_AudioDeviceID g_hand_opened;      /* open, not yet adopted */
+static bool              g_hand_failed;
+static char              g_hand_err[128];
+
+static void *hand_worker(void *arg)
+{
+	pthread_mutex_lock(&g_hand_mx);
+	for (;;) {
+		if (g_hand_close_id) {
+			SDL_AudioDeviceID id = g_hand_close_id;
+
+			g_hand_close_id = 0;
+			pthread_mutex_unlock(&g_hand_mx);
+			SDL_CloseAudioDevice(id);
+			pthread_mutex_lock(&g_hand_mx);
+		} else if (g_hand_open_req && !g_hand_stop) {
+			char dev[sizeof g_hand_dev];
+			SDL_AudioDeviceID id;
+
+			g_hand_open_req = false;
+			g_hand_inflight = true;
+			memcpy(dev, g_hand_dev, sizeof dev);
+			pthread_mutex_unlock(&g_hand_mx);
+			id = audio_open_id(dev);
+			pthread_mutex_lock(&g_hand_mx);
+			g_hand_inflight = false;
+			if (!g_hand_want) {
+				if (id) g_hand_close_id = id;   /* let go while it opened */
+			} else if (id) {
+				g_hand_opened = id;
+			} else {
+				g_hand_failed = true;
+				snprintf(g_hand_err, sizeof g_hand_err, "%s", SDL_GetError());
+			}
+		} else if (g_hand_stop) {
+			break;
+		} else {
+			pthread_cond_wait(&g_hand_cv, &g_hand_mx);
+		}
+	}
+	pthread_mutex_unlock(&g_hand_mx);
+	return arg;
+}
+
 static void audio_release(void)
 {
-	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
+	SDL_AudioDeviceID id = g_audio;
+
+	g_audio = 0;
 	g_audio_retry_us = 0;
 	g_ad_t0 = 0;
+	if (id) {
+		/* Silent now, closed when the thread gets to it. */
+		SDL_PauseAudioDevice(id, 1);
+		SDL_ClearQueuedAudio(id);
+	}
+	if (!g_hand_running) {
+		if (id) SDL_CloseAudioDevice(id);
+		return;
+	}
+	pthread_mutex_lock(&g_hand_mx);
+	g_hand_want = false;
+	g_hand_open_req = false;
+	g_hand_failed = false;
+	/* Opened but not adopted yet: never at once with g_audio, which adoption
+	 * clears it for. */
+	if (!id) id = g_hand_opened;
+	g_hand_opened = 0;
+	if (id) {
+		if (g_hand_close_id) SDL_CloseAudioDevice(g_hand_close_id);   /* not expected */
+		g_hand_close_id = id;
+		pthread_cond_signal(&g_hand_cv);
+	}
+	pthread_mutex_unlock(&g_hand_mx);
 }
 
 static void audio_debug_tick(void)
@@ -1232,18 +1328,50 @@ static bool audio_claim(void)
 {
 	uint64_t now;
 
+	char err[128];
+
 	if (g_audio) return true;
 	now = diatom_port_now_us();
-	if (now < g_audio_retry_us) return false;
-	if (audio_open(g_audio_dev[0] ? g_audio_dev : NULL)) {
-		g_audio_refused = false;
-		return true;
+	if (!g_hand_running) {
+		if (now < g_audio_retry_us) return false;
+		if (audio_open(g_audio_dev[0] ? g_audio_dev : NULL)) {
+			g_audio_refused = false;
+			return true;
+		}
+		snprintf(err, sizeof err, "%s", SDL_GetError());
+	} else {
+		pthread_mutex_lock(&g_hand_mx);
+		if (g_hand_opened) {
+			g_audio = g_hand_opened;
+			g_hand_opened = 0;
+			pthread_mutex_unlock(&g_hand_mx);
+			g_audio_refused = false;
+			return true;
+		}
+		if (!g_hand_failed) {
+			/* Asked for already, or ask now: the answer comes frames later.
+			 * An open still running from before a release is wanted again
+			 * rather than asked for twice. */
+			if (!g_hand_want && now >= g_audio_retry_us) {
+				g_hand_want = true;
+				if (!g_hand_inflight) {
+					g_hand_open_req = true;
+					snprintf(g_hand_dev, sizeof g_hand_dev, "%s", g_audio_dev);
+					pthread_cond_signal(&g_hand_cv);
+				}
+			}
+			pthread_mutex_unlock(&g_hand_mx);
+			return false;
+		}
+		g_hand_failed = false;
+		g_hand_want = false;
+		snprintf(err, sizeof err, "%s", g_hand_err);
+		pthread_mutex_unlock(&g_hand_mx);
 	}
 	if (!g_audio_refused) {      /* once per refusal, not once a second */
-		char msg[160];
+		char msg[192];
 
-		snprintf(msg, sizeof msg, "audio: codec busy (%s); retrying each second",
-		         SDL_GetError());
+		snprintf(msg, sizeof msg, "audio: codec busy (%s); retrying each second", err);
 		diatom_port_log(DIATOM_LOG_INFO, msg);
 	}
 	g_audio_refused = true;
@@ -1393,6 +1521,10 @@ bool diatom_port_init(diatom_port_caps *out)
 	if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
 		fprintf(stderr, "audio unavailable (%s); continuing without sound\n",
 		        SDL_GetError());
+	else if (pthread_create(&g_hand_thread, NULL, hand_worker, NULL) == 0)
+		g_hand_running = true;
+	else   /* the handover inline, slow but sound */
+		diatom_port_log(DIATOM_LOG_WARN, "audio: no handover thread; handing over inline");
 
 	/* Every button, the d-pad and the volume keys are one joystick,
 	 * "ANBERNIC-keys"; the power key is the PMIC's and the launcher's. */
@@ -1449,7 +1581,16 @@ void diatom_port_shutdown(void)
 	if (g_fb)         munmap(g_fb, g_fb_size);
 	if (g_fb_fd >= 0) close(g_fb_fd);
 	if (g_joy)        SDL_JoystickClose(g_joy);
-	if (g_audio)      SDL_CloseAudioDevice(g_audio);
+	audio_release();
+	if (g_hand_running) {
+		pthread_mutex_lock(&g_hand_mx);
+		g_hand_stop = true;
+		pthread_cond_signal(&g_hand_cv);
+		pthread_mutex_unlock(&g_hand_mx);
+		pthread_join(g_hand_thread, NULL);   /* after the close it was given */
+		g_hand_running = false;
+		if (g_hand_opened) SDL_CloseAudioDevice(g_hand_opened);
+	}
 	SDL_Quit();
 }
 
@@ -2135,6 +2276,17 @@ void diatom_port_level_invalidate(void)
 	 * presses go; the pad's releases stay, or a button would be left held. */
 	SDL_PumpEvents();
 	SDL_FilterEvents(not_level_press, NULL);
+
+	/* The level read and written now, not by the first frames: those also
+	 * start the codec open (audio_claim) - at a game's start, in its warmup,
+	 * before any input poll - whose amp switch holds the card's controls
+	 * ~250 ms, and a read or the jack check's write behind it froze the game
+	 * for as long after every Continue and at every start (2026-10-06). Now
+	 * nothing holds them. The write is the one the jack check would make. */
+	if (g_mixer_fd >= 0) {
+		gain_ensure();
+		if (g_level >= 0) gain_apply();
+	}
 }
 
 /* `*count` is positions, not a maximum index, so it is one MORE than the
@@ -2165,11 +2317,18 @@ bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 {
 	switch (kind) {
-	case DIATOM_LEVEL_VOLUME:
+	case DIATOM_LEVEL_VOLUME: {
+		int level = rescale(index, count, GAIN_LEVELS + 1);
+
 		if (g_mixer_fd < 0) return false;
-		g_level = rescale(index, count, GAIN_LEVELS + 1);
+		/* The launcher states its level as a game starts, while the codec
+		 * open behind it holds the card's controls (audio_claim): a write
+		 * of what the register already says would wait ~180 ms for nothing. */
+		if (level == g_level && g_jack_was == jack_present()) return true;
+		g_level = level;
 		gain_apply();
 		return true;
+	}
 	case DIATOM_LEVEL_BRIGHTNESS:
 		if (g_disp_fd < 0) return false;
 		g_bright = rescale(index, count, BRIGHT_LEVELS + 1);
