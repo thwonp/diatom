@@ -78,9 +78,9 @@ int main(void)
 	ta_reset(&t);
 	CHECK(frame(&t, B(L3), 0, true, 1000, trig, &btn, &hide) == TA_ARMED, "hold begins by arming");
 	CHECK(frame(&t, B(L3), B(L3), true, 1000 + TA_CLEAR_US - 1, trig, &btn, &hide) == TA_NONE,
-	      "not yet at 3 s");
+	      "not yet at 2 s");
 	CHECK(frame(&t, B(L3), B(L3), true, 1000 + TA_CLEAR_US, trig, &btn, &hide) == TA_CLEAR,
-	      "3 s clears");
+	      "2 s clears");
 	CHECK(!t.armed, "clearing disarms");
 	CHECK(frame(&t, B(L3), B(L3), true, 1000 + 2 * TA_CLEAR_US, trig, &btn, &hide) == TA_NONE,
 	      "one clear per hold");

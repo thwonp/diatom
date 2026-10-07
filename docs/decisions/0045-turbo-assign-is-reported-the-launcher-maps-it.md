@@ -13,7 +13,7 @@
   game instead, per button, and those defaults gone (plorpos-tkh).
 - The design is the user's: a hotkey, **Turbo Assign**; press it, then a
   button, and that button's turbo flips; press it again first to cancel; hold
-  it 3 s to clear every turbo button. Assignments last for the game session -
+  it 2 s to clear every turbo button. Assignments last for the game session -
   through the launcher's menu and Muse - and end when the game quits.
 - ADR-0028 already pulses a button (`src:dst~N`, first frame of a press always
   on, per source before the OR) and rejected a second table answering "what
@@ -33,7 +33,7 @@
   Diatom -> TURBO arm=1        hotkey pressed: waiting for a button
   Diatom -> TURBO arm=0        hotkey again: cancelled
   Diatom -> TURBO btn=<name>   flip this button's turbo
-  Diatom -> TURBO clear=1      held 3 s: clear all
+  Diatom -> TURBO clear=1      held 2 s: clear all
   ```
 
 - The launcher keeps the session's turbo buttons, answers with a whole

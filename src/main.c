@@ -884,7 +884,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 /* END PolyForm-Noncommercial-1.0.0 */
 
 /* ---- Turbo Assign (plorpos-tkh, ADR-0045) -------------------------------
- * The hotkey, then a button: that button's turbo flips; held 3 s, every turbo
+ * The hotkey, then a button: that button's turbo flips; held 2 s, every turbo
  * button clears. turboassign.c decides; this finds the binding, feeds it a
  * frame and tells the launcher, which owns the map and answers with SETMAP
  * (ADR-0028's pulse). The binding itself is hidden from the game by

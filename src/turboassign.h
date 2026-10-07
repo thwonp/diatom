@@ -2,7 +2,7 @@
 /* Turbo Assign (plorpos-tkh, ADR-0045): the hotkey that makes a button turbo
  * for the rest of the game. Press the hotkey, then a button: that button's
  * turbo flips. The hotkey again before a button cancels; held for
- * TA_CLEAR_US it clears every turbo button.
+ * TA_CLEAR_US (2 s) it clears every turbo button.
  *
  * This decides only WHAT was asked. The pulse is ADR-0028's, in env.c, and the
  * launcher owns the map that drives it: Diatom reports the request (TURBO)
@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define TA_CLEAR_US (3u * 1000000u)
+#define TA_CLEAR_US (2u * 1000000u)
 
 typedef enum { TA_NONE, TA_ARMED, TA_CANCEL, TA_TOGGLE, TA_CLEAR } ta_event;
 
