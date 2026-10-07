@@ -94,3 +94,4 @@ never started.
 | [0043](0043-brick-draws-through-egl-while-a-shader-is-set.md) | The Brick draws through an EGL window while a shader is set, and through fbdev otherwise | Accepted |
 | [0044](0044-the-pro-right-stick-is-hotkeys-only.md) | The Brick Pro's right stick and R3 are hotkeys only | Accepted |
 | [0045](0045-turbo-assign-is-reported-the-launcher-maps-it.md) | Turbo Assign: Diatom reports the request, the launcher maps it | Accepted |
+| [0046](0046-picodrive-is-the-sega-core.md) | PicoDrive is the Sega core, and 32X is in | Accepted |

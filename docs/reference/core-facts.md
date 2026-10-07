@@ -19,9 +19,11 @@ and aspect, so one row per system cannot be correct.
 | SNES (NTSC) | `snes9x2010` | `3933890f520a` | 256x224 | 1024x478 | 1.3061 | 60.0985 | 32040 |
 | Game Boy | `mgba` | `abde7a0764f0` | 160x144 | 256x224 | 1.1111 | 59.7275 | 131072 |
 | GBA | `mgba` | `abde7a0764f0` | 240x160 | 240x160 | 1.5000 | 59.7275 | 65536 |
-| Genesis | `genesis_plus_gx` | `3673a22b9065` | 320x224 | 348x240 | 1.3061 | 59.9227 | 44100 |
-| Master System | `genesis_plus_gx` | `3673a22b9065` | 256x192 | 284x240 | 1.5238 | 59.9227 | 44100 |
-| Game Gear | `genesis_plus_gx` | `3673a22b9065` | 160x144 | 284x240 | 1.3333 | 59.9227 | 44100 |
+| Genesis | `picodrive` | `d0956ac7138b` | 320x224 | 320x240 | 1.4286 | 60.0000 | 44100 |
+| 32X | `picodrive` | `d0956ac7138b` | 320x224 | 320x240 | 1.4286 | 60.0000 | 44100 |
+| Sega CD | `picodrive` | `d0956ac7138b` | 320x224 | 320x240 | 1.4286 | 60.0000 | 44100 |
+| Master System | `picodrive` | `d0956ac7138b` | 248x192 | 320x240 | 1.2917 | 60.0000 | 44100 |
+| Game Gear | `picodrive` | `d0956ac7138b` | 160x144 | 320x240 | 1.1111 | 60.0000 | 44100 |
 | PC Engine | `mednafen_pce_fast` | `aca90a14b181` | 256x240 | 512x243 | 1.2150 | 59.8200 | 44100 |
 
 ## Pinned set at time of measurement
@@ -32,7 +34,7 @@ device, so swapping a core fails immediately rather than silently
 aging every measurement that cited it.
 
 - `fceumm` `1b13b00d4680394dad8000d5175f97be727107e0945bc9b412da91d70c07b267`
-- `genesis_plus_gx` `3673a22b906509461e23a5a118b1d1bec15cbda105f260cbcbc08a16b2124e48`
 - `mednafen_pce_fast` `aca90a14b18108c86398da2267ef40d5145eaddbc1c1b310614d745b258552b1`
 - `mgba` `abde7a0764f08fa0cc2c7d3d9a29b9d1245a9f3b7df0e7a594b74df642ee53c6`
+- `picodrive` `d0956ac7138ba4f8e5e849d4bd8c544f27108c17a03ea4944e56cc04a9c8028e`
 - `snes9x2010` `3933890f520abb9dbb0e5276460785b20ce54d25f552b369cafeca270b9dd44c`

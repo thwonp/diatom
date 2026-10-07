@@ -36,7 +36,7 @@ through `retro_get_system_info`, logged at load.
 |---|---|---|---|
 | `fceumm` | FCEUmm (SVN) 236ccdf | NES | Only NES core tested. Documented as low-resource; no reason found to look further |
 | `snes9x2010` | Snes9x 2010 1.52.4 7db129b | SNES | The only pure-C snes9x fork that reports **correct** frame rates on both PAL and NTSC. See below |
-| `genesis_plus_gx` | Genesis Plus GX v1.7.4 b7e79b3 | Genesis, Master System, Game Gear | Reports true per-system geometry where PicoDrive reports a fixed 320x240. See below |
+| `picodrive` | PicoDrive 2.05-1890c29 | Genesis, 32X, Sega CD, Master System, Game Gear | The only core with 32X; full speed on all three devices. Replaced `genesis_plus_gx` 2026-10-07, [ADR-0046](../decisions/0046-picodrive-is-the-sega-core.md) |
 | `mgba` | mGBA 0.11-219-e31759b | Game Boy, Game Boy Color, GBA | Covers three systems in one binary and never drops a frame |
 | `mednafen_pce_fast` | Beetle PCE Fast v1.31.0.0 | PC Engine (HuCard), PC Engine CD | Covers both media from one binary |
 
@@ -124,9 +124,9 @@ recorded as right.
 
 | System | Status | Reason |
 |---|---|---|
-| 32X | **Out** (2026-08-25) | Only PicoDrive supports it, and PicoDrive lost the Sega comparison - so it would mean a sixth core existing solely for a ~40 title library that is mostly Genesis ports |
+| 32X | **In** (2026-10-07) | PicoDrive covers it with the rest of the Sega block, so it costs no extra core. Out 2026-08-25 to 2026-10-07; see [ADR-0046](../decisions/0046-picodrive-is-the-sega-core.md) |
 | PC Engine CD | **In** | Needs a System Card BIOS, named by the launcher via `firmware=` ([ADR-0017](../decisions/0017-firmware-is-declared-not-known.md)) and verified on device. CHD reads natively; CUE/BIN untested. Does **not** need the Disk Control Interface: the Redump catalog has 502 PCE CD entries and **zero** multi-disc titles |
-| Sega CD | Unasked | `genesis_plus_gx` already covers it, but it is not free - 21 of its titles are multi-disc, so it brings the Disk Control Interface with it |
+| Sega CD | **In** | `picodrive`, with the US/EU/JP BIOS by disc region; multi-disc titles through the Disk Control Interface (`.m3u`) |
 | Neo Geo, PS1, Saturn, N64 | Out | ADR-0005 rules 1, 2 and 3 |
 
 ---

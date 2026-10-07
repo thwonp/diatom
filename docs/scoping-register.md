@@ -1067,29 +1067,14 @@ Systems in scope by the criteria in
 [ADR-0005](decisions/0005-system-inclusion-criteria.md); the list moves without
 superseding it.
 
-**32X is out** (2026-08-25). ADR-0005 never mentioned it - not In, not Out, not
-even Unasked - so this is a list movement, not an amendment to the criteria.
-Reasoning, worst argument first:
+**32X is in** (2026-10-07, [ADR-0046](decisions/0046-picodrive-is-the-sega-core.md)).
+PicoDrive now covers the whole Sega block, so 32X costs no extra core, and it
+holds full speed on all three devices. It was out from 2026-08-25 on cost and an
+unmeasured speed question; both are answered in the ADR.
 
-1. **Rule 1 is ambiguous.** Knuckles' Chaotix and Kolibri are 2D, but the
-   titles the hardware exists for - Virtua Racing Deluxe, Virtua Fighter, Doom -
-   are pseudo-3D. The rule does not cleanly decide it.
-2. **Rule 3 was never measured.** Dual SH-2 at 23 MHz on a Cortex-A53 is a real
-   question and no 32X ROM was available to answer it. Now moot.
-3. **The decisive argument is cost against library.** Only PicoDrive supports
-   32X, and PicoDrive lost the Sega comparison on correctness. Including 32X
-   means carrying a **sixth core solely for it** - which is exactly the shape
-   OpenEmu adopted, GPGX for the Sega block plus a 32X-only PicoDrive. The
-   library is roughly 40 titles across a 14-month commercial life, most of them
-   enhanced Genesis ports.
-
-A system whose support costs an entire extra core, to serve ~40 mostly-ported
-games, fails the spirit of the criteria even where the letter is unclear.
-
-**Still unasked** from ADR-0005's original list: Lynx, Sega CD, Atari 7800.
-Master System, Game Gear and Game Boy / GBC have since moved In and are in the
-table below. Note that Sega CD brings the Disk Control Interface with it - 21
-multi-disc titles - so it is not free despite `genesis_plus_gx` covering it.
+**Still unasked** from ADR-0005's original list: Lynx, Atari 7800.
+Master System, Game Gear, Sega CD and Game Boy / GBC have since moved In and are
+in the table below.
 
 | System | Max ROM | Integer scale |
 |---|---|---|
@@ -1122,14 +1107,12 @@ System and Game Gear, and mGBA covers Game Boy, GBC and GBA. That is **five
 cores for all nine systems**, against six covering six before. Master System
 and Game Gear had no assigned core at all until now.
 
-**For the Sega block, use `genesis_plus_gx`** - see the
-[core comparison](spikes/2026-08-25-sega-core-comparison.md). Not a performance
-call: both hold frame rate with 0 resyncs. PicoDrive reports a fixed 320x240 for
-every system, so Game Gear arrives double-scaled and distorted; Genesis Plus GX
-reports true geometry, giving an exact 5x for Game Gear and a 1024x768 whole-
-panel fill for Master System. Costs a 12.6 MB core and ~1 MB save states.
-PicoDrive is not needed: **32X is out of scope** (decided 2026-08-25), so
-`genesis_plus_gx` is the Sega core unconditionally.
+**For the Sega block, use `picodrive`** (2026-10-07,
+[ADR-0046](decisions/0046-picodrive-is-the-sega-core.md)), replacing
+`genesis_plus_gx`. The 2026-08-25 [comparison](spikes/2026-08-25-sega-core-comparison.md)
+chose the other way on a geometry finding that turned out to be PicoDrive's
+load-time report; settled, it reports each system's own geometry. It alone has
+32X.
 
 **gpSP is not needed** (measured 2026-08-25). It is on the buildbot for
 aarch64 and it is C, so it would run where the C++ cores do not - but it covers
@@ -1216,7 +1199,7 @@ host decision and only means re-running the spike, which is cheap.
 - [x] **[OPEN]** Verify against a second core for at least one system →
       **done, and it paid.** Sega ran under both PicoDrive and Genesis Plus GX,
       SNES under five snes9x forks and bsnes. That comparison is what exposed
-      PicoDrive reporting a fixed 320x240 for every system, the light forks
+      the light forks
       misreporting both PAL and NTSC rates, and saves not transferring between
       cores for the same game (§5).
 - [x] **[OPEN]** SNES coprocessors → **measured 2026-08-25 on the Brick, and
@@ -1224,6 +1207,11 @@ host decision and only means re-running the spike, which is cheap.
       Yoshi's Island (SA-1), Super Mario Kart (DSP-1) and Mega Man X2 (CX4) all
       hold full speed with 0 resyncs on `snes9x2010`. The A53 carries every
       coprocessor in the library, so ADR-0005's warning about them is retired.
+- [x] **[OPEN]** 32X, and which core carries the Sega block →
+      **[ADR-0046](decisions/0046-picodrive-is-the-sega-core.md)**
+      *(Accepted)*. PicoDrive, replacing `genesis_plus_gx`: its "fixed
+      320x240" was the load-time report, and it holds full speed on 32X on the
+      Brick, GKD and RG SP. 32X is in at no extra core (plorpos-xpt.7).
 
 - [x] **[OPEN]** **Input held across the menu reached the core** - dismissing
       the in-game menu with A put an A into the game, a stray jump on every
