@@ -2367,6 +2367,11 @@ void diatom_port_level_invalidate(void)
 	 * state is a memory of a world this process was not watching. */
 	g_jack_was = -1;
 	g_menu_down = g_menu_sent = g_menu_spent = g_menu_pulse = false;
+	/* And the bit the pulse was holding: a pause can land while the pulse
+	 * still holds MENU (measured 2026-10-06), and forgetting the pulse
+	 * left MENU down for good - so the next tap had no press to show and the
+	 * first Menu after every Continue did nothing (plorpos-7ny.32). */
+	set_bit(DIATOM_BTN_MENU, false);
 
 	/* And the level keys pressed meanwhile - on the shelf, in the launcher's
 	 * menu. Nothing pumped SDL's queue then, so they are all still in it, and
