@@ -23,7 +23,7 @@ differences matter to anyone shipping an image - see
 | `fceumm` | GPLv2 | 4451672 | `1b13b00d4680394dad8000d5175f97be727107e0945bc9b412da91d70c07b267` |
 | `snes9x2010` | Non-commercial | 2859704 | `3933890f520abb9dbb0e5276460785b20ce54d25f552b369cafeca270b9dd44c` |
 | `mgba` | MPLv2.0 | 3280408 | `abde7a0764f08fa0cc2c7d3d9a29b9d1245a9f3b7df0e7a594b74df642ee53c6` |
-| `genesis_plus_gx` | Non-commercial | 12589216 | `3673a22b906509461e23a5a118b1d1bec15cbda105f260cbcbc08a16b2124e48` |
+| `picodrive` | MAME | 1863928 | `d0956ac7138ba4f8e5e849d4bd8c544f27108c17a03ea4944e56cc04a9c8028e` |
 | `mednafen_pce_fast` | GPLv2 | 4465432 | `aca90a14b18108c86398da2267ef40d5145eaddbc1c1b310614d745b258552b1` |
 
 Each core also reports its own name and version, which diatom logs at

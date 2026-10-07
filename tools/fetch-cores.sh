@@ -66,8 +66,10 @@ MANIFEST=CORES.md
 # snes9x2010 rather than mainline snes9x: mainline is C++ and wants
 # GLIBCXX_3.4.29 (see below), while 2010 is pure C, holds frame rate, and is the
 # only light fork that reports the correct 50.0070 PAL rate - 2002 and 2005 say
-# 50.3197, which runs PAL content 0.62% fast. genesis_plus_gx rather than
-# picodrive: see docs/spikes/2026-08-25-sega-core-comparison.md. No gambatte:
+# 50.3197, which runs PAL content 0.62% fast. picodrive for the Sega block
+# since 2026-10-07, replacing genesis_plus_gx: it alone has 32X, and the
+# geometry that lost it the 2026-08-25 comparison was its load-time report -
+# see that spike's second postscript and ADR-0046. No gambatte:
 # mGBA covers GB and GBC identically, from a smaller binary, and gambatte is C++
 # so it cannot run here anyway.
 #
@@ -84,7 +86,7 @@ pins() {
 	fceumm            1b13b00d4680394dad8000d5175f97be727107e0945bc9b412da91d70c07b267 4451672 GPLv2
 	snes9x2010        3933890f520abb9dbb0e5276460785b20ce54d25f552b369cafeca270b9dd44c 2859704 Non-commercial
 	mgba              abde7a0764f08fa0cc2c7d3d9a29b9d1245a9f3b7df0e7a594b74df642ee53c6 3280408 MPLv2.0
-	genesis_plus_gx   3673a22b906509461e23a5a118b1d1bec15cbda105f260cbcbc08a16b2124e48 12589216 Non-commercial
+	picodrive         d0956ac7138ba4f8e5e849d4bd8c544f27108c17a03ea4944e56cc04a9c8028e 1863928 MAME
 	mednafen_pce_fast aca90a14b18108c86398da2267ef40d5145eaddbc1c1b310614d745b258552b1 4465432 GPLv2
 	EOF
 }

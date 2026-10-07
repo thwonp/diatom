@@ -84,6 +84,14 @@ at all. See the register for the reasoning - briefly, supporting 32X would mean
 a sixth core existing solely for a ~40 title library that is mostly Genesis
 ports.
 
+## Postscript, 2026-10-07: the geometry finding was the boot mode
+
+Re-measured on PicoDrive 2.05-1890c29: every system **starts** at 320x240 and
+settles within a few frames to Game Gear 160x144, Master System 256x192,
+Genesis 320x224. The table above recorded the first report, the mistake
+`tools/corefacts.sh` now warns about. PicoDrive replaced Genesis Plus GX and
+32X is in - [ADR-0046](../decisions/0046-picodrive-is-the-sega-core.md).
+
 ## The seam held
 
 An unfamiliar core, three systems it had never been run against, five games:

@@ -44,9 +44,11 @@ SNES (PAL)|snes9x2010|Parodius (Europe).sfc|
 SNES (NTSC)|snes9x2010|Star Fox (USA) (Rev 2).sfc|
 Game Boy|mgba|Tetris (World) (Rev 1).gb|
 GBA|mgba|Golden Sun (USA, Europe).gba|
-Genesis|genesis_plus_gx|Phantasy Star IV (USA).md|
-Master System|genesis_plus_gx|Sonic The Hedgehog (USA, Europe, Brazil).sms|
-Game Gear|genesis_plus_gx|Sonic The Hedgehog (Japan, Europe, Brazil) (En) (Rev 1).gg|
+Genesis|picodrive|Phantasy Star IV.md|
+32X|picodrive|Knuckles Chaotix.32x|
+Sega CD|picodrive|Lunar - Eternal Blue.chd|bios_CD_U.bin
+Master System|picodrive|Sonic Chaos.sms|
+Game Gear|picodrive|Sonic The Hedgehog - Triple Trouble.gg|
 PC Engine|mednafen_pce_fast|Drop Off (U).pce|"
 
 # ---------------------------------------------------------------- host side
