@@ -32,7 +32,7 @@ PORT_EXTRA_gkd   := port/gkd_gl.c
 PORT_EXTRA_brick := port/gkd_gl.c
 # The GL window while a shader is set, as the Brick (port/h700.c).
 PORT_EXTRA_h700  := port/gkd_gl.c
-SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/shot.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
+SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/shot.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
 CONFORM := $(BUILD)/diatom-conform
@@ -306,7 +306,7 @@ $(BUILD)/%.o: %.c
 # fails when it is broken. check-seam has held since day one for exactly that
 # reason; the register drifted 418 -> 992 lines in three days because nothing
 # ever complained.
-check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind
+check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign
 
 # Does a RetroAchievements address reach the byte it names? Offline, needs no
 # core and no ROM, and links only cheevos.c plus the vendored runtime - so it
@@ -347,6 +347,16 @@ $(BUILD)/rewind-test-tsan: $(REWIND_TEST_SRC) src/rewind.h
 	@mkdir -p $(BUILD)
 	cc $(REWIND_TEST_FLAGS) -fsanitize=thread -o $@ $(REWIND_TEST_SRC) -lpthread
 .PHONY: check-rewind
+
+# Turbo Assign's decisions (ADR-0045), on a fake clock. Host compiler.
+check-turboassign: $(BUILD)/turboassign-test
+	@./$(BUILD)/turboassign-test
+
+$(BUILD)/turboassign-test: test/turboassign_test.c src/turboassign.c src/turboassign.h
+	@mkdir -p $(BUILD)
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
+	   -fno-sanitize-recover=all -o $@ test/turboassign_test.c src/turboassign.c
+.PHONY: check-turboassign
 
 # Deliberately NOT part of `check`. It needs a build and it runs in real time -
 # Diatom paces to the core's frame rate, so 300 frames costs five seconds of

@@ -27,6 +27,7 @@
 #include "cheevos.h"
 #include "diatom.h"
 #include "hotkeys.h"
+#include "turboassign.h"
 #include "shot.h"
 #include "rewind.h"
 
@@ -581,6 +582,7 @@ static bool g_pause_requested;
  * faster, it does not ask the core for more frames per retro_run call. */
 #define DIATOM_MAX_FF_SPEED 8
 static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
+static turbo_assign g_ta;      /* Turbo Assign, ADR-0045; reset at RUN and RESUME */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
 /* END PolyForm-Noncommercial-1.0.0 */
 /* A core still emits one frame's worth of audio per retro_run() call while
@@ -701,6 +703,9 @@ static bool menu_pause(const diatom_session *sn)
 			 * than step from a cached value nobody is at. ADR-0020. */
 			diatom_port_level_invalidate();
 			levels_forget();
+			/* An armed Turbo Assign does not outlive the menu; the
+			 * launcher's map, which holds what was assigned, does. */
+			ta_reset(&g_ta);
 			/* The menu was time somebody spent pressing buttons, on a pad
 			 * this loop could not see. Counting it as idle is the opposite of
 			 * what happened. */
@@ -877,6 +882,68 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 	return mask;
 }
 /* END PolyForm-Noncommercial-1.0.0 */
+
+/* ---- Turbo Assign (plorpos-tkh, ADR-0045) -------------------------------
+ * The hotkey, then a button: that button's turbo flips; held 3 s, every turbo
+ * button clears. turboassign.c decides; this finds the binding, feeds it a
+ * frame and tells the launcher, which owns the map and answers with SETMAP
+ * (ADR-0028's pulse). The binding itself is hidden from the game by
+ * hotkey_chord like any other. g_ta is up with g_ff_speed. */
+
+/* The Turbo Assign binding's bit, and whether it is held on the layer that is
+ * active this frame - hotkey_chord's rule: the modifier's layer while the
+ * modifier is held, the direct one otherwise. 0 / false when unbound. */
+static uint32_t turbo_binding(uint32_t buttons, bool *held)
+{
+	const bool mod_held = (buttons & DIATOM_BIT(hotkeys_modifier())) != 0;
+	int i, n = hotkeys_count();
+
+	*held = false;
+	for (i = 0; i < n; i++) {
+		int btn;
+		hk_action action;
+		bool direct;
+
+		hotkeys_at(i, &btn, &action, &direct);
+		if (action != HK_TURBO) continue;
+		*held = direct != mod_held && (buttons & DIATOM_BIT(btn));
+		return DIATOM_BIT(btn);
+	}
+	return 0;
+}
+
+static void turbo_tell(ta_event ev, int btn)
+{
+	switch (ev) {
+	case TA_ARMED:  diatom_proto_send("TURBO\tarm=1");                 break;
+	case TA_CANCEL: diatom_proto_send("TURBO\tarm=0");                 break;
+	case TA_TOGGLE: diatom_proto_send("TURBO\tbtn=%s", ta_name(btn));  break;
+	case TA_CLEAR:  diatom_proto_send("TURBO\tclear=1");               break;
+	default: break;
+	}
+}
+
+/* Before the hotkeys: what the choice hides from them and from the game. */
+static uint32_t turbo_assign_choose(uint32_t buttons, uint32_t prev)
+{
+	bool held;
+	uint32_t bit = turbo_binding(buttons, &held), hide;
+	ta_event ev;
+	int btn = -1;
+
+	hide = ta_choose(&g_ta, buttons, buttons & ~prev, bit, &ev, &btn);
+	turbo_tell(ev, btn);
+	return hide;
+}
+
+/* After them: the hotkey's own press, release and hold. */
+static void turbo_assign_trigger(uint32_t buttons)
+{
+	bool held;
+
+	turbo_binding(buttons, &held);
+	turbo_tell(ta_trigger(&g_ta, held, diatom_port_now_us()), -1);
+}
 
 /* One game, start to finish. Extracted so the protocol loop (ADR-0009) can run
  * it repeatedly in a process that never exits - which is what makes a warm
@@ -1301,6 +1368,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * that sends no map gets no map, and the first poll reports where the
 	 * levels actually are without being asked. ADR-0020. */
 	diatom_input_reset_map();
+	ta_reset(&g_ta);
 	levels_forget();
 	audio_forget();
 	diatom_port_level_invalidate();
@@ -1761,8 +1829,16 @@ static int run_session_inner(const diatom_session *sn)
 
 		/* The single writer. All three reasons to hide a button end up here,
 		 * so none of them can clear another. */
-		diatom_env_suppress(hotkey_chord(buttons, prev_buttons, sn)
-		                    | held_at_entry);
+		{
+			/* Turbo Assign's choice first, so a chosen press reaches neither
+			 * the hotkeys nor the game; then the hotkeys; then its own. */
+			uint32_t ta_hide = turbo_assign_choose(buttons, prev_buttons);
+
+			diatom_env_suppress(hotkey_chord(buttons & ~ta_hide,
+			                                 prev_buttons & ~ta_hide, sn)
+			                    | ta_hide | held_at_entry);
+			turbo_assign_trigger(buttons);
+		}
 
 		/* A screenshot that has reached the card, for the launcher to say so
 		 * (it has the font). From here rather than the writer's thread:

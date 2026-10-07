@@ -70,6 +70,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "savestate")) return HK_SAVESTATE;
 	if (!strcmp(s, "loadstate")) return HK_LOADSTATE;
 	if (!strcmp(s, "screenshot")) return HK_SCREENSHOT;
+	if (!strcmp(s, "turbo"))     return HK_TURBO;
 	return HK_NONE;
 }
 
