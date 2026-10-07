@@ -17,6 +17,7 @@
 #include <time.h>
 #include <math.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 #ifdef __GLIBC__
@@ -26,6 +27,7 @@
 #include "cheevos.h"
 #include "diatom.h"
 #include "hotkeys.h"
+#include "turboassign.h"
 #include "shot.h"
 #include "rewind.h"
 
@@ -223,6 +225,16 @@ static void on_terminate(int sig)
 		ssize_t rc = write(g_wake_pipe[1], "", 1);
 		(void)rc;
 	}
+}
+
+/* Socket mode's premap, on its own thread. A signal may land on this thread
+ * too, which the wake pipe above already allows for. */
+static void *premap_cores(void *dir)
+{
+	int n = diatom_core_premap(dir);
+
+	fprintf(stderr, "diatom: premapped %d core(s) from %s\n", n, (const char *)dir);
+	return NULL;
 }
 
 /* Called once, before anything can be signaled.
@@ -570,6 +582,7 @@ static bool g_pause_requested;
  * faster, it does not ask the core for more frames per retro_run call. */
 #define DIATOM_MAX_FF_SPEED 8
 static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
+static turbo_assign g_ta;      /* Turbo Assign, ADR-0045; reset at RUN and RESUME */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
 /* END PolyForm-Noncommercial-1.0.0 */
 /* A core still emits one frame's worth of audio per retro_run() call while
@@ -690,6 +703,9 @@ static bool menu_pause(const diatom_session *sn)
 			 * than step from a cached value nobody is at. ADR-0020. */
 			diatom_port_level_invalidate();
 			levels_forget();
+			/* An armed Turbo Assign does not outlive the menu; the
+			 * launcher's map, which holds what was assigned, does. */
+			ta_reset(&g_ta);
 			/* The menu was time somebody spent pressing buttons, on a pad
 			 * this loop could not see. Counting it as idle is the opposite of
 			 * what happened. */
@@ -866,6 +882,68 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 	return mask;
 }
 /* END PolyForm-Noncommercial-1.0.0 */
+
+/* ---- Turbo Assign (plorpos-tkh, ADR-0045) -------------------------------
+ * The hotkey, then a button: that button's turbo flips; held 2 s, every turbo
+ * button clears. turboassign.c decides; this finds the binding, feeds it a
+ * frame and tells the launcher, which owns the map and answers with SETMAP
+ * (ADR-0028's pulse). The binding itself is hidden from the game by
+ * hotkey_chord like any other. g_ta is up with g_ff_speed. */
+
+/* The Turbo Assign binding's bit, and whether it is held on the layer that is
+ * active this frame - hotkey_chord's rule: the modifier's layer while the
+ * modifier is held, the direct one otherwise. 0 / false when unbound. */
+static uint32_t turbo_binding(uint32_t buttons, bool *held)
+{
+	const bool mod_held = (buttons & DIATOM_BIT(hotkeys_modifier())) != 0;
+	int i, n = hotkeys_count();
+
+	*held = false;
+	for (i = 0; i < n; i++) {
+		int btn;
+		hk_action action;
+		bool direct;
+
+		hotkeys_at(i, &btn, &action, &direct);
+		if (action != HK_TURBO) continue;
+		*held = direct != mod_held && (buttons & DIATOM_BIT(btn));
+		return DIATOM_BIT(btn);
+	}
+	return 0;
+}
+
+static void turbo_tell(ta_event ev, int btn)
+{
+	switch (ev) {
+	case TA_ARMED:  diatom_proto_send("TURBO\tarm=1");                 break;
+	case TA_CANCEL: diatom_proto_send("TURBO\tarm=0");                 break;
+	case TA_TOGGLE: diatom_proto_send("TURBO\tbtn=%s", ta_name(btn));  break;
+	case TA_CLEAR:  diatom_proto_send("TURBO\tclear=1");               break;
+	default: break;
+	}
+}
+
+/* Before the hotkeys: what the choice hides from them and from the game. */
+static uint32_t turbo_assign_choose(uint32_t buttons, uint32_t prev)
+{
+	bool held;
+	uint32_t bit = turbo_binding(buttons, &held), hide;
+	ta_event ev;
+	int btn = -1;
+
+	hide = ta_choose(&g_ta, buttons, buttons & ~prev, bit, &ev, &btn);
+	turbo_tell(ev, btn);
+	return hide;
+}
+
+/* After them: the hotkey's own press, release and hold. */
+static void turbo_assign_trigger(uint32_t buttons)
+{
+	bool held;
+
+	turbo_binding(buttons, &held);
+	turbo_tell(ta_trigger(&g_ta, held, diatom_port_now_us()), -1);
+}
 
 /* One game, start to finish. Extracted so the protocol loop (ADR-0009) can run
  * it repeatedly in a process that never exits - which is what makes a warm
@@ -1290,12 +1368,17 @@ static int run_session_inner(const diatom_session *sn)
 	 * that sends no map gets no map, and the first poll reports where the
 	 * levels actually are without being asked. ADR-0020. */
 	diatom_input_reset_map();
+	ta_reset(&g_ta);
 	levels_forget();
 	audio_forget();
 	diatom_port_level_invalidate();
 	long frames = 0, geom_changes = 0, resyncs = 0;
 	size_t q_min = (size_t)-1, q_max = 0;
+	bool q_live = false;
 	bool stop = false;
+#ifdef DIATOM_PORT_PACED
+	bool paced = false, pace_ok = false;
+#endif
 	int i;
 
 	/* Per-game state that must not carry over from the previous session. */
@@ -1422,8 +1505,18 @@ static int run_session_inner(const diatom_session *sn)
 	       (double)av.geometry.aspect_ratio,
 	       av.timing.fps, av.timing.sample_rate, g_caps.audio_rate);
 
+#ifdef DIATOM_PORT_PACED
+	/* A core faster than the panel runs at the panel's rate, every frame
+	 * shown; the resampler is told so, as RetroArch scales its input rate by
+	 * refresh/fps under vsync. A slower core keeps its own clock. */
+	pace_ok = av.timing.fps > diatom_port_refresh_hz();
+	diatom_audio_configure(av.timing.sample_rate *
+	                       (pace_ok ? diatom_port_refresh_hz() / av.timing.fps : 1.0),
+	                       g_caps.audio_rate, g_caps.audio_buffer_frames);
+#else
 	diatom_audio_configure(av.timing.sample_rate, g_caps.audio_rate,
 	                       g_caps.audio_buffer_frames);
+#endif
 	diatom_audio_prime();
 
 	/* The rect is computed from BASE geometry and does not move again unless
@@ -1656,6 +1749,9 @@ static int run_session_inner(const diatom_session *sn)
 
 		{
 			uint64_t p0 = diatom_port_now_us();
+#ifdef DIATOM_PORT_PACED
+			paced = diatom_port_pace(pace_ok && g_ff_speed == 1);
+#endif
 			diatom_port_present(g_frame_fresh ? g_frame : NULL,
 			                    g_frame_w, g_frame_h, g_frame_pitch,
 			                    g_policy.pixfmt, g_dst,
@@ -1733,8 +1829,16 @@ static int run_session_inner(const diatom_session *sn)
 
 		/* The single writer. All three reasons to hide a button end up here,
 		 * so none of them can clear another. */
-		diatom_env_suppress(hotkey_chord(buttons, prev_buttons, sn)
-		                    | held_at_entry);
+		{
+			/* Turbo Assign's choice first, so a chosen press reaches neither
+			 * the hotkeys nor the game; then the hotkeys; then its own. */
+			uint32_t ta_hide = turbo_assign_choose(buttons, prev_buttons);
+
+			diatom_env_suppress(hotkey_chord(buttons & ~ta_hide,
+			                                 prev_buttons & ~ta_hide, sn)
+			                    | ta_hide | held_at_entry);
+			turbo_assign_trigger(buttons);
+		}
 
 		/* A screenshot that has reached the card, for the launcher to say so
 		 * (it has the font). From here rather than the writer's thread:
@@ -1795,6 +1899,7 @@ static int run_session_inner(const diatom_session *sn)
 					 * loop believes it is thousands of frames late and spends the
 					 * next second catching up. */
 					next_us = (double)diatom_port_now_us();
+					q_live = false;   /* a pause may have released the codec */
 
 					/* Re-read input and treat it as already-seen, so MENU must be
 					 * RELEASED before it can open the menu again.
@@ -1834,11 +1939,24 @@ static int run_session_inner(const diatom_session *sn)
 				}
 			}
 		}
+		/* A quit from the menu lands here after the pause drained and
+		 * released the queue: sampling it would record an empty buffer as the
+		 * session's minimum and pin rate control at full deviation, neither of
+		 * which happened during play. */
+		if (stop) break;
 		prev_buttons = buttons;
 
 		{
 			size_t q = diatom_port_audio_queued();
-			if (q < q_min) q_min = q;
+
+			/* Empty until the codec opens - on the h700 a handover thread
+			 * opens it some 250 ms after a start or Continue - and then
+			 * drained to nothing by its first period while the loop is still
+			 * filling it: measured 810 -> 0 at frame 17. Neither says
+			 * anything about underrun margin in play, so the minimum counts
+			 * from the first time the queue reaches its target. */
+			if (q >= (size_t)(g_caps.audio_buffer_frames / 2)) q_live = true;
+			if (q_live && q < q_min) q_min = q;
 			if (q > q_max) q_max = q;
 		}
 		diatom_audio_sync();
@@ -1856,6 +1974,13 @@ static int run_session_inner(const diatom_session *sn)
 
 			next_us += target_us;
 			now = diatom_port_now_us();
+#ifdef DIATOM_PORT_PACED
+			/* The panel is the clock: present has just waited for it, so
+			 * neither sleep (that phase can miss the next refresh) nor count
+			 * being behind (always, by the panel's shortfall) as a stall.
+			 * Rate control follows the panel's rate instead. */
+			if (paced) next_us = (double)now;
+#endif
 
 			if (next_us > (double)now) {
 				struct timespec ts;
@@ -1881,7 +2006,11 @@ static int run_session_inner(const diatom_session *sn)
 	 * BMP costs hundreds of milliseconds, and it happens after the last frame.
 	 * Measured on the Brick: leaving it inside the timed span understated a
 	 * perfectly paced 59.73fps loop as 58.1 - a measurement bug wearing the
-	 * costume of a pacing bug. */
+	 * costume of a pacing bug. The exit saves below are the same cost by
+	 * another name: ActRaiser's 826 KB state took 0.58s, read as 59.53 for a
+	 * 60.10 loop. */
+	const uint64_t t_end = diatom_port_now_us();
+
 	if (g_terminate)
 		printf("diatom: terminated by signal; saving\n");
 
@@ -1902,8 +2031,6 @@ static int run_session_inner(const diatom_session *sn)
 
 	shot_wait();     /* a screenshot still being written is on the card first */
 	{
-		uint64_t t_end = diatom_port_now_us();
-
 		if (sn->shot)
 			printf("diatom: capture %s: %s\n", sn->shot,
 			       shot_capture_bmp(sn->shot) ? "ok" : "FAILED");
@@ -1911,8 +2038,15 @@ static int run_session_inner(const diatom_session *sn)
 		uint64_t span = t_end - t_start;
 		double secs = (span > paused_us ? span - paused_us : 0) / 1000000.0;
 
-		printf("diatom: %ld frames in %.2fs = %.2f fps (target %.4f)\n",
-		       frames, secs, secs > 0 ? frames / secs : 0.0, av.timing.fps);
+		double target = av.timing.fps;
+#ifdef DIATOM_PORT_PACED
+		/* Paced play runs at the panel's rate on purpose; the core's own
+		 * figure would make every paced run read as slow. */
+		if (pace_ok) target = diatom_port_refresh_hz();
+#endif
+		printf("diatom: %ld frames in %.2fs = %.2f fps (target %.4f%s)\n",
+		       frames, secs, secs > 0 ? frames / secs : 0.0, target,
+		       target != av.timing.fps ? ", paced by the panel" : "");
 		/* Stated rather than silently subtracted, so the line cannot be read
 		 * as wall clock by anyone who does not know it is not. */
 		if (paused_us)
@@ -2151,15 +2285,21 @@ int main(int argc, char **argv)
 		/* AFTER listening, not before. Mapping first delayed the socket by
 		 * the best part of 400ms, and the launcher probes early: it found no
 		 * socket, fell back to running the game standalone, and every launch
-		 * paid a dlopen the premap existed to avoid. A connection arriving
-		 * during the mapping waits in the backlog instead, which costs the
-		 * launcher nothing - it connects at startup and does not send a RUN
-		 * until somebody picks a game, seconds later. */
+		 * paid a dlopen the premap existed to avoid.
+		 *
+		 * And on a thread, not in line. A connection arriving during the
+		 * mapping waited in the backlog, which was thought to cost the
+		 * launcher nothing - but its connect waits for READY, and READY only
+		 * went out once every core was mapped. Measured on the GKD Pixel 2
+		 * 2026-10-02: the launcher's first frame waited about 280 ms on it,
+		 * hidden until then behind a 350 ms input grace of its own. */
 		if (cores_dir) {
-			int n = diatom_core_premap(cores_dir);
+			pthread_t premap;
 
-			fprintf(stderr, "diatom: premapped %d core(s) from %s\n",
-			        n, cores_dir);
+			if (pthread_create(&premap, NULL, premap_cores, (void *)cores_dir) == 0)
+				pthread_detach(premap);
+			else
+				premap_cores((void *)cores_dir);
 		}
 		terminate_init();
 

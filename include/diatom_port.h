@@ -121,6 +121,17 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter);
 
+#ifdef DIATOM_PORT_PACED
+/* For a panel slower than the core (the H700's ~59.6 Hz). The host asks for
+ * pacing only for a core faster than the panel's refresh, and not while
+ * fast-forwarding; it feeds the audio resampler the rate such a core really
+ * runs at, so rate control keeps its usual small job. Asked once a frame,
+ * before present: true means present holds the loop to the panel, and the
+ * host keeps no schedule of its own. */
+double diatom_port_refresh_hz(void);
+bool   diatom_port_pace(bool want);
+#endif
+
 /* An image composited over the presented frame for a while, in SCREEN space -
  * the same job the port already does for its own level bar, which is why it
  * lives here rather than in the host: the OSD is drawn after scaling, and a

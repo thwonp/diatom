@@ -1,36 +1,21 @@
 /* SPDX-License-Identifier: MIT */
-/* TrimUI Brick (TG3040) port.
+/* Anbernic H700 port, under BaseOS (plorpos-7ny.4): the RG SP first.
  *
- * Presentation is raw fbdev with a flip thread; SDL2 (the firmware's own
- * library, via the sysroot - ADR-0012) provides audio, joystick input and the
- * monotonic clock.
+ * Made from port/brick.c, because the two are the same kind of machine: one
+ * fbdev panel, an Allwinner disp2 backlight, a Mali that diatom never needs,
+ * and SDL2 only for audio, joystick and the clock. What differs:
  *
- * fbdev is not a fallback, it is the device's native display path. Measured
- * 2026-08-24 on firmware 1.1.1: scanout is the Allwinner disp2 engine
- * (/dev/fb0 -> the "disp" platform driver), while /dev/dri/card0 is only the
- * PowerVR render node (pvrsrvkm) with no display capability. The firmware's
- * SDL2 has exactly one real video driver, "mali", whose EGL swap blocks
- * ~30ms - two vblank intervals - regardless of swap interval, which quantized
- * the frame loop to 30fps.
- *
- * FBIOPAN_DISPLAY is itself a blocking vsync'd flip. Measured: a pan issued
- * right after vblank returns in one interval (a tight pan loop sustains
- * 60fps), but one issued mid-interval misses the latch deadline and waits for
- * the vsync after next (~25ms). A self-paced loop always lands mid-interval,
- * so calling pan inline halved the frame rate exactly as the EGL swap did.
- *
- * Hence the flip thread. present() only blits and publishes the page in a
- * latest-wins mailbox, never blocking, which is the seam's contract; the
- * thread pans at the panel's own rate and eats the blocking wait. Flips latch
- * at vblank, so no tearing; three pages mean the page being drawn is never
- * the one on glass or in flight. The frame loop keeps its own absolute clock,
- * exactly as on desktop - no console runs at the panel's rate.
- *
- * The firmware keeps its SDL2 outside the default linker path, so run with:
- *
- *   LD_LIBRARY_PATH=/usr/trimui/lib ./diatom --core X.so --rom game
- *
- * This file does not include libretro.h and must never need to.
+ *   - the codec: `lineout volume` is the level (0-31, 31 = 0 dB, 0 = mute),
+ *     on the launcher's ladder (TortOS src/platform_h700.c); the jack is the
+ *     PMIC's spk_state, not an input switch;
+ *   - the pad: ANBERNIC-keys, which our SDL2 (TortOS mk/patches/
+ *     sdl2-h700.patch) calls a joystick; L2/R2 are buttons, and there are no
+ *     brightness keys - Menu held turns the volume keys into them;
+ *   - fb0's virtual height is two pages; the mailbox wants three, so init asks
+ *     for them (the memory holds five);
+ *   - shaders: the Brick's GL window, a second EGL client beside the
+ *     launcher's, which this Mali survives. But it is made on two pages, and
+ *     its first frames after a handover are marked - see gl_te_mark.
  */
 #include <SDL.h>
 
@@ -52,13 +37,39 @@
 #include "port_clock.h"
 
 #define AUDIO_RATE 48000
-/* Capacity in FRAMES (one frame = two int16 samples). 4096 at 48kHz is ~85ms,
- * with rate control aiming to hold it near half that. Same figure as desktop:
- * nothing about the device argues for a different one yet. */
+/* Capacity in FRAMES (one frame = two int16 samples), as the host is told:
+ * rate control aims at half, so this sets the latency. 4096 at 48kHz is ~85ms,
+ * held near ~43ms. Same figure as desktop. */
 #define AUDIO_BUFFER_FRAMES 4096
+/* What diatom_port_audio_write really accepts, above that. The codec takes a
+ * 2048-frame period at a time (see audio_open_id), so the queue swings ~2900
+ * frames between its pulls, and around a 2048 target the sawtooth's peaks
+ * reached ~3500-4900: clamped at 4096, Advance Wars dropped 97-227 frames after
+ * a Continue (plorpos-7ny.23). Raising the capacity itself to 6144 fixed it but
+ * moved the target, +21 ms the user would not take; only the guard moves. */
+#define AUDIO_QUEUE_LIMIT 6144
 #define AUDIO_FRAME_BYTES   (2 * (int)sizeof(int16_t))
 
 #define FB_PAGES 3
+
+/* How long after a pan returns the next one may be issued (plorpos-7ny.25).
+ *
+ * The H700's disp2 takes a new scanout address at any point of the vertical
+ * blanking, not once at its start. The flip thread nearly always has the next
+ * page waiting, so it used to pan ~0.03 ms after the previous pan's vsync -
+ * inside that blanking (53 of 533 lines, ~1.7 ms) - and the new address
+ * replaced the one just latched before a line of it was scanned out: a frame
+ * skipped, the next held twice. Visible as micro-stutter and "tearing" in any
+ * scroll (Super Ghouls, 2026-10-06), while every software probe - the pan
+ * register, the page contents, the pan intervals - read perfect, because none
+ * of them sees the glass. The Mali GL path pans after its render, mid-frame,
+ * and was smooth on the same game; so is the Brick, whose disp2 makes a
+ * mid-frame pan wait a vsync more (port/brick.c header).
+ *
+ * Held to 4 ms, safely past the blanking. A pan issued mid-frame here still
+ * latches at the next vsync (1799 of 1799 one interval apart, 59.60 fps), so
+ * the hold costs no latency. */
+#define PAN_GUARD_US 4000
 
 static int                       g_fb_fd = -1;
 static uint8_t                  *g_fb;
@@ -74,11 +85,19 @@ static bool                      g_pan_broken; /* pan failed; draw to front */
  *   g_pending  published by present(), waiting for the thread, -1 if none
  * present() draws into any page holding none of those roles; when all three
  * are taken it steals g_pending back, which is safe precisely because the
- * thread only takes pending under the same lock. Latest wins, nothing waits. */
+ * thread only takes pending under the same lock. Latest wins, nothing waits -
+ * unless the host asks for pacing (diatom_port_pace): then present waits for
+ * the thread to take the pending page, so every frame is shown and the panel,
+ * not the core, sets the rate. */
 static pthread_t        g_flip_thread;
 static pthread_mutex_t  g_flip_mx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t   g_flip_cv = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   g_flip_idle = PTHREAD_COND_INITIALIZER;
+static bool             g_pace;        /* diatom_port_pace: wait, don't steal */
+/* The launcher has drawn since we last presented (a pause, a game's end):
+ * which page is on glass is its doing, and pages 0 and 1 hold its menu. */
+static bool             g_handed_over;
+static bool             g_page_stale[FB_PAGES];
 static int              g_front;
 static int              g_inflight = -1;
 static int              g_pending  = -1;
@@ -90,11 +109,23 @@ static bool             g_flip_running;
 static bool             g_presented;
 
 static SDL_AudioDeviceID g_audio;
+static void audio_release(void);   /* the codec handover, at diatom_port_audio_set */
+/* The host's quiet (ADR-0032), read here because a quiet game lets go of the
+ * codec on h700 rather than playing silence into it. */
+bool diatom_audio_quiet_get(void);
 static SDL_Joystick     *g_joy;
 static bool              g_quit;
 static uint32_t          g_buttons;
 static bool              g_input_debug;
 static bool              g_present_debug;
+/* DIATOM_AUDIO_DEBUG: every 5 s, the loop's real frame rate and the codec's
+ * real consumption, read from SDL's queue rather than assumed - the summary's
+ * fps includes the exit saves, and drift alone cannot say which clock is off
+ * (plorpos-7ny.17). */
+static bool              g_audio_debug;
+static uint64_t          g_ad_t0, g_ad_written;
+static long              g_ad_frames;
+static size_t            g_ad_q0;
 
 /* Opaque value for the framebuffer's alpha channel, zero if it has none.
  * The disp2 engine composites the fb layer in PER-PIXEL alpha mode: pixels
@@ -171,86 +202,14 @@ struct dm_ctl_elem_value {
 #define DM_CTL_ELEM_READ   _IOWR('U', 0x12, struct dm_ctl_elem_value)
 #define DM_CTL_ELEM_WRITE  _IOWR('U', 0x13, struct dm_ctl_elem_value)
 
-#define GAIN_CTL     "digital volume"
-#define GAIN_RAW_MAX 63         /* control range; 0 is loudest, 63 silent */
-/* The part of that range you can actually hear.
- *
- * The register goes to 63 and stops being useful long before it: measured on
- * the speaker against a room baseline of 33 rms, raw 26 is 173 rms - five times
- * the room, quiet but unmistakably there - and by raw 34 it is 55, which is 1.6
- * times the room and indistinguishable from nothing. Spreading twenty levels
- * across the whole 63 therefore spends more than half the slider below the
- * floor: level 10 of 20 landed on raw 31, about two and a half times the room,
- * which is what "50% and very quiet" is.
- *
- * TortOS's launcher already had this number - the sweep was done there and the
- * constant is GAIN_RAW_USABLE in its src/platform.c. The port carries its own
- * copy of the mapping because it owns the level while a game runs, and only one
- * of the two was corrected. Same measurement, same ceiling, so the bar means
- * the same thing on the shelf and in a game.
- *
- * Those rms figures were taken with HP_CTL already at 0 - the sweep script sets
- * it before measuring - so they describe the chain as it behaves now, and the
- * 18 dB mixer_defaults() restored was never inside them. A note here briefly
- * claimed otherwise; it was inferred instead of read off the script that made
- * the table. The gap was between the SWEEP and gameplay, not inside the sweep,
- * which is why the table looked sane while the device sounded quiet.
- *
- * The weakness is the instrument. Those readings came from a microphone across
- * the room, where raw 26 is 5.2x the room and raw 34 is indistinguishable from
- * it - but a handheld sits at arm's length, and what reads as silence over
- * there is plainly audible in your hands. The floor is therefore set by ear,
- * not by this table.
- *
- * That session had ONE WORKING SPEAKER, unknown at the time. The quiet channel
- * turned out on 2026-09-02 to be a loose connection on the PCB; resoldered, and
- * both now play evenly. So 39 was originally judged against roughly half this
- * device's output - and it stood anyway, re-heard on the repaired hardware the
- * same day across the quiet end, the balance and the general sound. Two
- * independent confirmations now, not one lucky derivation.
- *
- * 39, chosen on the device on 2026-08-31 with a game playing, stepping the
- * register down until Eric called it: raw 37 is barely audible and is where he
- * wanted position 1. 39 is the constant that lands position 1 on 37 in both
- * this ladder and the launcher's, which round differently; 26 put it on 25.
- * Position 20 still lands on raw 0, so maximum is unchanged.
- *
- * The cost is resolution: about 2.3 dB a press rather than 1.5, in exchange for
- * 45 dB of range rather than 30. Worth it - 30 dB down is not quiet in a quiet
- * room, which is the thing a microphone across the room could not tell us. */
-#define GAIN_RAW_USABLE 39
-
-/* The jack wants a different window, not the same one moved.
- *
- * Set by ear on 2026-09-02 with a game playing and a plug in, the same method
- * that produced 39. The ceiling first: above raw 8 it is uncomfortable, so 8 is
- * where level 20 belongs. Then the floor, stepping down - 37, 45, 49, 53 and 57
- * were each still too loud to be a minimum, and 61 was called right.
- *
- * So the jack spends 53 register steps where the speaker spends 39, which an
- * offset cannot express: offsetting from the ceiling would put level 1 on 47,
- * and 45 was rejected on the way past. Headphones are far more efficient than
- * this speaker, so the same twenty steps have to cover more ground - 61 dB
- * against 45, about 3.1 dB a step rather than 2.3.
- *
- * The launcher carries the same four numbers in its src/platform.c, for the
- * same reason it carries GAIN_RAW_USABLE: this port owns the level while a game
- * runs and the shelf owns it otherwise, so a level that crosses the socket has
- * to mean the same thing on both sides. Change one, change the other. */
-#define SPK_RAW_TOP     0
-#define SPK_RAW_BOTTOM  GAIN_RAW_USABLE
-#define HP_RAW_TOP      8
-#define HP_RAW_BOTTOM   61
-
-#define GAIN_LEVELS  20         /* what the USER moves in: 20 steps of 5% */
-#define SPEAKER_CTL  "HpSpeaker Switch"   /* the speaker's only true mute */
-
-/* Set by the launcher over the state plane, never read from hardware here:
- * what the switch is and what it means are the launcher's, ADR-0031. */
+#define GAIN_CTL       "lineout volume"   /* 0-31 at 1.5 dB a step, 0 a mute */
+#define GAIN_RAW_TOP   31
+/* Position 1. MUST equal VOL_RAW_FLOOR in TortOS src/platform_h700.c: the
+ * two sides share one ladder so a level crossing the socket needs no
+ * conversion. Provisional, to be set by ear (plorpos-7ny.6). */
+#define GAIN_RAW_FLOOR 3
+#define GAIN_LEVELS    20       /* what the USER moves in: 20 steps of 5% */
 static bool g_muted;
-#define HP_CTL       "Headphone Volume"   /* 0-7, 6 dB a step, INVERTED */
-#define HP_CTL_QUIET 7                    /* its quiet end, for the cut */
-#define SWAP_CTL     "DAC Swap"           /* 1 crosses left and right */
 
 /* Backlight. This device has no /sys/class/backlight; the panel is driven by
  * the Allwinner disp2 engine, and the firmware's own settings library goes
@@ -319,67 +278,46 @@ static bool     g_osd_painted[FB_PAGES];
  * Found by capability, not by number. It is /dev/input/event2 today, but that
  * is an enumeration order rather than a promise, and being wrong would mean a
  * ladder calibrated for the wrong output with no sign that anything is off. */
-#define BITS_PER_LONG   (8 * (int)sizeof(long))
-#define SW_NLONGS       ((SW_MAX + BITS_PER_LONG) / BITS_PER_LONG)
-#define BIT_IS_SET(a,b) (((a)[(b) / BITS_PER_LONG] >> ((b) % BITS_PER_LONG)) & 1UL)
-
+/* The jack: the PMIC's speaker state, 0 while a plug is in (extcon0's
+ * HEADPHONE never moves on the SP; measured 2026-10-06). */
+#define JACK_STATE "/sys/class/power_supply/axp2202-battery/spk_state"
 static int g_jack_fd = -1;
 
 static void jack_open(void)
 {
-	unsigned long bits[SW_NLONGS];
-	char path[32];
-	int i, fd;
-
-	for (i = 0; i < 32; i++) {
-		snprintf(path, sizeof path, "/dev/input/event%d", i);
-		if ((fd = open(path, O_RDONLY | O_NONBLOCK)) < 0) continue;
-		memset(bits, 0, sizeof bits);
-		if (ioctl(fd, EVIOCGBIT(EV_SW, sizeof bits), bits) >= 0 &&
-		    BIT_IS_SET(bits, SW_HEADPHONE_INSERT)) {
-			g_jack_fd = fd;
-			return;
-		}
-		close(fd);
-	}
-	fprintf(stderr, "diatom: no headphone jack input node; "
-	                "volume will use the speaker ladder\n");
+	g_jack_fd = open(JACK_STATE, O_RDONLY | O_CLOEXEC);
+	if (g_jack_fd < 0)
+		fprintf(stderr, "diatom: no %s; the jack is not watched\n", JACK_STATE);
 }
 
 static int jack_present(void)
 {
-	unsigned long bits[SW_NLONGS];
+	char st[32];
+	ssize_t n;
 
 	if (g_jack_fd < 0) return 0;
-	memset(bits, 0, sizeof bits);
-	if (ioctl(g_jack_fd, EVIOCGSW(sizeof bits), bits) < 0) return 0;
-	return BIT_IS_SET(bits, SW_HEADPHONE_INSERT) ? 1 : 0;
+	n = pread(g_jack_fd, st, sizeof st - 1, 0);
+	if (n <= 0) return 0;
+	st[n] = '\0';
+	return st[0] == '0';
 }
 
-/* Which window the level maps into. See HP_RAW_TOP above: headphones and the
- * speaker want different ceilings AND different floors, so both ends move. */
-static int gain_top(void)  { return jack_present() ? HP_RAW_TOP    : SPK_RAW_TOP; }
-static int gain_bot(void)  { return jack_present() ? HP_RAW_BOTTOM : SPK_RAW_BOTTOM; }
-
-/* The port thinks in percent and converts; the inverted register never leaves
- * this file. Rounded both ways so a read-back lands on the level it came from. */
+/* The launcher's apply_volume, exactly: 0 is the register's mute, 1..20
+ * spread FLOOR..TOP. Rounded both ways so a read-back lands where it came
+ * from (the step is ~1.6 raw, so every position has its own register value). */
 static int level_to_raw(int lv)
 {
-	int top = gain_top(), span = gain_bot() - top;
-
-	return top + ((GAIN_LEVELS - lv) * span + GAIN_LEVELS / 2) / GAIN_LEVELS;
+	if (lv <= 0) return 0;
+	return GAIN_RAW_FLOOR + ((lv - 1) * (GAIN_RAW_TOP - GAIN_RAW_FLOOR) +
+	                         (GAIN_LEVELS - 1) / 2) / (GAIN_LEVELS - 1);
 }
 static int raw_to_level(int raw)
 {
-	int top = gain_top(), bot = gain_bot(), span = bot - top;
-
-	/* A register left past this window by another program reads as an end of
-	 * the scale rather than as a level outside it. Both ends need clamping now
-	 * that the top is not always 0: with a plug in, anything louder than raw 8
-	 * was set by something that was not us. */
-	if (raw >= bot) return 0;
-	if (raw <= top) return GAIN_LEVELS;
-	return ((bot - raw) * GAIN_LEVELS + span / 2) / span;
+	if (raw <= 0) return 0;
+	if (raw <= GAIN_RAW_FLOOR) return 1;
+	if (raw >= GAIN_RAW_TOP) return GAIN_LEVELS;
+	return 1 + ((raw - GAIN_RAW_FLOOR) * (GAIN_LEVELS - 1) +
+	            (GAIN_RAW_TOP - GAIN_RAW_FLOOR) / 2) / (GAIN_RAW_TOP - GAIN_RAW_FLOOR);
 }
 
 static int ctl_io(const char *name, long *val, int write)
@@ -400,37 +338,6 @@ static int ctl_io(const char *name, long *val, int write)
 }
 
 static int gain_io(long *val, int write) { return ctl_io(GAIN_CTL, val, write); }
-
-/* Write a control and complain if it does not land. The launcher had this same
- * write spelled "Headphone", a control this codec does not have; the ioctl
- * matches names exactly and the return was discarded, so it silently did
- * nothing for the life of the project while the source read as though it had
- * worked. Nothing here writes a control without checking again. */
-static void ctl_set(const char *name, long val)
-{
-	if (ctl_io(name, &val, 1) < 0)
-		fprintf(stderr, "brick: mixer rejected '%s' = %ld\n", name, val);
-}
-
-/* Codec-wide state that the volume level does not own, set once at init.
- *
- * Diatom sets this itself rather than inheriting it from the launcher because
- * it runs standalone as well as under one, and a frontend that is quiet only
- * when started the wrong way is worse than one that is simply quiet.
- * Idempotent, so both doing it costs nothing.
- *
- * HP_CTL: see the header comment above - 0 is the loud end.
- * SWAP_CTL at 1 crosses the channels. The stock hook clears it
- * (runtrimui-original.sh: `tinymix set 1 0`) and so does NextUI; we never did,
- * so left and right have been backwards the whole time. It is enumerated
- * rather than integer, but the value union overlaps and we only ever write
- * item 0, so the integer path reaches it. */
-static void mixer_defaults(void)
-{
-	if (g_mixer_fd < 0) return;
-	ctl_set(HP_CTL, 0);
-	ctl_set(SWAP_CTL, 0);
-}
 
 /* Split from the key handler so the level can be read without one being
  * pressed: the host polls these to report levels upward (ADR-0020). */
@@ -465,34 +372,13 @@ static void gain_jack_poll(void)
 
 static void gain_apply(void)
 {
-	bool cut = g_level <= 0 || g_muted;
-	long v = cut ? GAIN_RAW_MAX : level_to_raw(g_level);
-	long quiet = cut ? HP_CTL_QUIET : 0;
+	/* Zero and the mute both cut by the register's own mute (raw 0). The
+	 * line-out and speaker switches are BaseOS's asound.conf's, locked on
+	 * while a stream is open, and stay untouched. */
+	long v = (g_level <= 0 || g_muted) ? 0 : level_to_raw(g_level);
 
 	g_jack_was = jack_present();
-	if (gain_io(&v, 1) < 0) return;
-	ctl_io(HP_CTL, &quiet, 1);
-
-	/* Zero has to cut the path, not just attenuate it. The control advertises
-	 * `mute=0`, meaning its minimum is maximum attenuation - about -74 dB -
-	 * and not silence. Measured: with an ear against the speaker, level 0 is
-	 * still audible, and a mic across the room cannot tell it from the room.
-	 * So the speaker switch carries the last step.
-	 *
-	 * AND NEVER BACK ON WHILE MUTED - ADR-0031. This line is where the
-	 * launcher's mute used to die: with the switch down and a game muted, one
-	 * volume press re-enabled the stage and the sound returned. The cut for
-	 * level 0 is still ours; turning it on again is not, while somebody else
-	 * is holding it off. */
-	v = !cut;
-	ctl_io(SPEAKER_CTL, &v, 1);
-	/* The switch cuts the speaker only, so with headphones in neither the
-	 * mute nor level 0 silenced them until 2026-09-30. They are cut by level
-	 * instead: GAIN_CTL and HP_CTL both at their quiet ends, silent by ear
-	 * that day. Not "Headphone Switch", tried the same day: with it and
-	 * SPEAKER_CTL both off the codec stops taking samples, and the audio
-	 * thread waits on it - a game froze switching to a headset until the
-	 * mute came off. */
+	gain_io(&v, 1);
 }
 
 static void osd_show(int kind, int level, int max)
@@ -842,6 +728,30 @@ static SDL_GLContext g_glc;
 static bool          g_gl_ok;          /* gkdgl_init succeeded */
 static int           g_gl_w, g_gl_h;
 static diatom_rect   g_gl_dst;         /* the last frame's, for a grab */
+static int           g_te_mark;        /* frames still to mark (gl_te_mark) */
+static unsigned      g_te_prog;        /* its program; 0 = cannot mark */
+/* Unpaced (fast-forward, or a core slower than the panel), a frame that comes
+ * sooner than this after the last swap returned is not drawn (plorpos-7ny.19).
+ * The Mali swap waits for the next vsync whatever the swap interval, so every
+ * swap capped FF at the panel's rate; now the core runs ahead between swaps and
+ * the next one waits only the rest of the interval, as None's mailbox does.
+ * Three quarters of the panel's ~16.8 ms: a slower core's frames are >= 20 ms
+ * apart and never skip. */
+#define GL_SKIP_US 12600
+static bool          g_gl_unpaced;     /* the host's last diatom_port_pace */
+static uint64_t      g_gl_swapped;     /* when the last swap returned */
+
+/* What gkdgl_set_chain last compiled. The launcher sends the chain before
+ * every RUN, and a compile in the first frames, with the codec already
+ * draining, cost 70-150 ms of warmup and an underrun now and then. */
+static char g_drawn_path[DIATOM_SHADER_MAX_PASSES][1024];
+static diatom_shader_pass g_drawn_pass[DIATOM_SHADER_MAX_PASSES];
+static int  g_drawn_n;
+static bool g_drawn_final_linear;
+static void (*g_glUseProgram)(unsigned);
+static void (*g_glDrawArrays)(unsigned, int, int);
+static void (*g_glViewport)(int, int, int, int);
+static void (*g_glBindFramebuffer)(unsigned, unsigned);
 
 /* Whichever page the window left on glass becomes our front: the window pans
  * fb0 itself, in its own pages 0 and 1 (glswitch's layer log), and present and
@@ -857,6 +767,84 @@ static void gl_sync_front(void)
 	pthread_mutex_unlock(&g_flip_mx);
 }
 
+/* Mali transaction elimination: the GPU skips writing a 16x16 tile whose
+ * content matches what it last wrote to that buffer. The launcher draws into
+ * the same two pages while we are paused, so a tile we re-render unchanged
+ * after Continue would keep the launcher's pixels (2026-10-06, egltest3: CPU
+ * red survived in whole tiles). One pixel per tile in a near-black no frame
+ * of ours would put there, on one frame per buffer, makes every tile differ;
+ * the next frame writes them all. Meant to be invisible: 1/256 of the pixels,
+ * near-black, for two frames.
+ *
+ * One draw of gkd_gl's quad (attribute 0, vertices 0-3, already bound) with
+ * every other pixel discarded. 1350 scissored clears did the same job at
+ * ~55 ms a frame - a 110 ms hitch at every Continue. Its own program, here
+ * and not in gkd_gl.c, so the GKD's diatom stays as it is. */
+static unsigned gl_te_program(void)
+{
+	static const char *vs =
+		"#version 300 es\n"
+		"in vec4 VertexCoord;\n"
+		"void main() { gl_Position = VertexCoord; }\n";
+	static const char *fs =
+		"#version 300 es\n"
+		"precision mediump float;\n"
+		"out vec4 FragColor;\n"
+		"void main() {\n"
+		"\tivec2 p = ivec2(gl_FragCoord.xy);\n"
+		"\tif (((p.x | p.y) & 15) != 0) discard;\n"
+		"\tFragColor = vec4(0.0, 0.0, 1.0 / 255.0, 1.0);\n"
+		"}\n";
+	unsigned (*create_shader)(unsigned) = (unsigned (*)(unsigned))SDL_GL_GetProcAddress("glCreateShader");
+	void (*source)(unsigned, int, const char *const *, const int *) =
+		(void (*)(unsigned, int, const char *const *, const int *))SDL_GL_GetProcAddress("glShaderSource");
+	void (*compile)(unsigned) = (void (*)(unsigned))SDL_GL_GetProcAddress("glCompileShader");
+	unsigned (*create_program)(void) = (unsigned (*)(void))SDL_GL_GetProcAddress("glCreateProgram");
+	void (*attach)(unsigned, unsigned) = (void (*)(unsigned, unsigned))SDL_GL_GetProcAddress("glAttachShader");
+	void (*bind_attrib)(unsigned, unsigned, const char *) =
+		(void (*)(unsigned, unsigned, const char *))SDL_GL_GetProcAddress("glBindAttribLocation");
+	void (*link)(unsigned) = (void (*)(unsigned))SDL_GL_GetProcAddress("glLinkProgram");
+	void (*get_programiv)(unsigned, unsigned, int *) =
+		(void (*)(unsigned, unsigned, int *))SDL_GL_GetProcAddress("glGetProgramiv");
+	void (*delete_shader)(unsigned) = (void (*)(unsigned))SDL_GL_GetProcAddress("glDeleteShader");
+	unsigned v, f, p;
+	int ok = 0;
+
+	g_glUseProgram       = (void (*)(unsigned))SDL_GL_GetProcAddress("glUseProgram");
+	g_glDrawArrays       = (void (*)(unsigned, int, int))SDL_GL_GetProcAddress("glDrawArrays");
+	g_glViewport         = (void (*)(int, int, int, int))SDL_GL_GetProcAddress("glViewport");
+	g_glBindFramebuffer  = (void (*)(unsigned, unsigned))SDL_GL_GetProcAddress("glBindFramebuffer");
+	if (!create_shader || !source || !compile || !create_program || !attach ||
+	    !bind_attrib || !link || !get_programiv || !delete_shader ||
+	    !g_glUseProgram || !g_glDrawArrays || !g_glViewport || !g_glBindFramebuffer)
+		return 0;
+	v = create_shader(0x8B31);              /* GL_VERTEX_SHADER */
+	f = create_shader(0x8B30);              /* GL_FRAGMENT_SHADER */
+	source(v, 1, &vs, NULL);
+	source(f, 1, &fs, NULL);
+	compile(v);
+	compile(f);
+	p = create_program();
+	attach(p, v);
+	attach(p, f);
+	bind_attrib(p, 0, "VertexCoord");       /* gkd_gl's A_VERTEX */
+	link(p);
+	delete_shader(v);
+	delete_shader(f);
+	get_programiv(p, 0x8B82, &ok);          /* GL_LINK_STATUS */
+	return ok ? p : 0;
+}
+
+static void gl_te_mark(void)
+{
+	if (g_te_mark <= 0 || !g_te_prog) return;
+	g_te_mark--;
+	g_glBindFramebuffer(0x8D40, 0);         /* GL_FRAMEBUFFER */
+	g_glViewport(0, 0, g_gl_w, g_gl_h);
+	g_glUseProgram(g_te_prog);
+	g_glDrawArrays(0x0005, 0, 4);           /* GL_TRIANGLE_STRIP */
+}
+
 static void gl_down(void)
 {
 	if (!g_win) return;
@@ -867,6 +855,8 @@ static void gl_down(void)
 	g_win = NULL;
 	g_glc = NULL;
 	g_gl_ok = false;
+	g_te_prog = 0;
+	g_drawn_n = 0;
 	gl_sync_front();
 	/* The window drew into pages 0 and 1: wipe them before fbdev uses them,
 	 * as a mode change does. */
@@ -897,8 +887,26 @@ static bool gl_up(void)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
-	g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
-	                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+	/* On pages 0 and 1, as the launcher's (TortOS plat_video_init): Mali's
+	 * fbdev window takes every page the virtual height offers, fixed when it
+	 * is made, and page 2 is the park page. Height put back afterwards. */
+	{
+		struct fb_var_screeninfo two = g_vinfo, back = g_vinfo;
+
+		two.yres_virtual = 2 * g_vinfo.yres;
+		two.yoffset = 0;
+		if (g_pages > 2 && ioctl(g_fb_fd, FBIOPUT_VSCREENINFO, &two) == 0) {
+			g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
+			                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+			back.yoffset = 0;
+			if (ioctl(g_fb_fd, FBIOPUT_VSCREENINFO, &back) != 0)
+				diatom_port_log(DIATOM_LOG_WARN, "shader: fb height not restored");
+			gl_sync_front();
+		}
+	}
+	if (!g_win)
+		g_win = SDL_CreateWindow("diatom", 0, 0, dm.w, dm.h,
+		                         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
 	if (!g_win) {
 		snprintf(msg, sizeof msg, "shader: no window: %s", SDL_GetError());
 		diatom_port_log(DIATOM_LOG_WARN, msg);
@@ -918,9 +926,26 @@ static bool gl_up(void)
 	SDL_GL_SetSwapInterval(0);
 	SDL_GL_GetDrawableSize(g_win, &g_gl_w, &g_gl_h);
 	g_gl_ov_dirty = true;
+	g_te_prog = gl_te_program();
+	if (!g_te_prog) diatom_port_log(DIATOM_LOG_WARN, "shader: no TE mark program");
+	g_te_mark = 2;
 	snprintf(msg, sizeof msg, "shader: GL window %dx%d up in %llu ms", g_gl_w, g_gl_h,
 	         (unsigned long long)((diatom_port_now_us() - t0) / 1000));
 	diatom_port_log(DIATOM_LOG_INFO, msg);
+	return true;
+}
+
+static bool chain_is_drawn(void)
+{
+	int i;
+
+	if (!g_win || g_sh_n != g_drawn_n || g_sh_final_linear != g_drawn_final_linear)
+		return false;
+	for (i = 0; i < g_sh_n; i++)
+		if (g_sh_pass[i].linear != g_drawn_pass[i].linear ||
+		    g_sh_pass[i].scale != g_drawn_pass[i].scale ||
+		    strcmp(g_sh_path[i], g_drawn_path[i]) != 0)
+			return false;
 	return true;
 }
 
@@ -928,8 +953,10 @@ static bool gl_up(void)
 static void shader_reconcile(void)
 {
 	char err[512], *c;
+	int i;
 
 	g_sh_dirty = false;
+	if (chain_is_drawn()) return;
 	if (g_sh_n == 0) {
 		if (g_win) {
 			gl_down();
@@ -938,7 +965,15 @@ static void shader_reconcile(void)
 		return;
 	}
 	if (!g_win && !gl_up()) { g_sh_n = 0; return; }
-	if (!gkdgl_set_chain(g_sh_pass, g_sh_n, g_sh_final_linear, err, sizeof err)) {
+	g_drawn_n = 0;
+	if (gkdgl_set_chain(g_sh_pass, g_sh_n, g_sh_final_linear, err, sizeof err)) {
+		for (i = 0; i < g_sh_n; i++) {
+			memcpy(g_drawn_path[i], g_sh_path[i], sizeof g_drawn_path[i]);
+			g_drawn_pass[i] = g_sh_pass[i];
+		}
+		g_drawn_n = g_sh_n;
+		g_drawn_final_linear = g_sh_final_linear;
+	} else {
 		char msg[600];
 
 		for (c = err; *c; c++) if (*c == '\n' || *c == '\t' || *c == '\r') *c = ' ';
@@ -996,7 +1031,9 @@ static void gl_present(const void *src, int w, int h, size_t pitch,
 		gkdgl_overlay_draw(g_gl_w, g_gl_h, r);
 	}
 	gl_osd();
+	gl_te_mark();
 	SDL_GL_SwapWindow(g_win);
+	g_gl_swapped = diatom_port_now_us();
 	pthread_mutex_lock(&g_flip_mx);
 	g_presented = true;
 	pthread_mutex_unlock(&g_flip_mx);
@@ -1008,11 +1045,15 @@ void diatom_port_present_stop(diatom_park park_mode)
 	struct fb_var_screeninfo v;
 	bool was_presenting;
 
+	audio_release();   /* a pause or the end of a game: see audio_claim */
+
 	if (!g_fb) return;
 	if (g_win && g_presented) gl_quiesce();   /* else not ours on glass */
+	if (g_win) g_te_mark = 2;                 /* the launcher draws next */
 	front = flip_drain();
 
 	was_presenting = g_presented;
+	if (was_presenting) g_handed_over = true;
 	g_presented = false;
 
 	/* Nothing presented since the last stop means somebody else has the
@@ -1082,10 +1123,12 @@ void diatom_port_present_stop(diatom_park park_mode)
 static void *flip_worker(void *arg)
 {
 	struct fb_var_screeninfo v = g_vinfo;
+	uint64_t returned = 0;   /* when the last pan came back from its vsync */
 
 	pthread_mutex_lock(&g_flip_mx);
 	while (!g_flip_stop) {
 		int page;
+		uint64_t now;
 
 		if (g_pending < 0) {
 			pthread_cond_wait(&g_flip_cv, &g_flip_mx);
@@ -1094,7 +1137,13 @@ static void *flip_worker(void *arg)
 		page = g_pending;
 		g_pending  = -1;
 		g_inflight = page;
+		pthread_cond_broadcast(&g_flip_idle);   /* a paced present waits on this */
 		pthread_mutex_unlock(&g_flip_mx);
+
+		/* Out of the blanking first: see PAN_GUARD_US. */
+		now = diatom_port_now_us();
+		if (returned && now < returned + PAN_GUARD_US)
+			usleep((useconds_t)(returned + PAN_GUARD_US - now));
 
 		/* Blocks until the address latches at a vsync - the whole reason
 		 * this thread exists. */
@@ -1102,6 +1151,7 @@ static void *flip_worker(void *arg)
 		v.activate = FB_ACTIVATE_VBL;
 		if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &v) != 0)
 			diatom_port_log(DIATOM_LOG_WARN, "pan failed in flip thread");
+		returned = diatom_port_now_us();
 
 		pthread_mutex_lock(&g_flip_mx);
 		g_front    = page;
@@ -1135,11 +1185,11 @@ static char g_audio_dev[128];
  * or not anything closes. Fixing that means not letting the write stall, which
  * is the sink question, not the teardown question.
  */
-static bool audio_open(const char *name)
+static SDL_AudioDeviceID audio_open_id(const char *name)
 {
 	SDL_AudioSpec want, have;
+	SDL_AudioDeviceID id;
 
-	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
 	if (name && *name) setenv("AUDIODEV", name, 1);
 	else               unsetenv("AUDIODEV");
 
@@ -1147,16 +1197,21 @@ static bool audio_open(const char *name)
 	want.freq     = AUDIO_RATE;
 	want.format   = AUDIO_S16SYS;
 	want.channels = 2;
-	want.samples  = 1024;
+	/* 2048, not the Brick's 1024: at 1024 the RG SP's codec underran about
+	 * once a minute in play (ActRaiser and Adventure Island IV, 60 s each,
+	 * one "underrun occurred" apiece, the NES one 19 s in); at 2048 none in
+	 * the same runs nor in Advance Wars. Costs ~21 ms of latency
+	 * (plorpos-7ny.12, 2026-10-06). */
+	want.samples  = 2048;
 
 	if (SDL_WasInit(SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
-		return false;
+		return 0;
 	/* allowed_changes 0: SDL hands back exactly this spec and converts behind
 	 * it, so a sink running at another rate never reaches the resampler and
 	 * caps.audio_rate stays true across a reopen. */
-	g_audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-	if (!g_audio) return false;
-	SDL_PauseAudioDevice(g_audio, 0);
+	id = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+	if (!id) return 0;
+	SDL_PauseAudioDevice(id, 0);
 	/* What SDL actually negotiated, not what was asked for. A sink can open
 	 * cleanly and then not carry sound, and when that happened on 2026-09-05
 	 * there was no way to tell from outside whether SDL had agreed to
@@ -1170,7 +1225,224 @@ static bool audio_open(const char *name)
 		         have.freq, have.channels, have.samples, have.size);
 		diatom_port_log(DIATOM_LOG_INFO, msg);
 	}
-	return true;
+	return id;
+}
+
+/* Synchronous, for the rare paths that switch a held sink (audio_set, a sink
+ * that died); a claim and a release go through the handover thread below. */
+static bool audio_open(const char *name)
+{
+	if (g_audio) { SDL_CloseAudioDevice(g_audio); g_audio = 0; }
+	g_audio = audio_open_id(name);
+	return g_audio != 0;
+}
+
+/* THE CODEC IS HANDED OVER, NOT SHARED (plorpos-7ny.10). BaseOS's `default`
+ * is the codec itself, one opener at a time, and no dmix can be put in front
+ * of it: the kernel has no SysV IPC, which dmix needs for its semaphore
+ * ("unable to create IPC semaphore: Function not implemented", 2026-10-06).
+ * Held from boot as on the Brick, it kept Muse ("open default: Device or
+ * resource busy") and native PICO-8 (no sound at all) off the speaker.
+ *
+ * So it is held only while a game is running and not quieted: claimed by the
+ * first frames that arrive, let go at every present_stop (a pause or the end
+ * of a game) and while the launcher has the game quiet because Muse plays.
+ * A claim that finds it busy - Muse still letting go - is retried once a
+ * second; until then the frames are taken and go nowhere, as a quiet game's
+ * do. */
+static uint64_t g_audio_retry_us;
+static bool     g_audio_refused;
+
+/* And handed over OFF the frame loop. Through BaseOS's `default` an open costs
+ * ~250 ms and a close ~250 ms - its hooks switch the speaker and line-out amp
+ * (2026-10-06, pcmtime: hw:0,0 opens and closes in 0 ms) - and SDL adds two
+ * periods' sleep to a close. Done inline that was 415 ms between Menu and the
+ * menu, and a 250 ms freeze at every Continue and game start. So a thread does
+ * both, one at a time and in the order asked; the loop only says what it wants
+ * and adopts a device once it is open. Until then frames go nowhere, as above:
+ * the picture resumes at once and the sound ~0.3 s later. */
+static pthread_t         g_hand_thread;
+static bool              g_hand_running;
+static pthread_mutex_t   g_hand_mx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t    g_hand_cv = PTHREAD_COND_INITIALIZER;
+static bool              g_hand_stop;
+static bool              g_hand_want;        /* the loop wants the codec */
+static bool              g_hand_open_req;    /* ...and the thread has not started on it */
+static bool              g_hand_inflight;    /* the thread is opening */
+static char              g_hand_dev[128];
+static SDL_AudioDeviceID g_hand_close_id;    /* to close next */
+static SDL_AudioDeviceID g_hand_opened;      /* open, not yet adopted */
+static bool              g_hand_failed;
+static char              g_hand_err[128];
+
+static void *hand_worker(void *arg)
+{
+	pthread_mutex_lock(&g_hand_mx);
+	for (;;) {
+		if (g_hand_close_id) {
+			SDL_AudioDeviceID id = g_hand_close_id;
+
+			g_hand_close_id = 0;
+			pthread_mutex_unlock(&g_hand_mx);
+			SDL_CloseAudioDevice(id);
+			pthread_mutex_lock(&g_hand_mx);
+		} else if (g_hand_open_req && !g_hand_stop) {
+			char dev[sizeof g_hand_dev];
+			SDL_AudioDeviceID id;
+
+			g_hand_open_req = false;
+			g_hand_inflight = true;
+			memcpy(dev, g_hand_dev, sizeof dev);
+			pthread_mutex_unlock(&g_hand_mx);
+			id = audio_open_id(dev);
+			pthread_mutex_lock(&g_hand_mx);
+			g_hand_inflight = false;
+			if (!g_hand_want) {
+				if (id) g_hand_close_id = id;   /* let go while it opened */
+			} else if (id) {
+				g_hand_opened = id;
+			} else {
+				g_hand_failed = true;
+				snprintf(g_hand_err, sizeof g_hand_err, "%s", SDL_GetError());
+			}
+		} else if (g_hand_stop) {
+			break;
+		} else {
+			pthread_cond_wait(&g_hand_cv, &g_hand_mx);
+		}
+	}
+	pthread_mutex_unlock(&g_hand_mx);
+	return arg;
+}
+
+static void audio_release(void)
+{
+	SDL_AudioDeviceID id = g_audio;
+
+	g_audio = 0;
+	g_audio_retry_us = 0;
+	g_ad_t0 = 0;
+	if (id) {
+		/* Silent now, closed when the thread gets to it. */
+		SDL_PauseAudioDevice(id, 1);
+		SDL_ClearQueuedAudio(id);
+	}
+	if (!g_hand_running) {
+		if (id) SDL_CloseAudioDevice(id);
+		return;
+	}
+	pthread_mutex_lock(&g_hand_mx);
+	g_hand_want = false;
+	g_hand_open_req = false;
+	g_hand_failed = false;
+	/* Opened but not adopted yet: never at once with g_audio, which adoption
+	 * clears it for. */
+	if (!id) id = g_hand_opened;
+	g_hand_opened = 0;
+	if (id) {
+		if (g_hand_close_id) SDL_CloseAudioDevice(g_hand_close_id);   /* not expected */
+		g_hand_close_id = id;
+		pthread_cond_signal(&g_hand_cv);
+	}
+	pthread_mutex_unlock(&g_hand_mx);
+}
+
+static void audio_debug_tick(void)
+{
+	uint64_t now;
+	size_t q;
+
+	if (!g_audio_debug) return;
+	if (!g_audio) { g_ad_t0 = 0; return; }
+	now = diatom_port_now_us();
+	q = diatom_port_audio_queued();
+	g_ad_frames++;
+	if (!g_ad_t0) {
+		g_ad_t0 = now; g_ad_written = 0; g_ad_frames = 0; g_ad_q0 = q;
+		return;
+	}
+	if (now - g_ad_t0 >= 5000000ull) {
+		double secs = (double)(now - g_ad_t0) / 1e6;
+		char msg[192];
+
+		snprintf(msg, sizeof msg,
+		         "audio debug: %.3f fps, wrote %.1f/s, codec took %.1f/s, queued %zu",
+		         g_ad_frames / secs, g_ad_written / secs,
+		         ((double)g_ad_written + (double)g_ad_q0 - (double)q) / secs, q);
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+		g_ad_t0 = now; g_ad_written = 0; g_ad_frames = 0; g_ad_q0 = q;
+	}
+}
+
+/* Adopted from the handover thread, the codec has been playing SDL's own
+ * silence and holds nothing of ours: start the queue at rate control's target,
+ * in silence. Started empty, it only ever refilled at the controller's 0.5% -
+ * seconds below target, winding the integral to -0.45 - and the overshoot that
+ * followed put the 2048-frame sawtooth's peaks over capacity: Advance Wars
+ * dropped 97-227 frames after each Continue (plorpos-7ny.23). Queued when the
+ * thread opens instead, it was played out before the loop adopted it. The
+ * latency is the target's, as in steady play. */
+static void audio_prime(void)
+{
+	static const int16_t silence[AUDIO_BUFFER_FRAMES / 2 * 2];
+
+	SDL_QueueAudio(g_audio, silence, sizeof silence);
+}
+
+static bool audio_claim(void)
+{
+	uint64_t now;
+
+	char err[128];
+
+	if (g_audio) return true;
+	now = diatom_port_now_us();
+	if (!g_hand_running) {
+		if (now < g_audio_retry_us) return false;
+		if (audio_open(g_audio_dev[0] ? g_audio_dev : NULL)) {
+			g_audio_refused = false;
+			return true;
+		}
+		snprintf(err, sizeof err, "%s", SDL_GetError());
+	} else {
+		pthread_mutex_lock(&g_hand_mx);
+		if (g_hand_opened) {
+			g_audio = g_hand_opened;
+			g_hand_opened = 0;
+			pthread_mutex_unlock(&g_hand_mx);
+			g_audio_refused = false;
+			audio_prime();
+			return true;
+		}
+		if (!g_hand_failed) {
+			/* Asked for already, or ask now: the answer comes frames later.
+			 * An open still running from before a release is wanted again
+			 * rather than asked for twice. */
+			if (!g_hand_want && now >= g_audio_retry_us) {
+				g_hand_want = true;
+				if (!g_hand_inflight) {
+					g_hand_open_req = true;
+					snprintf(g_hand_dev, sizeof g_hand_dev, "%s", g_audio_dev);
+					pthread_cond_signal(&g_hand_cv);
+				}
+			}
+			pthread_mutex_unlock(&g_hand_mx);
+			return false;
+		}
+		g_hand_failed = false;
+		g_hand_want = false;
+		snprintf(err, sizeof err, "%s", g_hand_err);
+		pthread_mutex_unlock(&g_hand_mx);
+	}
+	if (!g_audio_refused) {      /* once per refusal, not once a second */
+		char msg[192];
+
+		snprintf(msg, sizeof msg, "audio: codec busy (%s); retrying each second", err);
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+	}
+	g_audio_refused = true;
+	g_audio_retry_us = now + 1000000ull;
+	return false;
 }
 
 bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
@@ -1184,6 +1456,12 @@ bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 	 * are not hypothetical - a launcher that recomputes its routing on a timer
 	 * sends one whenever it thinks the answer might have moved. */
 	if (g_audio && !strcmp(want, g_audio_dev)) {
+		diatom_port_audio_get(actual, cap);
+		return true;
+	}
+	/* Not holding the codec: remembered for the next claim, not opened. */
+	if (!g_audio) {
+		snprintf(g_audio_dev, sizeof g_audio_dev, "%s", want);
 		diatom_port_audio_get(actual, cap);
 		return true;
 	}
@@ -1216,10 +1494,10 @@ bool diatom_port_init(diatom_port_caps *out)
 
 	g_mixer_fd = open("/dev/snd/controlC0", O_RDWR);
 	g_disp_fd  = open("/dev/disp", O_RDWR);
-	mixer_defaults();
 	jack_open();
 	g_input_debug   = getenv("DIATOM_INPUT_DEBUG") != NULL;
 	g_present_debug = getenv("DIATOM_PRESENT_DEBUG") != NULL;
+	g_audio_debug   = getenv("DIATOM_AUDIO_DEBUG") != NULL;
 
 	/* No SDL_INIT_VIDEO: presentation does not go through SDL at all, and the
 	 * mali video driver would otherwise claim the display. */
@@ -1248,7 +1526,21 @@ bool diatom_port_init(diatom_port_caps *out)
 		return false;
 	}
 
-	g_pages = (int)(g_finfo.smem_len / ((size_t)g_vinfo.yres * g_finfo.line_length));
+	/* The panel's memory holds five pages but fb0 is set up as two tall,
+	 * and a pan past the virtual height is refused. Asked for FB_PAGES -
+	 * measured 2026-10-06: accepted, and the launcher's EGL window, which
+	 * shares fb0, carries on flipping its own two. */
+	if (g_vinfo.yres_virtual < FB_PAGES * g_vinfo.yres &&
+	    g_finfo.smem_len >= (size_t)FB_PAGES * g_vinfo.yres * g_finfo.line_length) {
+		struct fb_var_screeninfo v = g_vinfo;
+		v.yres_virtual = FB_PAGES * g_vinfo.yres;
+		if (ioctl(g_fb_fd, FBIOPUT_VSCREENINFO, &v) != 0 ||
+		    ioctl(g_fb_fd, FBIOGET_VSCREENINFO, &g_vinfo) != 0)
+			diatom_port_log(DIATOM_LOG_WARN, "fb0: could not grow the virtual height");
+	}
+	g_pages = (int)(g_vinfo.yres_virtual / g_vinfo.yres);
+	if ((size_t)g_pages * g_vinfo.yres * g_finfo.line_length > g_finfo.smem_len)
+		g_pages = (int)(g_finfo.smem_len / ((size_t)g_vinfo.yres * g_finfo.line_length));
 	if (g_pages > FB_PAGES) g_pages = FB_PAGES;
 	if (g_pages < 1) { fprintf(stderr, "fb0 too small for one page\n"); return false; }
 
@@ -1290,14 +1582,18 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * off dynamic rate control, which would otherwise read a permanently empty
 	 * queue as a permanent deficit and hold the resampler at its deviation
 	 * limit forever, correcting for a buffer that does not exist. */
-	if (!audio_open(NULL))
+	/* Only the subsystem here: the codec itself is claimed by the first
+	 * frames of a game and let go between games (audio_claim, below). */
+	if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
 		fprintf(stderr, "audio unavailable (%s); continuing without sound\n",
 		        SDL_GetError());
+	else if (pthread_create(&g_hand_thread, NULL, hand_worker, NULL) == 0)
+		g_hand_running = true;
+	else   /* the handover inline, slow but sound */
+		diatom_port_log(DIATOM_LOG_WARN, "audio: no handover thread; handing over inline");
 
-	/* The Brick's buttons arrive as one joystick (kernel name "TRIMUI
-	 * Player1"; the firmware's SDL reports it as "Xbox 360 Controller").
-	 * The keyboard-class devices carry only volume and power keys - measured
-	 * from the kernel capability bitmasks, see the mapping tables below. */
+	/* Every button, the d-pad and the volume keys are one joystick,
+	 * "ANBERNIC-keys"; the power key is the PMIC's and the launcher's. */
 	if (SDL_NumJoysticks() > 0)
 		g_joy = SDL_JoystickOpen(0);
 	if (!g_joy)
@@ -1306,7 +1602,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	{
 		char msg[160];
 		snprintf(msg, sizeof msg,
-		         "brick: fb %ux%u stride %u, %d page(s), rgba at %u/%u/%u/%u+%u, audio %d Hz, joystick %s",
+		         "h700: fb %ux%u stride %u, %d page(s), rgba at %u/%u/%u/%u+%u, audio %d Hz, joystick %s",
 		         g_vinfo.xres, g_vinfo.yres, g_finfo.line_length, g_pages,
 		         g_vinfo.red.offset, g_vinfo.green.offset, g_vinfo.blue.offset,
 		         g_vinfo.transp.offset, g_vinfo.transp.length,
@@ -1320,7 +1616,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * was asked for: the resampler still needs a target to convert into,
 	 * and a zero here would divide. */
 	out->audio_rate          = AUDIO_RATE;
-	out->audio_buffer_frames = g_audio ? AUDIO_BUFFER_FRAMES : 0;
+	out->audio_buffer_frames = SDL_WasInit(SDL_INIT_AUDIO) ? AUDIO_BUFFER_FRAMES : 0;
 	out->present_blocks      = false;
 	return true;
 }
@@ -1340,28 +1636,10 @@ void diatom_port_shutdown(void)
 	free(g_ov_under);
 	g_ov_under = NULL;
 	g_ov_under_cap = 0;
-	/* Hand the speaker back on, unless somebody is holding it off.
-	 *
-	 * Muting at level 0 switches HpSpeaker off, and that is device state which
-	 * outlives this process. Leaving it off used to strand the device, because
-	 * nothing else drove this switch - the launcher drove `digital volume` and
-	 * turning the volume up there could not undo it, so the machine simply
-	 * appeared to have lost its speaker.
-	 *
-	 * THAT REASONING EXPIRED on 2026-09-16. TortOS reads a hardware mute switch
-	 * and drives this control itself (ADR-0031), so the device is no longer
-	 * stranded by an off speaker - and handing it back unconditionally would
-	 * un-mute a device whose switch is still down, at the exact moment a game
-	 * ends and the launcher's shelf comes back.
-	 *
-	 * The volume LEVEL is still deliberately not restored - that is a user
-	 * setting and belongs wherever they left it. */
-	if (g_mixer_fd >= 0) {
-		long on = !g_muted;
-		ctl_io(SPEAKER_CTL, &on, 1);
-		close(g_mixer_fd);
-		g_mixer_fd = -1;
-	}
+	/* The level stays where the player left it: a user setting, and the
+	 * register's mute (raw 0) strands nothing - the launcher's next level
+	 * write lifts it. */
+	if (g_mixer_fd >= 0) { close(g_mixer_fd); g_mixer_fd = -1; }
 	/* Brightness is NOT restored: it is a user setting and the launcher
 	 * re-applies its own on resume anyway. Unlike the speaker switch, leaving
 	 * it strands nothing - the launcher's own control can always move it. */
@@ -1369,7 +1647,16 @@ void diatom_port_shutdown(void)
 	if (g_fb)         munmap(g_fb, g_fb_size);
 	if (g_fb_fd >= 0) close(g_fb_fd);
 	if (g_joy)        SDL_JoystickClose(g_joy);
-	if (g_audio)      SDL_CloseAudioDevice(g_audio);
+	audio_release();
+	if (g_hand_running) {
+		pthread_mutex_lock(&g_hand_mx);
+		g_hand_stop = true;
+		pthread_cond_signal(&g_hand_cv);
+		pthread_mutex_unlock(&g_hand_mx);
+		pthread_join(g_hand_thread, NULL);   /* after the close it was given */
+		g_hand_running = false;
+		if (g_hand_opened) SDL_CloseAudioDevice(g_hand_opened);
+	}
 	SDL_Quit();
 }
 
@@ -1680,6 +1967,26 @@ static void clear_pages(void)
 	for (i = 0; i < n; i++) p[i] = g_opaque;
 }
 
+/* The SP's panel scans out at ~59.6 Hz (596 vsync interrupts in 10.0 s), below
+ * the 60.0985 of an SNES or NES. Either a frame is dropped now and then, or the
+ * game runs ~0.8% slow with every frame shown: the user chose the second. The
+ * GL window paces by itself - its swap waits for a free buffer whatever the
+ * swap interval - and fbdev does once present waits rather than steals. */
+double diatom_port_refresh_hz(void)
+{
+	/* Measured on the RG SP: the flip thread's pans, 59.57-59.67 per second
+	 * over 600-pan windows. fb0's own timings say 59.156 and disp2's status
+	 * 60.2; neither is what the panel does. Rate control covers the rest. */
+	return 59.57;
+}
+
+bool diatom_port_pace(bool want)
+{
+	g_pace = want && !g_pan_broken;
+	g_gl_unpaced = !want;
+	return g_pace || (want && g_win);
+}
+
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
@@ -1688,6 +1995,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	bool rect_changed;
 	int page;
 
+	audio_debug_tick();
 	/* Dupe frame: the front page already shows it. Nothing to draw, nothing
 	 * to flip. */
 	if (!src || w <= 0 || h <= 0) return;
@@ -1745,7 +2053,9 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	/* After the log and the maps, which keep that log line to one per change
 	 * on this path too. */
 	if (g_win) {
-		gl_present(src, w, h, pitch, fmt, dst);
+		if (!g_gl_unpaced
+		    || diatom_port_now_us() - g_gl_swapped >= GL_SKIP_US)
+			gl_present(src, w, h, pitch, fmt, dst);
 		return;
 	}
 	/* A smaller rect leaves the old picture around the new one. Only on a mode
@@ -1771,11 +2081,34 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		return;
 	}
 
+	/* Back from the launcher. It no longer clears its pages before RESUME on
+	 * this port (TortOS main.c): two black frames through its GL window ended
+	 * in page flips that landed after ours, putting its menu back on glass
+	 * for a frame about every other Continue (2026-10-06). So the page really
+	 * on glass is read, never drawn into, and every page is wiped before its
+	 * first use - what the black frames were for: Diatom writes only its
+	 * rect, and around it the menu would show. */
+	if (g_handed_over) {
+		struct fb_var_screeninfo v;
+		int i;
+
+		g_handed_over = false;
+		if (ioctl(g_fb_fd, FBIOGET_VSCREENINFO, &v) == 0 &&
+		    v.yoffset / g_vinfo.yres < (unsigned)g_pages) {
+			pthread_mutex_lock(&g_flip_mx);
+			g_front = (int)(v.yoffset / g_vinfo.yres);
+			pthread_mutex_unlock(&g_flip_mx);
+		}
+		for (i = 0; i < g_pages; i++) g_page_stale[i] = true;
+	}
+
 	/* Pick a page holding no role. If every page is spoken for - the panel is
 	 * consuming slower than the core produces - steal the pending one: the
 	 * thread has not started panning it, so overwriting it just replaces a
 	 * frame nobody saw with a newer one. Latest wins. */
 	pthread_mutex_lock(&g_flip_mx);
+	while (g_pace && g_flip_running && g_pending >= 0)
+		pthread_cond_wait(&g_flip_idle, &g_flip_mx);
 	for (page = 0; page < g_pages; page++)
 		if (page != g_front && page != g_inflight && page != g_pending)
 			break;
@@ -1787,6 +2120,15 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 
 	if (g_present_debug) t0 = diatom_port_now_us();
 
+	if (g_page_stale[page]) {
+		uint32_t *q = (uint32_t *)page_base(page);
+		size_t n = (size_t)g_vinfo.yres * g_finfo.line_length / sizeof *q, i;
+
+		for (i = 0; i < n; i++) q[i] = g_opaque;
+		g_osd_painted[page] = false;
+		memset(&g_ov_painted[page], 0, sizeof g_ov_painted[page]);
+		g_page_stale[page] = false;
+	}
 	blit(page_base(page), src, w, h, pitch, fmt, dst);
 	/* Painted, or unpainted. A page keeps whatever was last written outside
 	 * dst, so the bar has to be taken off the same page it was put on - and
@@ -1854,14 +2196,20 @@ size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 		g_audio_dev[0] = '\0';
 		audio_open(NULL);
 	}
-	if (!g_audio || !frames || !n) return 0;
+	if (!frames || !n) return 0;
+	if (diatom_audio_quiet_get()) { audio_release(); return n; }
+	/* A chain to compile is compiled before the codec is ours, so its stall
+	 * drains nothing: present would do it a moment later anyway. */
+	if (g_sh_dirty) shader_reconcile();
+	if (!audio_claim()) return n;
 	queued = diatom_port_audio_queued();
-	room   = queued >= (size_t)AUDIO_BUFFER_FRAMES
-	       ? 0 : (size_t)AUDIO_BUFFER_FRAMES - queued;
+	room   = queued >= (size_t)AUDIO_QUEUE_LIMIT
+	       ? 0 : (size_t)AUDIO_QUEUE_LIMIT - queued;
 	if (n > room) n = room;
 	if (!n) return 0;
 
 	SDL_QueueAudio(g_audio, frames, (Uint32)(n * AUDIO_FRAME_BYTES));
+	g_ad_written += n;
 	return n;
 }
 
@@ -1871,170 +2219,39 @@ size_t diatom_port_audio_queued(void)
 	return SDL_GetQueuedAudioSize(g_audio) / AUDIO_FRAME_BYTES;
 }
 
-/* SDL joystick button index -> Diatom button.
+/* SDL joystick button index -> Diatom button, for the RG SP's "ANBERNIC-keys".
  *
- * The index side is DERIVED: the kernel capability bitmask for "TRIMUI
- * Player1" (/proc/bus/input/devices, B: KEY=) decodes to exactly these
- * codes, and SDL's Linux joystick driver assigns indices in ascending code
- * order, gamepad range before low keycodes:
+ * SDL numbers buttons in ascending evdev-code order, and the codes were
+ * pressed and logged on the device (2026-10-06, plorpos-7ny):
  *
- *   0  304 BTN_SOUTH    4  310 BTN_TL      8  316 BTN_MODE    12  60 KEY_F2
- *   1  305 BTN_EAST     5  311 BTN_TR      9  317 BTN_THUMBL  13 114 VOL_DN
- *   2  307 BTN_NORTH    6  314 BTN_SELECT 10  318 BTN_THUMBR  14 115 VOL_UP
- *   3  308 BTN_WEST     7  315 BTN_START  11   59 KEY_F1
+ *   0  304 A        4  308 L1       8  312 Menu     12   1 (KEY_ESC, unused)
+ *   1  305 B        5  309 R1       9  314 L2       13 114 VOL_DN
+ *   2  306 Y        6  310 Select  10  315 R2       14 115 VOL_UP
+ *   3  307 X        7  311 Start   11  354 (unused)
  *
- * The label side is MEASURED: every cap pressed in a known order under
- * DIATOM_INPUT_DEBUG, twice, 2026-08-24, firmware 1.1.1. A and B follow the
- * positional reading (EAST = right cap = A, SOUTH = bottom = B), but X and Y
- * are the other way around from position: the top cap (X) emits BTN_WEST and
- * the left cap (Y) emits BTN_NORTH. Positional reasoning got exactly those
- * two wrong, which is why this table is measured and not argued.
- *
- * The dpad is ABS_HAT0 - hat values are semantic, no attribution needed.
- * THUMBL/THUMBR/F1/F2 exist in the mask because the same driver serves
- * stick-bearing siblings; volume is the host OS's business. All unmapped. */
+ * The d-pad is hat 0. Menu is not in the table: see menu_* below. */
 static const struct { int idx; int btn; } joymap[] = {
-	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
+	{ 0, DIATOM_BTN_A },      { 1, DIATOM_BTN_B },
 	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
 	{ 4, DIATOM_BTN_L1 },     { 5, DIATOM_BTN_R1 },
 	{ 6, DIATOM_BTN_SELECT }, { 7, DIATOM_BTN_START },
-	{ 8, DIATOM_BTN_MENU },
+	{ 9, DIATOM_BTN_L2 },     { 10, DIATOM_BTN_R2 },
 };
-
-/* L2/R2 are digital switches surfaced as axes (the KEY mask has no
- * BTN_TL2/TR2, the ABS mask advertises X Y Z RX RY RZ). Measured 2026-08-24:
- * L2 is SDL axis 2 (ABS_Z), R2 is axis 5 (ABS_RZ), resting at -32768 and
- * slamming to +32767 when pressed - a digital switch in axis clothing, so
- * half travel is a comfortable threshold. The other four axes are the Brick
- * Pro's sticks; the left one is read below as a dpad. */
-/* Volume, from the same measured table: SDL indices 13 and 14 are VOL_DN and
- * VOL_UP. Absent from joymap[] on purpose - they are not game inputs. */
+#define JOY_MENU   8
 #define JOY_VOL_DN 13
 #define JOY_VOL_UP 14
 
-/* The two front keys, reported as BTN_THUMBL/THUMBR - SDL indices 9 and 10,
- * which minarch calls L3/R3. They are not game inputs; the firmware spends
- * them on brightness and so do we. Absent from joymap[] on purpose: mapping
- * them would send every brightness press to the core. */
-#define JOY_FN_L   9
-#define JOY_FN_R   10
-
-/* The Brick Pro (TG4040) is this machine with two sticks. There 9/10 are the
- * stick clicks - 9 reports DIATOM_BTN_L3 and 10 DIATOM_BTN_R3 (hotkey
- * choices, never core inputs; ADR-0044) - and its function keys
- * are KEY_F1/KEY_F2, indices 11 and 12 in the table above. Pressed and logged
- * on the device 2026-09-28. */
-#define JOY_PRO_FN_L 11
-#define JOY_PRO_FN_R 12
-
-/* Which one, from cpuinfo's hwserial - the line the boot script checks. */
-static bool is_brick_pro(void)
-{
-	static int pro = -1;
-	if (pro < 0) {
-		char line[256];
-		FILE *f = fopen("/proc/cpuinfo", "r");
-		pro = 0;
-		while (f && fgets(line, sizeof line, f))
-			if (strncmp(line, "hwserial", 8) == 0 && strstr(line, "TG4040"))
-				pro = 1;
-		if (f) fclose(f);
-	}
-	return pro;
-}
-
-/* The Pro's left stick: reported as the stick's own four bits, which the host
- * folds onto the d-pad for the core (all the shipped cores are digital) - kept
- * apart so each can be a hotkey trigger of its own (ADR-0039). The right
- * stick's four bits are hotkeys only and fold onto nothing (ADR-0044). Half
- * travel to press, a third to let go, so a stick resting near the line cannot
- * chatter. */
-#define AXIS_LX 0
-#define AXIS_LY 1
-#define AXIS_RX 3
-#define AXIS_RY 4
-#define STICK_PRESS   16384
-#define STICK_RELEASE 10923
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
                  | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT))
-#define STICK_BITS (DIATOM_BIT(DIATOM_BTN_SUP) | DIATOM_BIT(DIATOM_BTN_SDOWN) \
-                  | DIATOM_BIT(DIATOM_BTN_SLEFT) | DIATOM_BIT(DIATOM_BTN_SRIGHT) \
-                  | DIATOM_BIT(DIATOM_BTN_RSUP) | DIATOM_BIT(DIATOM_BTN_RSDOWN) \
-                  | DIATOM_BIT(DIATOM_BTN_RSLEFT) | DIATOM_BIT(DIATOM_BTN_RSRIGHT))
-static uint32_t g_stick_bits;
 
-static void stick_axis(int value, int neg_btn, int pos_btn)
-{
-	uint32_t neg = DIATOM_BIT(neg_btn), pos = DIATOM_BIT(pos_btn);
-	bool n = value < -((g_stick_bits & neg) ? STICK_RELEASE : STICK_PRESS);
-	bool p = value >  ((g_stick_bits & pos) ? STICK_RELEASE : STICK_PRESS);
-	g_stick_bits = (g_stick_bits & ~(neg | pos)) | (n ? neg : 0) | (p ? pos : 0);
-}
-
-#define AXIS_L2 2
-#define AXIS_R2 5
-#define AXIS_PRESSED 16384
-
-/* The four level buttons, and holding one repeats it at the launcher's pace -
- * TortOS's REPEAT_DELAY_MS and REPEAT_RATE_MS, 300 and 90 - so a hold does the
- * same thing in a game as at the shelf. Until 2026-10-02 a hold was one step
- * here and a run there. Before each repeat the button is asked about directly,
- * so a release this loop never saw cannot leave a level climbing. */
-#define LEVEL_REPEAT_DELAY_US 300000ull
-#define LEVEL_REPEAT_RATE_US   90000ull
-static const struct { int idx; bool bright; int dir; } level_buttons[] = {
-	{ JOY_VOL_UP, false, +1 }, { JOY_VOL_DN, false, -1 },
-	{ JOY_FN_R,   true,  +1 }, { JOY_FN_L,   true,  -1 },
-};
-#define LEVEL_BUTTONS (sizeof level_buttons / sizeof level_buttons[0])
-
-/* The joystick button for level_buttons[k]: the Brick Pro's function keys
- * are other buttons than the Brick's. */
-static int level_idx(size_t k)
-{
-	int i = level_buttons[k].idx;
-
-	if (is_brick_pro() && i == JOY_FN_R) return JOY_PRO_FN_R;
-	if (is_brick_pro() && i == JOY_FN_L) return JOY_PRO_FN_L;
-	return i;
-}
-static uint64_t g_level_next_us[LEVEL_BUTTONS];   /* when it next repeats; 0 is not held */
-
-static void level_step(size_t k)
-{
-	if (level_buttons[k].bright) bright_nudge(level_buttons[k].dir);
-	else                         gain_nudge(level_buttons[k].dir);
-}
-
-/* Whether `button` is a level button, handled here if so. */
-static bool level_button(int button, bool down)
-{
-	size_t k;
-
-	for (k = 0; k < LEVEL_BUTTONS; k++) {
-		if (level_idx(k) != button) continue;
-		g_level_next_us[k] = down ? diatom_port_now_us() + LEVEL_REPEAT_DELAY_US : 0;
-		if (down) level_step(k);
-		return true;
-	}
-	return false;
-}
-
-static void levels_repeat(void)
-{
-	uint64_t now = diatom_port_now_us();
-	size_t k;
-
-	for (k = 0; k < LEVEL_BUTTONS; k++) {
-		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
-		if (!g_joy || !SDL_JoystickGetButton(g_joy, level_idx(k))) {
-			g_level_next_us[k] = 0;
-			continue;
-		}
-		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
-		level_step(k);
-	}
-}
+/* No brightness keys, so Menu held turns the volume keys into them - and a
+ * Menu that did that must not then open the menu. src/main.c opens it on a
+ * release with no OTHER button pressed meanwhile, and the volume keys never
+ * reach g_buttons, so the port holds Menu back: it goes down only when a game
+ * button joins it (a hotkey chord, which needs it held), is spent by a volume
+ * key, and otherwise is a one-poll tap on release. The launcher does the same
+ * on its side (TortOS src/platform_h700.c, pad_read). */
+static bool g_menu_down, g_menu_sent, g_menu_spent, g_menu_pulse;
 
 static void debug_event(const char *what, int a, int b)
 {
@@ -2042,6 +2259,49 @@ static void debug_event(const char *what, int a, int b)
 	if (!g_input_debug) return;
 	snprintf(msg, sizeof msg, "%s %d -> %d", what, a, b);
 	diatom_port_log(DIATOM_LOG_DEBUG, msg);
+}
+
+static void set_bit(int btn, bool down)
+{
+	if (down) g_buttons |=  DIATOM_BIT(btn);
+	else      g_buttons &= ~DIATOM_BIT(btn);
+}
+
+/* Holding a volume key repeats it at the launcher's pace - TortOS's
+ * REPEAT_DELAY_MS and REPEAT_RATE_MS, 300 and 90 - as on the Brick (upstream
+ * 15dbfec, plorpos-xpt.1.1). A hold keeps the kind its press had, brightness
+ * with Menu held or volume, and SDL is asked before each repeat whether the
+ * button is still down, so a release this loop never saw cannot leave a level
+ * climbing. [0] is Vol+, [1] Vol-. */
+#define LEVEL_REPEAT_DELAY_US 300000ull
+#define LEVEL_REPEAT_RATE_US   90000ull
+static uint64_t g_level_next_us[2];   /* when it next repeats; 0 is not held */
+static bool     g_level_bright[2];
+
+static void level_step(int k)
+{
+	int dir = k == 0 ? +1 : -1;
+
+	/* Brightness spends the Menu press: its release is no tap. */
+	if (g_level_bright[k]) { g_menu_spent = true; bright_nudge(dir); }
+	else                   gain_nudge(dir);
+}
+
+static void levels_repeat(void)
+{
+	static const int idx[2] = { JOY_VOL_UP, JOY_VOL_DN };
+	uint64_t now = diatom_port_now_us();
+	int k;
+
+	for (k = 0; k < 2; k++) {
+		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
+		if (!g_joy || !SDL_JoystickGetButton(g_joy, idx[k])) {
+			g_level_next_us[k] = 0;
+			continue;
+		}
+		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
+		level_step(k);
+	}
 }
 
 void diatom_port_input_poll(void)
@@ -2054,6 +2314,7 @@ void diatom_port_input_poll(void)
 	 * and this stops being called the moment the game ends. */
 	gain_jack_poll();
 
+	if (g_menu_pulse) { set_bit(DIATOM_BTN_MENU, false); g_menu_pulse = false; }
 	while (SDL_PollEvent(&ev)) {
 		switch (ev.type) {
 		case SDL_QUIT:
@@ -2063,32 +2324,38 @@ void diatom_port_input_poll(void)
 		case SDL_JOYBUTTONDOWN:
 		case SDL_JOYBUTTONUP: {
 			bool down = (ev.type == SDL_JOYBUTTONDOWN);
-			debug_event("joy button", ev.jbutton.button, down);
+			int b = ev.jbutton.button;
+			debug_event("joy button", b, down);
 
-			/* Volume and brightness are the port's, and stop here.
-			 * Whoever owns the input loop during a game has to handle
-			 * these, because nothing else sees them - the device UI is
-			 * not running. They are never reported upward and never
-			 * reach a core. */
-			if (level_button(ev.jbutton.button, down)) break;
-
-			/* The Pro's stick clicks: L3 and R3, hotkey choices
-			 * (plorpos-gkd.43.1, ADR-0044). The same indexes are the plain
-			 * Brick's front brightness keys, handled above. */
-			if (is_brick_pro() && (ev.jbutton.button == JOY_FN_L
-			                       || ev.jbutton.button == JOY_FN_R)) {
-				uint32_t bit = DIATOM_BIT(ev.jbutton.button == JOY_FN_L
-				                          ? DIATOM_BTN_L3 : DIATOM_BTN_R3);
-				if (down) g_buttons |=  bit;
-				else      g_buttons &= ~bit;
+			if (b == JOY_MENU) {
+				g_menu_down = down;
+				if (down) { g_menu_sent = g_menu_spent = false; break; }
+				if (g_menu_sent) set_bit(DIATOM_BTN_MENU, false);
+				else if (!g_menu_spent) {
+					set_bit(DIATOM_BTN_MENU, true);
+					g_menu_pulse = true;
+				}
+				g_menu_sent = false;
 				break;
 			}
+			/* Volume, or brightness with Menu held: the port's, never a
+			 * core's. Whoever owns the input loop during a game has to
+			 * handle these, because nothing else sees them. */
+			if (b == JOY_VOL_UP || b == JOY_VOL_DN) {
+				int k = b == JOY_VOL_UP ? 0 : 1;
 
-			for (i = 0; i < sizeof joymap / sizeof joymap[0]; i++) {
-				if (joymap[i].idx != ev.jbutton.button) continue;
-				if (down) g_buttons |=  DIATOM_BIT(joymap[i].btn);
-				else      g_buttons &= ~DIATOM_BIT(joymap[i].btn);
+				if (!down) { g_level_next_us[k] = 0; break; }
+				g_level_bright[k]  = g_menu_down;
+				g_level_next_us[k] = diatom_port_now_us() + LEVEL_REPEAT_DELAY_US;
+				level_step(k);
+				break;
 			}
+			if (down && g_menu_down && !g_menu_sent && !g_menu_spent) {
+				set_bit(DIATOM_BTN_MENU, true);
+				g_menu_sent = true;
+			}
+			for (i = 0; i < sizeof joymap / sizeof joymap[0]; i++)
+				if (joymap[i].idx == b) set_bit(joymap[i].btn, down);
 			break;
 		}
 
@@ -2100,28 +2367,6 @@ void diatom_port_input_poll(void)
 			if (ev.jhat.value & SDL_HAT_LEFT)  dpad |= DIATOM_BIT(DIATOM_BTN_LEFT);
 			if (ev.jhat.value & SDL_HAT_RIGHT) dpad |= DIATOM_BIT(DIATOM_BTN_RIGHT);
 			g_buttons = (g_buttons & ~DPAD_BITS) | dpad;
-			break;
-		}
-
-		case SDL_JOYAXISMOTION: {
-			bool pressed = ev.jaxis.value > AXIS_PRESSED;
-			debug_event("joy axis", ev.jaxis.axis, ev.jaxis.value);
-			if (ev.jaxis.axis == AXIS_L2) {
-				if (pressed) g_buttons |=  DIATOM_BIT(DIATOM_BTN_L2);
-				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_L2);
-			} else if (ev.jaxis.axis == AXIS_R2) {
-				if (pressed) g_buttons |=  DIATOM_BIT(DIATOM_BTN_R2);
-				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_R2);
-			} else {
-				switch (ev.jaxis.axis) {
-				case AXIS_LX: stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);  break;
-				case AXIS_LY: stick_axis(ev.jaxis.value, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);   break;
-				case AXIS_RX: stick_axis(ev.jaxis.value, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); break;
-				case AXIS_RY: stick_axis(ev.jaxis.value, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);  break;
-				default: break;
-				}
-				g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
-			}
 			break;
 		}
 		}
@@ -2150,9 +2395,7 @@ static int not_level_press(void *u, SDL_Event *e)
 
 	(void)u;
 	if (e->type != SDL_JOYBUTTONDOWN) return 1;
-	return !(b == JOY_VOL_UP || b == JOY_VOL_DN ||
-	         b == (is_brick_pro() ? JOY_PRO_FN_L : JOY_FN_L) ||
-	         b == (is_brick_pro() ? JOY_PRO_FN_R : JOY_FN_R));
+	return !(b == JOY_VOL_UP || b == JOY_VOL_DN);
 }
 
 void diatom_port_level_invalidate(void)
@@ -2163,6 +2406,12 @@ void diatom_port_level_invalidate(void)
 	 * while the launcher was driving is invisible here, so the remembered
 	 * state is a memory of a world this process was not watching. */
 	g_jack_was = -1;
+	g_menu_down = g_menu_sent = g_menu_spent = g_menu_pulse = false;
+	/* And the bit the pulse was holding: a pause can land while the pulse
+	 * still holds MENU (measured 2026-10-06), and forgetting the pulse
+	 * left MENU down for good - so the next tap had no press to show and the
+	 * first Menu after every Continue did nothing (plorpos-7ny.32). */
+	set_bit(DIATOM_BTN_MENU, false);
 
 	/* And the level keys pressed meanwhile - on the shelf, in the launcher's
 	 * menu. Nothing pumped SDL's queue then, so they are all still in it, and
@@ -2171,10 +2420,20 @@ void diatom_port_level_invalidate(void)
 	 * presses go; the pad's releases stay, or a button would be left held. */
 	SDL_PumpEvents();
 	SDL_FilterEvents(not_level_press, NULL);
-	/* And no level key repeats on from before: one held into the menu
-	 * would step on after Continue (plorpos-gkd.50.26's bug, in the
-	 * launcher); a new press starts a new hold. */
-	memset(g_level_next_us, 0, sizeof g_level_next_us);
+	/* And no hold repeats on from before: one held into the menu would
+	 * step on after Continue; a new press starts a new hold. */
+	g_level_next_us[0] = g_level_next_us[1] = 0;
+
+	/* The level read and written now, not by the first frames: those also
+	 * start the codec open (audio_claim) - at a game's start, in its warmup,
+	 * before any input poll - whose amp switch holds the card's controls
+	 * ~250 ms, and a read or the jack check's write behind it froze the game
+	 * for as long after every Continue and at every start (2026-10-06). Now
+	 * nothing holds them. The write is the one the jack check would make. */
+	if (g_mixer_fd >= 0) {
+		gain_ensure();
+		if (g_level >= 0) gain_apply();
+	}
 }
 
 /* `*count` is positions, not a maximum index, so it is one MORE than the
@@ -2205,11 +2464,18 @@ bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 {
 	switch (kind) {
-	case DIATOM_LEVEL_VOLUME:
+	case DIATOM_LEVEL_VOLUME: {
+		int level = rescale(index, count, GAIN_LEVELS + 1);
+
 		if (g_mixer_fd < 0) return false;
-		g_level = rescale(index, count, GAIN_LEVELS + 1);
+		/* The launcher states its level as a game starts, while the codec
+		 * open behind it holds the card's controls (audio_claim): a write
+		 * of what the register already says would wait ~180 ms for nothing. */
+		if (level == g_level && g_jack_was == jack_present()) return true;
+		g_level = level;
 		gain_apply();
 		return true;
+	}
 	case DIATOM_LEVEL_BRIGHTNESS:
 		if (g_disp_fd < 0) return false;
 		g_bright = rescale(index, count, BRIGHT_LEVELS + 1);

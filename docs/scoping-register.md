@@ -990,6 +990,12 @@ Two levers the spike discovered:
       *(Accepted)*. Hotkeys only: R3 is a modifier choice, and the right
       stick's directions bind on either layer, since no game sees them. They
       are never folded and never mapped (plorpos-pky.17).
+- [x] **[OPEN]** Turbo chosen in the game, per button →
+      **[ADR-0045](decisions/0045-turbo-assign-is-reported-the-launcher-maps-it.md)**
+      *(Accepted)*. A `turbo` hotkey, then a button, flips that button's
+      turbo; held 2 s it clears all. Diatom sends TURBO and keeps nothing;
+      the launcher owns the session's map and answers with SETMAP
+      (plorpos-tkh).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,

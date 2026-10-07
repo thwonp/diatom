@@ -10,6 +10,7 @@
  */
 #include <dirent.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,20 +110,26 @@ bool diatom_core_open(diatom_core *c, const char *path)
  * grows without limit would quietly turn a measured decision into an unmeasured
  * one. The bound is per port: 8 is the default; the Brick and the GKD set 16
  * from the Makefile, each measured with every core it ships mapped.
+ *
+ * Locked, because the premap fills it on a thread of its own while a RUN may
+ * already be asking for a core on the main thread. The lock is held across the
+ * dlopen, so a RUN for the core being mapped waits for that one map and then
+ * finds it, rather than opening it a second time. Entries are never moved or
+ * removed, so a pointer handed out stays good after the lock is let go.
  */
 #ifndef DIATOM_MAX_RESIDENT
 #define DIATOM_MAX_RESIDENT 8
 #endif
 #define MAX_RESIDENT DIATOM_MAX_RESIDENT
-static diatom_core g_resident[MAX_RESIDENT];
-static char        g_resident_path[MAX_RESIDENT][1024];
-static int         g_nresident;
+static diatom_core      g_resident[MAX_RESIDENT];
+static char             g_resident_path[MAX_RESIDENT][1024];
+static int              g_nresident;
+static pthread_mutex_t  g_resident_lock = PTHREAD_MUTEX_INITIALIZER;
 
-diatom_core *diatom_core_resident(const char *path)
+static diatom_core *resident_locked(const char *path)
 {
 	int i;
 
-	if (!path || !*path) return NULL;
 	for (i = 0; i < g_nresident; i++)
 		if (!strcmp(g_resident_path[i], path))
 			return &g_resident[i];
@@ -139,7 +146,26 @@ diatom_core *diatom_core_resident(const char *path)
 	return &g_resident[g_nresident++];
 }
 
-int diatom_core_resident_count(void) { return g_nresident; }
+diatom_core *diatom_core_resident(const char *path)
+{
+	diatom_core *c;
+
+	if (!path || !*path) return NULL;
+	pthread_mutex_lock(&g_resident_lock);
+	c = resident_locked(path);
+	pthread_mutex_unlock(&g_resident_lock);
+	return c;
+}
+
+int diatom_core_resident_count(void)
+{
+	int n;
+
+	pthread_mutex_lock(&g_resident_lock);
+	n = g_nresident;
+	pthread_mutex_unlock(&g_resident_lock);
+	return n;
+}
 
 /* Map every core in `dir` before anyone asks for one.
  *
@@ -149,10 +175,10 @@ int diatom_core_resident_count(void) { return g_nresident; }
  * what it needs rather than reading the file through, measured 382 ms cold,
  * and it also pays the dynamic linker so a first launch does not.
  *
- * Called before the socket exists, so the launcher either finds no socket and
- * runs a game standalone - which it is already built to do in the first second
- * after boot - or finds one with every core ready. It never finds a socket
- * that answers slowly.
+ * Run on a thread of its own once the socket is listening, so the launcher's
+ * connect is answered at once rather than after every core is mapped; see
+ * main.c. A RUN that arrives meanwhile waits at most for the core being mapped
+ * at that moment (see the registry's lock above).
  *
  * A core that fails here is not fatal: it will be tried again by name when a
  * RUN asks for it, and fail there with the launcher listening. */
