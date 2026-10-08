@@ -306,7 +306,7 @@ $(BUILD)/%.o: %.c
 # fails when it is broken. check-seam has held since day one for exactly that
 # reason; the register drifted 418 -> 992 lines in three days because nothing
 # ever complained.
-check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign
+check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign check-options
 
 # Does a RetroAchievements address reach the byte it names? Offline, needs no
 # core and no ROM, and links only cheevos.c plus the vendored runtime - so it
@@ -347,6 +347,17 @@ $(BUILD)/rewind-test-tsan: $(REWIND_TEST_SRC) src/rewind.h
 	@mkdir -p $(BUILD)
 	cc $(REWIND_TEST_FLAGS) -fsanitize=thread -o $@ $(REWIND_TEST_SRC) -lpthread
 .PHONY: check-rewind
+
+# One option table per core the registry can hold, at the ports' 16
+# (plorpos-a1r). Host compiler.
+check-options: $(BUILD)/options-test
+	@./$(BUILD)/options-test
+
+$(BUILD)/options-test: test/options_test.c src/options.c src/diatom.h
+	@mkdir -p $(BUILD)
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
+	   -fno-sanitize-recover=all -DDIATOM_MAX_RESIDENT=16 -o $@ test/options_test.c src/options.c
+.PHONY: check-options
 
 # Turbo Assign's decisions (ADR-0045), on a fake clock. Host compiler.
 check-turboassign: $(BUILD)/turboassign-test
