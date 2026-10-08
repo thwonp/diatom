@@ -117,10 +117,7 @@ bool diatom_core_open(diatom_core *c, const char *path)
  * finds it, rather than opening it a second time. Entries are never moved or
  * removed, so a pointer handed out stays good after the lock is let go.
  */
-#ifndef DIATOM_MAX_RESIDENT
-#define DIATOM_MAX_RESIDENT 8
-#endif
-#define MAX_RESIDENT DIATOM_MAX_RESIDENT
+#define MAX_RESIDENT DIATOM_MAX_RESIDENT     /* default in diatom.h */
 static diatom_core      g_resident[MAX_RESIDENT];
 static char             g_resident_path[MAX_RESIDENT][1024];
 static int              g_nresident;

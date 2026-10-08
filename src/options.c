@@ -26,7 +26,13 @@
 
 #include "diatom.h"
 
-#define MAX_TABLES   8      /* matches the resident-core registry */
+/* One table per core the process has run, claimed on its first RUN and kept
+ * for good, like the core itself - so exactly as many as the resident registry
+ * can hold. This was a literal 8 that said it matched the registry while the
+ * ports set 16, and nine cores ship: the ninth core run in one resident
+ * session got "no free table" and ran on its own defaults, ignoring every
+ * option the launcher sent (plorpos-a1r). */
+#define MAX_TABLES   DIATOM_MAX_RESIDENT
 #define MAX_OPTS    96      /* measured worst case is 40; headroom is cheap */
 #define MAX_PENDING 32
 

@@ -82,6 +82,14 @@ bool diatom_zip_load(const char *path, void **out, size_t *out_len,
                      char *name, size_t name_n);
 
 /* core.c */
+/* How many cores one process keeps open - the resident registry in core.c, and
+ * the option tables in options.c, which hold one per core and must never run
+ * out first (plorpos-a1r). 8 by default; the Brick, the GKD and the H700 set
+ * 16 from the Makefile. */
+#ifndef DIATOM_MAX_RESIDENT
+#define DIATOM_MAX_RESIDENT 8
+#endif
+
 bool diatom_core_open(diatom_core *c, const char *path);
 /* `disc` is the image to start on, -1 for the core's own choice. */
 bool diatom_core_start(diatom_core *c, const char *rom_path, int disc);
