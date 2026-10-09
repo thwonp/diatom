@@ -132,6 +132,13 @@ double diatom_port_refresh_hz(void);
 bool   diatom_port_pace(bool want);
 #endif
 
+#ifdef DIATOM_PORT_FF_SKIP
+/* For a GL swap that waits for vsync whatever the swap interval (the Brick's
+ * Mali): told once a frame, before present, whether fast-forward is on, so
+ * present can skip frames instead of capping FF at the panel's rate. */
+void   diatom_port_fast(bool on);
+#endif
+
 /* An image composited over the presented frame for a while, in SCREEN space -
  * the same job the port already does for its own level bar, which is why it
  * lives here rather than in the host: the OSD is drawn after scaling, and a

@@ -1752,6 +1752,9 @@ static int run_session_inner(const diatom_session *sn)
 #ifdef DIATOM_PORT_PACED
 			paced = diatom_port_pace(pace_ok && g_ff_speed == 1);
 #endif
+#ifdef DIATOM_PORT_FF_SKIP
+			diatom_port_fast(g_ff_speed > 1);
+#endif
 			diatom_port_present(g_frame_fresh ? g_frame : NULL,
 			                    g_frame_w, g_frame_h, g_frame_pitch,
 			                    g_policy.pixfmt, g_dst,

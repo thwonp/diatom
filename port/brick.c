@@ -838,6 +838,14 @@ static void clear_pages(void);
 
 /* ---- The GL window, while a shader is set ---- */
 static SDL_Window   *g_win;
+/* While fast-forwarding, a GL frame that comes sooner than this after the last
+ * swap returned is not drawn (plorpos-reo.13, as h700's plorpos-7ny.19). The
+ * Mali swap waits for the next vsync despite SDL_GL_SetSwapInterval(0), so
+ * every swap capped FF at the panel's rate - a shader set meant no FF at all.
+ * Three quarters of the panel's ~16.7 ms. */
+#define GL_SKIP_US 12500
+static bool          g_gl_fast;        /* the host's last diatom_port_fast */
+static uint64_t      g_gl_swapped;     /* when the last swap returned */
 static SDL_GLContext g_glc;
 static bool          g_gl_ok;          /* gkdgl_init succeeded */
 static int           g_gl_w, g_gl_h;
@@ -997,6 +1005,7 @@ static void gl_present(const void *src, int w, int h, size_t pitch,
 	}
 	gl_osd();
 	SDL_GL_SwapWindow(g_win);
+	g_gl_swapped = diatom_port_now_us();
 	pthread_mutex_lock(&g_flip_mx);
 	g_presented = true;
 	pthread_mutex_unlock(&g_flip_mx);
@@ -1680,6 +1689,11 @@ static void clear_pages(void)
 	for (i = 0; i < n; i++) p[i] = g_opaque;
 }
 
+void diatom_port_fast(bool on)
+{
+	g_gl_fast = on;
+}
+
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
@@ -1745,7 +1759,9 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	/* After the log and the maps, which keep that log line to one per change
 	 * on this path too. */
 	if (g_win) {
-		gl_present(src, w, h, pitch, fmt, dst);
+		if (!g_gl_fast
+		    || diatom_port_now_us() - g_gl_swapped >= GL_SKIP_US)
+			gl_present(src, w, h, pitch, fmt, dst);
 		return;
 	}
 	/* A smaller rect leaves the old picture around the new one. Only on a mode
