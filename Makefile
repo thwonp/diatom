@@ -8,6 +8,8 @@
 #   make PORT=gkd        device build for the GKD 350H Ultra (tools/fetch-gkd-sysroot.sh)
 #   make PORT=brick      device build for the TrimUI Brick (TG3040); needs the
 #                        cross toolchain, so run it as  tools/brick-make.sh
+#   make PORT=rotate     device build for the Anbernic RG Rotate on Armbian
+#                        (tools/fetch-rotate-sysroot.sh); PORT=rotate tools/brick-make.sh
 #   make PORT=h700       device build for Anbernic H700 on BaseOS (tools/fetch-h700-sysroot.sh);
 #                        same toolchain:  PORT=h700 tools/brick-make.sh
 
@@ -32,7 +34,10 @@ PORT_EXTRA_gkd   := port/gkd_gl.c
 PORT_EXTRA_brick := port/gkd_gl.c
 # The GL window while a shader is set, as the Brick (port/h700.c).
 PORT_EXTRA_h700  := port/gkd_gl.c
-SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/shot.c port/$(PORT).c $(PORT_EXTRA_$(PORT))
+# The Rotate is the GKD's session (sway, PipeWire): the same port file.
+PORT_SRC_rotate  := port/gkd.c
+PORT_EXTRA_rotate := port/gkd_gl.c
+SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/shot.c $(or $(PORT_SRC_$(PORT)),port/$(PORT).c) $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
 CONFORM := $(BUILD)/diatom-conform
@@ -168,6 +173,27 @@ ifeq ($(PORT),gkd)
   # symbols (dlerror@GLIBC_2.34) that this toolchain's 2.31 cannot resolve.
   # Those are SDL's own needs, met by the device at runtime; diatom's own
   # references are still checked against 2.31.
+  LDFLAGS += -Wl,--allow-shlib-undefined
+  LDFLAGS += -lSDL2 -lm -ldl -lpthread
+endif
+
+ifeq ($(PORT),rotate)
+  # Anbernic RG Rotate (Unisoc T618, 2x A75 + 6x A55, 2.3 GB) on Armbian
+  # trixie: port/gkd.c built with DIATOM_PORT_ROTATE, against trixie's own
+  # SDL2 (tools/fetch-rotate-sysroot.sh). Same toolchain as the Brick.
+  CROSS   ?= aarch64-linux-gnu-
+  CC       = $(CROSS)gcc
+  SYSROOT ?= sysroot/rotate
+  ifeq ($(wildcard $(SYSROOT)/usr/lib/libSDL2.so),)
+    $(error rotate sysroot missing: run tools/fetch-rotate-sysroot.sh)
+  endif
+  CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -idirafter $(SYSROOT)/usr/include -D_REENTRANT
+  CFLAGS  += -DDIATOM_PORT_ROTATE
+  # The GKD's budgets: ~2 GB free idle (sway and PipeWire included).
+  CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
+             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -Wl,--allow-shlib-undefined
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
 endif

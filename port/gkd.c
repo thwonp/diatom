@@ -20,6 +20,12 @@
  *   XDG_RUNTIME_DIR=/var/run/0-runtime-dir WAYLAND_DISPLAY=wayland-1 \
  *     ./diatom --core X.so --rom game
  *
+ * PORT=rotate builds this file too (DIATOM_PORT_ROTATE): the Anbernic RG
+ * Rotate under Armbian runs the same kind of session - sway, PipeWire - so
+ * only its input names, button map, Menu-as-modifier and backlight ladder
+ * differ, and those are marked. sway turns the output with the swivel, so
+ * nothing here rotates (TortOS sd/rotate/sway.conf).
+ *
  * This file does not include libretro.h and must never need to.
  */
 #include <SDL.h>
@@ -61,7 +67,17 @@ static bool          g_quit;
 static uint32_t      g_buttons;
 static int           g_pad_fd = -1, g_keys_fd = -1;
 /* Home held, from the pad: it turns the volume keys into brightness keys. */
-static bool          g_home;
+static bool          g_home;   /* the brightness modifier held: Home, the Rotate's Menu */
+#if defined(DIATOM_PORT_ROTATE)
+#define PAD_NAME  "gpio-keys-gamepad"
+#define KEYS_NAME "gpio-keys-system"   /* volume, POWER, the swivel */
+#define HOME_CODE BTN_MODE
+static bool g_menu_sent, g_menu_spent, g_menu_pulse;
+#else
+#define PAD_NAME  "gkd_atom_joypad"
+#define KEYS_NAME "gpio-keys"
+#define HOME_CODE BTN_TRIGGER_HAPPY1
+#endif
 
 static int evdev_open(const char *want);
 static bool g_hidden;
@@ -238,10 +254,10 @@ bool diatom_port_init(diatom_port_caps *out)
 	SDL_PumpEvents();
 	g_hidden = true;
 
-	g_pad_fd = evdev_open("gkd_atom_joypad");
-	g_keys_fd = evdev_open("gpio-keys");
+	g_pad_fd = evdev_open(PAD_NAME);
+	g_keys_fd = evdev_open(KEYS_NAME);
 	if (g_pad_fd < 0)
-		diatom_port_log(DIATOM_LOG_WARN, "input: gkd_atom_joypad not found; no buttons");
+		diatom_port_log(DIATOM_LOG_WARN, "input: " PAD_NAME " not found; no buttons");
 	levels_init();
 
 	/* Vsync OFF, deliberately.
@@ -431,6 +447,29 @@ size_t diatom_port_audio_queued(void)
  * Home (BTN_TRIGGER_HAPPY1, 704) and the stick click (BTN_THUMBL) are
  * reported as Diatom's own HOTKEY and L3: hotkey-modifier choices, never
  * core inputs (ADR-0037, ADR-0038). */
+#if defined(DIATOM_PORT_ROTATE)
+/* The Rotate (mainline gpio-keys, measured 2026-10-17): A is BTN_SOUTH and B
+ * BTN_EAST, X and Y positional as here. Menu (BTN_MODE) is also the
+ * brightness modifier - there is no Home - so it is held back as on the
+ * H700 (port/h700.c): see pad_read. The side key (BTN_THUMBR) is the
+ * launcher's media key, never a core's. */
+static const struct { int code; int btn; } padmap[] = {
+	{ BTN_SOUTH,      DIATOM_BTN_A      },
+	{ BTN_EAST,       DIATOM_BTN_B      },
+	{ BTN_NORTH,      DIATOM_BTN_X      },
+	{ BTN_WEST,       DIATOM_BTN_Y      },
+	{ BTN_DPAD_UP,    DIATOM_BTN_UP     },
+	{ BTN_DPAD_DOWN,  DIATOM_BTN_DOWN   },
+	{ BTN_DPAD_LEFT,  DIATOM_BTN_LEFT   },
+	{ BTN_DPAD_RIGHT, DIATOM_BTN_RIGHT  },
+	{ BTN_TL,         DIATOM_BTN_L1     },
+	{ BTN_TR,         DIATOM_BTN_R1     },
+	{ BTN_TL2,        DIATOM_BTN_L2     },
+	{ BTN_TR2,        DIATOM_BTN_R2     },
+	{ BTN_SELECT,     DIATOM_BTN_SELECT },
+	{ BTN_START,      DIATOM_BTN_START  },
+};
+#else
 static const struct { int code; int btn; } padmap[] = {
 	{ BTN_EAST,       DIATOM_BTN_A      },
 	{ BTN_SOUTH,      DIATOM_BTN_B      },
@@ -452,6 +491,7 @@ static const struct { int code; int btn; } padmap[] = {
 	{ BTN_TRIGGER_HAPPY1, DIATOM_BTN_HOTKEY },
 	{ BTN_THUMBL,     DIATOM_BTN_L3     },
 };
+#endif
 
 /* The stick: its own four bits, which the host folds onto the d-pad for the
  * core (ADR-0039; as on the Brick Pro). Range -900..899, right
@@ -499,7 +539,13 @@ static void pad_resync(void)
 	g_pad_buttons = 0;
 	for (k = 0; k < sizeof padmap / sizeof padmap[0]; k++)
 		if (bit_set(keys, padmap[k].code)) g_pad_buttons |= DIATOM_BIT(padmap[k].btn);
-	g_home = bit_set(keys, BTN_TRIGGER_HAPPY1);
+	g_home = bit_set(keys, HOME_CODE);
+#if defined(DIATOM_PORT_ROTATE)
+	/* A Menu held through the drop is a modifier, not yet a tap. */
+	g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
+	g_menu_sent = false;
+	g_menu_spent = g_home;
+#endif
 	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = abs.value;
 	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = abs.value;
 }
@@ -527,7 +573,29 @@ static void pad_read(void)
 				continue;
 			}
 			if (ev[i].type != EV_KEY || ev[i].value == 2) continue;
+#if defined(DIATOM_PORT_ROTATE)
+			/* Menu goes down only with a game button (a hotkey chord), is
+			 * spent by a volume key, and is otherwise a one-poll tap on
+			 * release: port/h700.c's rule, for the same reason. */
+			if (ev[i].code == BTN_MODE) {
+				bool down = ev[i].value;
+				g_home = down;
+				if (down) { g_menu_sent = g_menu_spent = false; continue; }
+				if (g_menu_sent) g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
+				else if (!g_menu_spent) {
+					g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_MENU);
+					g_menu_pulse = true;
+				}
+				g_menu_sent = false;
+				continue;
+			}
+			if (ev[i].value && g_home && !g_menu_sent && !g_menu_spent) {
+				g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_MENU);
+				g_menu_sent = true;
+			}
+#else
 			if (ev[i].code == BTN_TRIGGER_HAPPY1) g_home = ev[i].value;
+#endif
 			for (k = 0; k < sizeof padmap / sizeof padmap[0]; k++) {
 				if (padmap[k].code != ev[i].code) continue;
 				if (ev[i].value) g_pad_buttons |=  DIATOM_BIT(padmap[k].btn);
@@ -555,8 +623,13 @@ static void level_step(int k)
 {
 	int dir = k == 0 ? +1 : -1;
 
-	if (g_level_bright[k]) bright_nudge(dir);
-	else                   gain_nudge(dir);
+	if (g_level_bright[k]) {
+#if defined(DIATOM_PORT_ROTATE)
+		g_menu_spent = true;   /* brightness spends the Menu press */
+#endif
+		bright_nudge(dir);
+	} else
+		gain_nudge(dir);
 }
 
 static void levels_repeat(void)
@@ -620,6 +693,9 @@ void diatom_port_input_poll(void)
 	while (SDL_PollEvent(&ev))
 		if (ev.type == SDL_QUIT) g_quit = true;
 
+#if defined(DIATOM_PORT_ROTATE)
+	if (g_menu_pulse) { g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU); g_menu_pulse = false; }
+#endif
 	if (g_pad_fd >= 0)  pad_read();
 	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
 
@@ -687,9 +763,18 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
  * identical, 48 is the first visibly brighter, and every 8-unit step above it
  * is visible. So: evenly spaced from the floor (40) to 255, keeping the
  * Brick's twelve positions. The launcher's GKD ladder must match (gkd.3). */
+#if defined(DIATOM_PORT_ROTATE)
+/* The Rotate's PWM, 0-2499: twelve rungs, all distinct by eye and evenly
+ * spaced (2026-10-17). TortOS src/platform_rotate.c's ladder, which must
+ * match. */
+static const unsigned short bright_ladder[] = {
+	20, 40, 80, 160, 310, 470, 700, 940, 1250, 1570, 1880, 2499
+};
+#else
 static const unsigned char bright_ladder[] = {
 	40, 60, 79, 99, 118, 138, 157, 177, 196, 216, 235, 255
 };
+#endif
 #define BRIGHT_LEVELS ((int)(sizeof bright_ladder / sizeof bright_ladder[0]) - 1)
 
 static int  g_level  = -1;      /* 0..GAIN_LEVELS, -1 unread */
