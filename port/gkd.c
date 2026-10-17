@@ -685,16 +685,63 @@ static void keys_read(void)
 	}
 }
 
+#if defined(DIATOM_PORT_ROTATE)
+/* Touch never reaches the core (the user's rule, plorpos-3yv.10). One finger
+ * held still for TOUCH_HOLD_MS is Menu, though: closed, the swivel hides
+ * every face button, and this is how the in-game menu is still reached. */
+#define TOUCH_HOLD_MS 600
+#define TOUCH_STILL   0.08f   /* of the surface: farther is not a hold */
+static int      g_fingers;
+static float    g_tx0, g_ty0, g_tx, g_ty;
+static uint64_t g_t0_us;
+static bool     g_touch_spent;
+
+static void touch_event(const SDL_Event *e)
+{
+	if (e->type == SDL_FINGERDOWN) {
+		if (g_fingers++ == 0) {
+			g_tx0 = g_tx = e->tfinger.x;
+			g_ty0 = g_ty = e->tfinger.y;
+			g_t0_us = diatom_port_now_us();
+			g_touch_spent = false;
+		} else
+			g_touch_spent = true;   /* more than one finger: not a hold */
+	} else if (e->type == SDL_FINGERMOTION) {
+		g_tx = e->tfinger.x;
+		g_ty = e->tfinger.y;
+	} else if (e->type == SDL_FINGERUP && g_fingers > 0)
+		g_fingers--;
+}
+
+static void touch_hold(void)
+{
+	float dx = g_tx - g_tx0, dy = g_ty - g_ty0;
+
+	if (g_fingers != 1 || g_touch_spent) return;
+	if (dx * dx + dy * dy > TOUCH_STILL * TOUCH_STILL) { g_touch_spent = true; return; }
+	if (diatom_port_now_us() - g_t0_us < TOUCH_HOLD_MS * 1000ull) return;
+	g_touch_spent = true;
+	g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_MENU);
+	g_menu_pulse = true;
+}
+#endif
+
 void diatom_port_input_poll(void)
 {
 	SDL_Event ev;
 	uint32_t s;
 
-	while (SDL_PollEvent(&ev))
-		if (ev.type == SDL_QUIT) g_quit = true;
-
 #if defined(DIATOM_PORT_ROTATE)
 	if (g_menu_pulse) { g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU); g_menu_pulse = false; }
+#endif
+	while (SDL_PollEvent(&ev)) {
+		if (ev.type == SDL_QUIT) g_quit = true;
+#if defined(DIATOM_PORT_ROTATE)
+		touch_event(&ev);
+#endif
+	}
+#if defined(DIATOM_PORT_ROTATE)
+	touch_hold();
 #endif
 	if (g_pad_fd >= 0)  pad_read();
 	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
