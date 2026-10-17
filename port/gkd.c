@@ -811,11 +811,11 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
  * is visible. So: evenly spaced from the floor (40) to 255, keeping the
  * Brick's twelve positions. The launcher's GKD ladder must match (gkd.3). */
 #if defined(DIATOM_PORT_ROTATE)
-/* The Rotate's PWM, 0-2499: twelve rungs, all distinct by eye and evenly
- * spaced (2026-10-17). TortOS src/platform_rotate.c's ladder, which must
- * match. */
+/* The Rotate's PWM, 0-2499: black to 80, one dimmest level from 90 to at
+ * least 170, visible steps from 200 (by eye 2026-10-17, plorpos-3yv.24).
+ * TortOS src/platform_rotate.c's ladder, which must match. */
 static const unsigned short bright_ladder[] = {
-	20, 40, 80, 160, 310, 470, 700, 940, 1250, 1570, 1880, 2499
+	100, 200, 270, 360, 470, 600, 760, 960, 1250, 1570, 1880, 2499
 };
 #else
 static const unsigned char bright_ladder[] = {
