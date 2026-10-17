@@ -1076,6 +1076,14 @@ void diatom_port_level_invalidate(void)
 
 void diatom_port_present_stop(diatom_park park)
 {
+#if defined(DIATOM_PORT_ROTATE)
+	/* A pause keeps the window mapped with its last frame: the launcher
+	 * draws its menu first and then has sway move this window off, and on
+	 * resume brings it back before its own goes - so neither hand-over shows
+	 * sway's black background (TortOS platform_rotate.c screen_yield,
+	 * plorpos-3yv.25). An exit (BLANK) still unmaps: nothing is coming back. */
+	if (park == DIATOM_PARK_KEEP) return;
+#endif
 	(void)park;
 	if (!g_window || g_hidden) return;
 	SDL_HideWindow(g_window);
