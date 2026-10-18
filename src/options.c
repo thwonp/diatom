@@ -12,16 +12,21 @@
  * are.** Diatom has no opinion about whether a Genesis should be PAL, and no
  * way to ask - it has no UI (ADR-0009).
  *
- * String lifetime: `key` and the values are copied, because a core may build
- * them dynamically. `desc` and the value list are BORROWED, which is safe only
- * because ADR-0006 never calls dlclose - the core's static data outlives every
- * game. If cores were ever unloaded, these would dangle.
+ * String lifetime: everything is copied - key, default, description and the
+ * value list - as libretro.h asks ("the frontend must maintain its own copy").
+ * The description and values were once BORROWED on the reasoning that ADR-0006
+ * never unloads a core, so its static data outlives every game. Not every
+ * core's definitions are static: melonDS DS builds its array on the stack of
+ * the call that declares it (firmware paths found at load), and the next RUN's
+ * SETOPTION read a dead frame - the resident died on a second DS game
+ * (plorpos-3yv.51).
  *
  * Per-core tables, because a resident process runs many cores and a core asking
  * for "gambatte_gb_colorization" must not be answered from PicoDrive's table.
  */
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "diatom.h"
@@ -40,10 +45,34 @@ typedef struct {
 	char        key[80];
 	char        value[128];         /* current, always one of the core's */
 	char        deflt[128];
-	const char *desc;               /* borrowed; see the note above */
-	const struct retro_core_option_value *values;   /* borrowed, NULL-terminated */
+	char       *pool;               /* owned: desc, then each value, NUL-separated */
+	const char *desc;               /* in pool, or NULL */
+	const char *values;             /* first value in pool; NULL = no explicit list */
 	int         nvalues;
 } diatom_option;
+
+/* The value after `v` in an option's pool. */
+static const char *next_value(const char *v)
+{
+	return v + strlen(v) + 1;
+}
+
+/* Copy desc and the values into one block the option owns. */
+static void own_strings(diatom_option *o, const char *desc,
+                        const struct retro_core_option_value *vals, int n)
+{
+	size_t len = desc ? strlen(desc) + 1 : 0;
+	char *p;
+	int i;
+
+	for (i = 0; i < n; i++) len += strlen(vals[i].value) + 1;
+	if (!len || !(o->pool = malloc(len))) return;
+	p = o->pool;
+	if (desc) { o->desc = p; p = stpcpy(p, desc) + 1; }
+	if (n) o->values = p;
+	for (i = 0; i < n; i++) p = stpcpy(p, vals[i].value) + 1;
+	o->nvalues = n;
+}
 
 typedef struct {
 	const void   *owner;            /* the diatom_core this belongs to */
@@ -99,10 +128,11 @@ static diatom_option *find(const char *key)
  * handed a value outside its own list is entitled to do anything at all. */
 static bool offered(const diatom_option *o, const char *value)
 {
+	const char *v = o->values;
 	int i;
-	if (!o->values) return true;    /* legacy path declared no explicit list */
-	for (i = 0; i < o->nvalues; i++)
-		if (o->values[i].value && !strcmp(o->values[i].value, value)) return true;
+	if (!v) return true;            /* legacy path declared no explicit list */
+	for (i = 0; i < o->nvalues; i++, v = next_value(v))
+		if (!strcmp(v, value)) return true;
 	return false;
 }
 
@@ -131,6 +161,7 @@ static diatom_option *add(const char *key, const char *deflt)
 		return NULL;
 	}
 	o = &g_active->opt[g_active->n++];
+	free(o->pool);                  /* the slot's last declaration */
 	memset(o, 0, sizeof *o);
 	snprintf(o->key, sizeof o->key, "%s", key);
 	if (deflt) {
@@ -151,11 +182,9 @@ void diatom_options_define_v2(const struct retro_core_options_v2 *v2)
 		diatom_option *o = add(d->key, d->default_value);
 		int i;
 		if (!o) break;
-		o->desc   = d->desc;
-		o->values = d->values;
 		for (i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && d->values[i].value; i++)
 			;
-		o->nvalues = i;
+		own_strings(o, d->desc, d->values, i);
 		apply_pending(o);
 	}
 	log_(DIATOM_LOG_INFO, "options: core declared %d", g_active->n);
@@ -186,7 +215,7 @@ void diatom_options_define_vars(const struct retro_variable *vars)
 		         bar ? (int)(bar - p) : (int)strlen(p), p);
 		o = add(v->key, first);
 		if (!o) break;
-		o->desc = v->value;
+		own_strings(o, v->value, NULL, 0);
 		apply_pending(o);
 	}
 	log_(DIATOM_LOG_INFO, "options: core declared %d (legacy format)", g_active->n);
@@ -291,13 +320,14 @@ void diatom_options_emit(void)
 	diatom_proto_send("OPTIONS\tcount=%d", g_active->n);
 	for (i = 0; i < g_active->n; i++) {
 		const diatom_option *o = &g_active->opt[i];
+		const char *v = o->values;
 		char vals[512];
 		size_t used = 0;
 
 		vals[0] = '\0';
-		for (j = 0; j < o->nvalues && used < sizeof vals - 1; j++) {
+		for (j = 0; j < o->nvalues && used < sizeof vals - 1; j++, v = next_value(v)) {
 			int n = snprintf(vals + used, sizeof vals - used, "%s%s",
-			                 used ? "|" : "", o->values[j].value);
+			                 used ? "|" : "", v);
 			if (n < 0) break;
 			used += (size_t)n;
 		}
@@ -315,12 +345,14 @@ void diatom_options_list(void)
 	printf("diatom: %d core option(s)\n", g_active->n);
 	for (i = 0; i < g_active->n; i++) {
 		const diatom_option *o = &g_active->opt[i];
+		const char *v = o->values;
+
 		printf("  %-40s = %-20s %s\n", o->key, o->value,
 		       o->desc ? o->desc : "");
-		if (!o->values) continue;
+		if (!v) continue;
 		printf("      ");
-		for (j = 0; j < o->nvalues; j++)
-			printf("%s%s", j ? " | " : "", o->values[j].value);
+		for (j = 0; j < o->nvalues; j++, v = next_value(v))
+			printf("%s%s", j ? " | " : "", v);
 		printf("\n");
 	}
 }
