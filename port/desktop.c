@@ -469,3 +469,7 @@ void diatom_port_mute_set(bool on) { g_muted = on; }
 bool diatom_port_mute_get(void) { return g_muted; }
 
 bool diatom_port_take_switcher(void) { return false; }
+
+/* No DS layouts or touch panel here (TortOS plorpos-3yv.47). */
+void diatom_port_split(bool on, diatom_rect top, diatom_rect bot) { (void)on; (void)top; (void)bot; }
+bool diatom_port_pointer(int16_t *x, int16_t *y) { (void)x; (void)y; return false; }

@@ -364,6 +364,17 @@ static void draw_overlay(void)
 	gkdgl_overlay_draw(g_sw, g_sh, r);
 }
 
+/* A DS layout's two rects (diatom_port_split, plorpos-3yv.47). */
+static bool        g_split;
+static diatom_rect g_split_top, g_split_bot;
+
+void diatom_port_split(bool on, diatom_rect top, diatom_rect bot)
+{
+	g_split = on;
+	g_split_top = top;
+	g_split_bot = bot;
+}
+
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
@@ -387,7 +398,8 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * build no longer offers it (plorpos-gkd.73), shaders replace it. */
 	g_last_dst = dst;
 	g_last_linear = filter == DIATOM_FILTER_SHARP;
-	gkdgl_draw(g_sw, g_sh, dst, g_last_linear);
+	if (g_split) gkdgl_draw_split(g_sw, g_sh, g_split_top, g_split_bot, g_last_linear);
+	else         gkdgl_draw(g_sw, g_sh, dst, g_last_linear);
 	draw_overlay();
 	draw_osd();
 	SDL_GL_SwapWindow(g_window);
@@ -695,9 +707,14 @@ static void keys_read(void)
 }
 
 #if defined(DIATOM_PORT_ROTATE)
-/* Touch never reaches the core (the user's rule, plorpos-3yv.10). One finger
- * held still for TOUCH_HOLD_MS is Menu, though: closed, the swivel hides
- * every face button, and this is how the in-game menu is still reached. */
+/* Touch never reaches the core (the user's rule, plorpos-3yv.10) - except a
+ * DS's, whose bottom screen IS touch (plorpos-3yv.47): with a split up, the
+ * first finger is the libretro pointer (diatom_port_pointer) and there is no
+ * hold-for-Menu, which a stylus held on the screen would set off.
+ *
+ * Otherwise one finger held still for TOUCH_HOLD_MS is Menu: closed, the
+ * swivel hides every face button, and this is how the in-game menu is still
+ * reached. */
 #define TOUCH_HOLD_MS 600
 #define TOUCH_STILL   0.08f   /* of the surface: farther is not a hold */
 static int      g_fingers;
@@ -705,8 +722,84 @@ static float    g_tx0, g_ty0, g_tx, g_ty;
 static uint64_t g_t0_us;
 static bool     g_touch_spent;
 
+/* The pointer, in surface pixels. A touch that starts in the launcher's edge
+ * band is held back up to TOUCH_TIGHT_MS: if it goes TOUCH_IN_PX inward it
+ * was the launcher's swipe (Muse, the switcher) and the game never sees it;
+ * otherwise it is delivered, late. The launcher decides with the same numbers
+ * (TortOS platform.h GESTURE_TIGHT_*). */
+#define TOUCH_BAND_PX  12
+#define TOUCH_IN_PX    30
+#define TOUCH_TIGHT_MS 100
+static SDL_FingerID g_ptr_id;
+static float    g_px, g_py, g_py0;
+static int      g_ptr_edge;             /* +1 top band, -1 bottom, 0 none */
+static bool     g_ptr_on, g_ptr_down, g_ptr_pending, g_ptr_tap, g_ptr_release;
+static uint64_t g_ptr_t0_us;
+
+static void pointer_event(const SDL_Event *e)
+{
+	float x = e->tfinger.x * g_sw, y = e->tfinger.y * g_sh;
+
+	if (e->type == SDL_FINGERDOWN && !g_ptr_on) {
+		g_ptr_on = true;
+		g_ptr_id = e->tfinger.fingerId;
+		g_px = x; g_py = g_py0 = y;
+		g_ptr_edge = x < TOUCH_BAND_PX || x > g_sw - TOUCH_BAND_PX ? 0
+		           : y < TOUCH_BAND_PX ? 1 : y > g_sh - TOUCH_BAND_PX ? -1 : 0;
+		g_ptr_pending = g_ptr_edge != 0;
+		g_ptr_down = !g_ptr_pending;
+		g_ptr_t0_us = diatom_port_now_us();
+		return;
+	}
+	if (!g_ptr_on || e->tfinger.fingerId != g_ptr_id) return;
+	if (e->type == SDL_FINGERMOTION) {
+		g_px = x; g_py = y;
+		if (g_ptr_pending && (y - g_py0) * g_ptr_edge >= TOUCH_IN_PX) {
+			g_ptr_pending = false;         /* the launcher's swipe */
+			g_ptr_on = false;
+		}
+	} else if (e->type == SDL_FINGERUP) {
+		g_ptr_on = false;
+		if (g_ptr_pending) {               /* a tap at the very edge: late */
+			g_ptr_pending = false;
+			g_ptr_down = true;
+			g_ptr_tap = true;
+		} else if (!g_ptr_tap) g_ptr_down = false;
+	}
+}
+
+/* Once a frame: a held-back touch whose window ran out goes through; a late
+ * tap is down for one frame, then up. */
+static void pointer_tick(void)
+{
+	if (g_ptr_release) { g_ptr_down = false; g_ptr_release = false; }
+	if (g_ptr_tap) { g_ptr_tap = false; g_ptr_release = true; }
+	if (g_ptr_pending &&
+	    diatom_port_now_us() - g_ptr_t0_us >= TOUCH_TIGHT_MS * 1000ull) {
+		g_ptr_pending = false;
+		g_ptr_down = true;
+	}
+}
+
+bool diatom_port_pointer(int16_t *x, int16_t *y)
+{
+	const diatom_rect b = g_split_bot;
+	float fx, fy;
+
+	if (!g_split || !g_ptr_down || b.w <= 0 || b.h <= 0) return false;
+	fx = (g_px - b.x) / b.w;
+	fy = (g_py - b.y) / b.h;
+	if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return false;   /* the other screen */
+	/* The frame is the two screens stacked: the bottom one is y 0..1 of
+	 * the pointer's -1..1. */
+	*x = (int16_t)((fx * 2 - 1) * 0x7fff);
+	*y = (int16_t)(fy * 0x7fff);
+	return true;
+}
+
 static void touch_event(const SDL_Event *e)
 {
+	if (g_split) { pointer_event(e); return; }
 	if (e->type == SDL_FINGERDOWN) {
 		if (g_fingers++ == 0) {
 			g_tx0 = g_tx = e->tfinger.x;
@@ -726,6 +819,7 @@ static void touch_hold(void)
 {
 	float dx = g_tx - g_tx0, dy = g_ty - g_ty0;
 
+	if (g_split) { pointer_tick(); return; }
 	if (g_fingers != 1 || g_touch_spent) return;
 	if (dx * dx + dy * dy > TOUCH_STILL * TOUCH_STILL) { g_touch_spent = true; return; }
 	if (diatom_port_now_us() - g_t0_us < TOUCH_HOLD_MS * 1000ull) return;
@@ -1094,6 +1188,9 @@ void diatom_port_level_invalidate(void)
 		pad_resync();
 	}
 	g_switcher = false;
+	/* And the DS pointer: its finger lifted while the launcher had the
+	 * screen, unseen. */
+	g_ptr_on = g_ptr_down = g_ptr_pending = g_ptr_tap = g_ptr_release = false;
 #endif
 	/* And no hold repeats on from before: one held into the menu would
 	 * step on after Continue; a new press starts a new hold. */
@@ -1136,3 +1233,8 @@ void diatom_port_present_stop(diatom_park park)
 static bool g_muted;
 void diatom_port_mute_set(bool on) { g_muted = on; }
 bool diatom_port_mute_get(void) { return g_muted; }
+
+#if !defined(DIATOM_PORT_ROTATE)
+/* The GKD draws a DS split but has no panel. */
+bool diatom_port_pointer(int16_t *x, int16_t *y) { (void)x; (void)y; return false; }
+#endif

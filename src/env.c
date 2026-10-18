@@ -170,6 +170,13 @@ static bool env_cb(unsigned cmd, void *data)
 	case MASK(RETRO_ENVIRONMENT_GET_CAN_DUPE):
 		*(bool *)data = true;
 		return true;
+	case MASK(RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES):
+		/* A pad, and a pointer where the port has a panel to back it
+		 * (diatom_port_pointer; the DS's bottom screen, TortOS
+		 * plorpos-3yv.47). Answered everywhere: the pointer just never
+		 * presses where there is no panel. */
+		*(uint64_t *)data = (1ull << RETRO_DEVICE_JOYPAD) | (1ull << RETRO_DEVICE_POINTER);
+		return true;
 	case MASK(RETRO_ENVIRONMENT_SHUTDOWN):
 		/* The core is done. Ends the session as Quit would.
 		 *
@@ -637,6 +644,18 @@ static int16_t cb_input_state(unsigned port, unsigned device,
 	int b;
 
 	(void)index;
+	/* A touch panel's finger, for a core with a touch screen of its own (the
+	 * DS's bottom screen, TortOS plorpos-3yv.47). */
+	if (port == 0 && device == RETRO_DEVICE_POINTER) {
+		int16_t x = 0, y = 0;
+		bool down = diatom_port_pointer(&x, &y);
+
+		if (id == RETRO_DEVICE_ID_POINTER_PRESSED) return down;
+		if (id == RETRO_DEVICE_ID_POINTER_X) return x;
+		if (id == RETRO_DEVICE_ID_POINTER_Y) return y;
+		if (id == RETRO_DEVICE_ID_POINTER_COUNT) return down ? 1 : 0;
+		return 0;
+	}
 	if (port != 0 || device != RETRO_DEVICE_JOYPAD) return 0;
 
 	state = core_input();

@@ -63,6 +63,7 @@
 	X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) \
 	X(PFNGLVERTEXATTRIB4FPROC,          glVertexAttrib4f) \
 	X(PFNGLVIEWPORTPROC,                glViewport) \
+	X(PFNGLSCISSORPROC,                 glScissor) \
 	X(PFNGLCLEARCOLORPROC,              glClearColor) \
 	X(PFNGLCLEARPROC,                   glClear) \
 	X(PFNGLDRAWARRAYSPROC,              glDrawArrays) \
@@ -562,6 +563,31 @@ void gkdgl_draw(int sw, int sh, diatom_rect dst, bool none_linear)
 
 	p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	run(&g_copy, in, g_final_linear, gx, gy, dst.w, dst.h, true);
+	g_frame++;
+}
+
+/* The DS's two screens (plorpos-3yv.47): the frame is the two stacked, so
+ * each half is the whole texture drawn twice the rect's height - its half
+ * landing in the rect - and the other half scissored away. No shader chain:
+ * the passes are written for one picture. */
+void gkdgl_draw_split(int sw, int sh, diatom_rect top, diatom_rect bot, bool linear)
+{
+	p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	p_glViewport(0, 0, sw, sh);
+	p_glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	p_glClearColor(0, 0, 0, 1);
+	p_glClear(GL_COLOR_BUFFER_BIT);
+	if (!g_src_w) return;
+	p_glEnable(GL_SCISSOR_TEST);
+	if (top.w > 0 && top.h > 0) {
+		p_glScissor(top.x, sh - top.y - top.h, top.w, top.h);
+		run(&g_copy, g_src, linear, top.x, sh - top.y - top.h * 2, top.w, top.h * 2, true);
+	}
+	if (bot.w > 0 && bot.h > 0) {
+		p_glScissor(bot.x, sh - bot.y - bot.h, bot.w, bot.h);
+		run(&g_copy, g_src, linear, bot.x, sh - bot.y - bot.h, bot.w, bot.h * 2, true);
+	}
+	p_glDisable(GL_SCISSOR_TEST);
 	g_frame++;
 }
 

@@ -33,6 +33,10 @@ const diatom_display_mode_info diatom_modes[] = {
 	  "shape the core asks for, fits inside the panel" },
 	{ "stretch",   DIATOM_SCALE_STRETCH,
 	  "both axes filled, shape ignored" },
+	{ "ds-a",      DIATOM_SCALE_DS_A,
+	  "DS: big screen full width, small one below" },
+	{ "ds-b",      DIATOM_SCALE_DS_B,
+	  "DS: both screens the same size, stacked" },
 };
 const int diatom_mode_count =
 	(int)(sizeof diatom_modes / sizeof diatom_modes[0]);
@@ -81,6 +85,8 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 		if (f < 1) f = 1;
 		return centered(src_w * f, src_h * f, surf_w, surf_h);
 
+	case DIATOM_SCALE_DS_A:     /* drawn as two rects (diatom_ds_rects); */
+	case DIATOM_SCALE_DS_B:     /* whole, as fit, when the frame is not a DS's */
 	case DIATOM_SCALE_ASPECT_FIT:
 		a = target_aspect(src_w, src_h, aspect);
 		if ((double)surf_w / a <= (double)surf_h)
@@ -94,4 +100,41 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 	}
 
 	return centered(src_w, src_h, surf_w, surf_h);
+}
+
+bool diatom_ds_rects(diatom_scale_mode mode, bool swapped, int src_w, int src_h,
+                     int surf_w, int surf_h, diatom_rect *top, diatom_rect *bot)
+{
+	int sh = src_w * 3 / 4, bw, bh, lw, lh, k;
+	diatom_rect big, small;
+
+	if (mode != DIATOM_SCALE_DS_A && mode != DIATOM_SCALE_DS_B) return false;
+	if (src_w <= 0 || src_h != sh * 2 || surf_w <= 0 || surf_h <= 0) return false;
+	(void)k;
+	if (mode == DIATOM_SCALE_DS_A) {
+		bw = surf_w;
+		bh = bw * 3 / 4;
+		if (bh > surf_h) { bh = surf_h; bw = bh * 4 / 3; }
+		lh = surf_h - bh;
+		lw = lh * 4 / 3;
+	} else {
+		/* B: the two the same size, sharing the height (the user's pick,
+		 * 2026-10-18) - so swapped is the same picture. */
+		bh = lh = surf_h / 2;
+		bw = lw = bh * 4 / 3;
+		if (bw > surf_w) { bw = lw = surf_w; bh = lh = bw * 3 / 4; }
+	}
+	if (lw > surf_w) { lw = surf_w; lh = lw * 3 / 4; }
+	/* Big then small, top to bottom; swapped only changes which screen is
+	 * which, so the bottom screen stays below. */
+	if (!swapped) {
+		big   = (diatom_rect){ (surf_w - bw) / 2, 0, bw, bh };
+		small = (diatom_rect){ (surf_w - lw) / 2, bh, lw, lh };
+		*top = big; *bot = small;
+	} else {
+		small = (diatom_rect){ (surf_w - lw) / 2, 0, lw, lh };
+		big   = (diatom_rect){ (surf_w - bw) / 2, lh, bw, bh };
+		*top = small; *bot = big;
+	}
+	return true;
 }

@@ -45,6 +45,9 @@ void gkdgl_upload(const void *src, int w, int h, size_t pitch, diatom_pixfmt fmt
  * below 1 is see-through, which reads as black on the GKD, and a shader is
  * free to leave any alpha it likes. */
 void gkdgl_draw(int sw, int sh, diatom_rect dst, bool none_linear);
+/* The DS's two screens: the frame's top half into `top`, bottom half into
+ * `bot` (plorpos-3yv.47). */
+void gkdgl_draw_split(int sw, int sh, diatom_rect top, diatom_rect bot, bool linear);
 
 /* Over the frame, after gkdgl_draw. Rects are top-left based, as diatom's.
  * The overlay is a BGRA image with real alpha (a notice); NULL drops it. */

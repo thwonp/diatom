@@ -215,6 +215,18 @@ typedef enum {
 
 void diatom_port_present_stop(diatom_park park);
 
+/* A Nintendo DS layout (TortOS plorpos-3yv.47): from here on present draws
+ * the frame's top half into `top` and its bottom half into `bot` rather than
+ * the whole frame into dst; off goes back. A port that cannot keeps drawing
+ * the whole frame. The bottom rect is also where touches land: see
+ * diatom_port_pointer. */
+void diatom_port_split(bool on, diatom_rect top, diatom_rect bot);
+
+/* The libretro pointer for a touch panel: where a finger is on the split's
+ * bottom screen, in the whole frame's -0x7fff..0x7fff (top half is screen 1,
+ * bottom half screen 2). True while pressed. A port with no panel: false. */
+bool diatom_port_pointer(int16_t *x, int16_t *y);
+
 /* Interleaved stereo S16 at caps.audio_rate. NEVER blocks; drops on overflow.
  * A blocking write is a legitimate sync strategy but is incompatible with
  * dynamic rate control, which the measured spread of core rates makes

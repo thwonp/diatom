@@ -22,9 +22,10 @@
 #include <stdbool.h>
 
 typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCREENSHOT,
-               HK_TURBO /* Turbo Assign, ADR-0045 */ } hk_action;
+               HK_TURBO /* Turbo Assign, ADR-0045 */,
+               HK_SWAP  /* DS screens, big one to the other screen (TortOS plorpos-3yv.47) */ } hk_action;
 
-#define HK_MAX 6
+#define HK_MAX 7
 
 /* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
  * a spec that is half garbage is refused whole rather than applying the good
