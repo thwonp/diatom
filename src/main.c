@@ -655,7 +655,7 @@ static bool take_pause_request(void)
 	return v;
 }
 
-static bool menu_pause(const diatom_session *sn)
+static bool menu_pause(const diatom_session *sn, bool switcher)
 {
 	/* The pause preview goes out BEFORE PAUSED, so by the time the launcher
 	 * hears it owns the display, the frame it will dim and draw its menu over
@@ -680,8 +680,10 @@ static bool menu_pause(const diatom_session *sn)
 	 * (plorpos-gkd.88, ADR-0016). */
 	diatom_save_now();
 
-	/* Symmetrical with RUNNING: the launcher may draw from here. */
-	diatom_proto_send("PAUSED");
+	/* Symmetrical with RUNNING: the launcher may draw from here. A Menu
+	 * hold says so, and the launcher opens its game switcher instead of
+	 * the menu (TortOS plorpos-gl5.3). */
+	diatom_proto_send(switcher ? "PAUSED\tfor=switcher" : "PAUSED");
 
 	/* NOT for(;;). A paused Diatom blocks here on a socket with no timeout,
 	 * and this loop used to ignore g_terminate entirely - so SIGTERM set the
@@ -1880,12 +1882,15 @@ static int run_session_inner(const diatom_session *sn)
 				menu_now = (pressed & menu_bit) != 0;
 			}
 		}
-		if (menu_now || take_pause_request()) {
+		/* Menu held a second: the switcher, which only a launcher has. */
+		bool switcher_now = diatom_port_take_switcher() && diatom_proto_active();
+
+		if (menu_now || switcher_now || take_pause_request()) {
 			if (!diatom_proto_active()) {
 				stop = true;
 			} else {
 				uint64_t pause_t0 = diatom_port_now_us();
-				bool resumed = menu_pause(sn);
+				bool resumed = menu_pause(sn, switcher_now && !menu_now);
 
 				/* The summary line divides frames by wall clock, and an open
 				 * menu produces no frames, so without this a long menu reads

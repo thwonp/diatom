@@ -467,3 +467,5 @@ void diatom_port_present_stop(diatom_park park) { (void)park; }
 static bool g_muted;
 void diatom_port_mute_set(bool on) { g_muted = on; }
 bool diatom_port_mute_get(void) { return g_muted; }
+
+bool diatom_port_take_switcher(void) { return false; }

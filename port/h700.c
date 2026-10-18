@@ -2252,6 +2252,10 @@ static const struct { int idx; int btn; } joymap[] = {
  * key, and otherwise is a one-poll tap on release. The launcher does the same
  * on its side (TortOS src/platform_h700.c, pad_read). */
 static bool g_menu_down, g_menu_sent, g_menu_spent, g_menu_pulse;
+/* When Menu went down, and a hold of DIATOM_SWITCHER_HOLD_US waiting to be
+ * taken (TortOS plorpos-gl5.3). */
+static uint64_t g_menu_t0_us;
+static bool g_switcher;
 
 static void debug_event(const char *what, int a, int b)
 {
@@ -2329,7 +2333,11 @@ void diatom_port_input_poll(void)
 
 			if (b == JOY_MENU) {
 				g_menu_down = down;
-				if (down) { g_menu_sent = g_menu_spent = false; break; }
+				if (down) {
+					g_menu_sent = g_menu_spent = false;
+					g_menu_t0_us = diatom_port_now_us();
+					break;
+				}
 				if (g_menu_sent) set_bit(DIATOM_BTN_MENU, false);
 				else if (!g_menu_spent) {
 					set_bit(DIATOM_BTN_MENU, true);
@@ -2371,6 +2379,11 @@ void diatom_port_input_poll(void)
 		}
 		}
 	}
+	if (g_menu_down && !g_menu_sent && !g_menu_spent &&
+	    diatom_port_now_us() - g_menu_t0_us >= DIATOM_SWITCHER_HOLD_US) {
+		g_menu_spent = true;      /* and its release is nothing */
+		g_switcher = true;
+	}
 	levels_repeat();
 }
 
@@ -2406,7 +2419,11 @@ void diatom_port_level_invalidate(void)
 	 * while the launcher was driving is invisible here, so the remembered
 	 * state is a memory of a world this process was not watching. */
 	g_jack_was = -1;
-	g_menu_down = g_menu_sent = g_menu_spent = g_menu_pulse = false;
+	g_menu_sent = g_menu_pulse = g_switcher = false;
+	/* A Menu still held across the handover - the hold that opened the
+	 * switcher, say - is spent: its release is not a tap (plorpos-gl5.3). */
+	g_menu_down = g_joy && SDL_JoystickGetButton(g_joy, JOY_MENU);
+	g_menu_spent = g_menu_down;
 	/* And the bit the pulse was holding: a pause can land while the pulse
 	 * still holds MENU (measured 2026-10-06), and forgetting the pulse
 	 * left MENU down for good - so the next tap had no press to show and the
@@ -2569,3 +2586,11 @@ void diatom_port_mute_set(bool on)
 }
 
 bool diatom_port_mute_get(void) { return g_muted; }
+
+bool diatom_port_take_switcher(void)
+{
+	bool v = g_switcher;
+
+	g_switcher = false;
+	return v;
+}

@@ -334,6 +334,14 @@ bool diatom_port_level_set(diatom_level_kind kind, int index, int count);
  * port's own viability, not anything about games, so it belongs here. */
 bool diatom_port_should_quit(void);
 
+/* True once when Menu has been held DIATOM_SWITCHER_HOLD_US with nothing else
+ * pressed: the launcher's game switcher (TortOS plorpos-gl5.3), the same hold
+ * the launcher reads on its own screens. The port knows - it is what turns
+ * a lone Menu into a tap on release, so the main loop never sees a held one.
+ * A port without the hold returns false. */
+#define DIATOM_SWITCHER_HOLD_US 1000000ull
+bool diatom_port_take_switcher(void);
+
 /* What was last presented, as pixels: no domain nouns, and every backend
  * wants it - on desktop to see what happened, on device because a screenshot
  * is otherwise unobtainable. Also not in ADR-0007: that interface specified

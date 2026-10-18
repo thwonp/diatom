@@ -2319,3 +2319,7 @@ void diatom_port_mute_set(bool on)
 }
 
 bool diatom_port_mute_get(void) { return g_muted; }
+
+/* No hold on the Brick yet: its Menu is a press, not a tap on release
+ * (TortOS plorpos-gl5.4). */
+bool diatom_port_take_switcher(void) { return false; }

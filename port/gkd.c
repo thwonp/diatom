@@ -73,6 +73,11 @@ static bool          g_home;   /* the brightness modifier held: Home, the Rotate
 #define KEYS_NAME "gpio-keys-system"   /* volume, POWER, the swivel */
 #define HOME_CODE BTN_MODE
 static bool g_menu_sent, g_menu_spent, g_menu_pulse;
+/* When Menu went down, and a hold of DIATOM_SWITCHER_HOLD_US waiting to be
+ * taken - the Rotate's Menu is the modifier, so alone it is otherwise only
+ * a tap on release. */
+static uint64_t g_menu_t0_us;
+static bool g_switcher;
 #else
 #define PAD_NAME  "gkd_atom_joypad"
 #define KEYS_NAME "gpio-keys"
@@ -580,7 +585,11 @@ static void pad_read(void)
 			if (ev[i].code == BTN_MODE) {
 				bool down = ev[i].value;
 				g_home = down;
-				if (down) { g_menu_sent = g_menu_spent = false; continue; }
+				if (down) {
+					g_menu_sent = g_menu_spent = false;
+					g_menu_t0_us = diatom_port_now_us();
+					continue;
+				}
 				if (g_menu_sent) g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
 				else if (!g_menu_spent) {
 					g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_MENU);
@@ -745,6 +754,13 @@ void diatom_port_input_poll(void)
 #endif
 	if (g_pad_fd >= 0)  pad_read();
 	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
+#if defined(DIATOM_PORT_ROTATE)
+	if (g_home && !g_menu_sent && !g_menu_spent &&
+	    diatom_port_now_us() - g_menu_t0_us >= DIATOM_SWITCHER_HOLD_US) {
+		g_menu_spent = true;      /* and its release is nothing */
+		g_switcher = true;
+	}
+#endif
 
 	s = g_pad_buttons;
 	if (g_stick_x >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SRIGHT);
@@ -756,6 +772,18 @@ void diatom_port_input_poll(void)
 
 uint32_t diatom_port_input_state(void) { return g_buttons; }
 bool     diatom_port_should_quit(void) { return g_quit; }
+
+bool diatom_port_take_switcher(void)
+{
+#if defined(DIATOM_PORT_ROTATE)
+	bool v = g_switcher;
+
+	g_switcher = false;
+	return v;
+#else
+	return false;   /* the GKD's Menu is a press: TortOS plorpos-gl5.4 */
+#endif
+}
 
 bool diatom_port_grab(uint8_t **rgb, int *w_out, int *h_out)
 {
@@ -1055,6 +1083,18 @@ void diatom_port_level_invalidate(void)
 	 * when it overflows meanwhile, pad_read resyncs from the kernel. */
 	if (g_keys_fd >= 0)
 		while (read(g_keys_fd, ev, sizeof ev) > 0) { }
+#if defined(DIATOM_PORT_ROTATE)
+	/* And the pad's, then what is held now asked of the kernel: a Menu held
+	 * for the launcher's switcher, or pressed and released on its screens,
+	 * replayed here as a tap or a hold of this game's - the switcher came
+	 * straight back over the game it had just started (plorpos-gl5.3). A
+	 * button still down survives the resync; a Menu still down is spent. */
+	if (g_pad_fd >= 0) {
+		while (read(g_pad_fd, ev, sizeof ev) > 0) { }
+		pad_resync();
+	}
+	g_switcher = false;
+#endif
 	/* And no hold repeats on from before: one held into the menu would
 	 * step on after Continue; a new press starts a new hold. */
 	g_level_next_us[0] = g_level_next_us[1] = 0;
