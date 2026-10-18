@@ -29,11 +29,14 @@
  *
  * No SDL, no port header - deliberately, so a test can link this with a fake
  * diatom_core and no display (test/rewind_test.c). */
+#include <fcntl.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "lz4.h"
 #include "rewind.h"
@@ -338,6 +341,36 @@ void diatom_rewind_flush(void)
 	pthread_mutex_unlock(&g_qmx);
 }
 
+/* A capture is silent. Some cores print on every serialize - PicoDrive's
+ * ym2413.c says "ym2413 state size: 316" for every SMS/GG state - and a
+ * capture every few frames made that ~3 lines a second into the device's log
+ * on the card (plorpos-3yv.40). So stdout points at /dev/null for the length
+ * of the core's serialize. The flush before keeps Diatom's own pending lines;
+ * the flush after sends the core's to /dev/null. Only the main thread writes
+ * to stdout, and it is the one in here, so nothing else is lost. A save the
+ * player asks for still prints - one line, not a stream. stderr (the core's
+ * log callback) is untouched. */
+static int quiet_begin(void)
+{
+	static int null_fd = -2;
+	int saved;
+
+	if (null_fd == -2) null_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+	if (null_fd < 0) return -1;
+	fflush(stdout);
+	saved = fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 0);
+	if (saved >= 0 && dup2(null_fd, STDOUT_FILENO) < 0) { close(saved); return -1; }
+	return saved;
+}
+
+static void quiet_end(int saved)
+{
+	if (saved < 0) return;
+	fflush(stdout);
+	dup2(saved, STDOUT_FILENO);
+	close(saved);
+}
+
 void diatom_rewind_capture(diatom_core *c)
 {
 	int i, s = -1;
@@ -388,7 +421,10 @@ void diatom_rewind_capture(diatom_core *c)
 	/* The only cost forward play pays: the core's own serialize. */
 	{
 		uint64_t t0 = mono_us(), dt;
+		int quiet = quiet_begin();
 		bool ok = c->serialize(g_slots[s].buf, n);
+
+		quiet_end(quiet);
 
 		dt = mono_us() - t0;
 		g_ser_n++;
