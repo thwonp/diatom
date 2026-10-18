@@ -345,7 +345,7 @@ void diatom_rewind_flush(void)
  * ym2413.c says "ym2413 state size: 316" for every SMS/GG state - and a
  * capture every few frames made that ~3 lines a second into the device's log
  * on the card (plorpos-3yv.40). So stdout points at /dev/null for the length
- * of the core's serialize. The flush before keeps Diatom's own pending lines;
+ * of the core's serialize_size and serialize. The flush before keeps Diatom's own pending lines;
  * the flush after sends the core's to /dev/null. Only the main thread writes
  * to stdout, and it is the one in here, so nothing else is lost. A save the
  * player asks for still prints - one line, not a stream. stderr (the core's
@@ -380,7 +380,13 @@ void diatom_rewind_capture(diatom_core *c)
 	if (++g_tick < g_every) return;
 	g_tick = 0;
 
-	n = c->serialize_size();
+	{
+		/* PicoDrive measures by running a whole save, so this prints too. */
+		int quiet = quiet_begin();
+
+		n = c->serialize_size();
+		quiet_end(quiet);
+	}
 	if (!n || n > (size_t)LZ4_MAX_INPUT_SIZE) return;
 
 	pthread_mutex_lock(&g_qmx);
