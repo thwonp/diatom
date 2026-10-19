@@ -23,7 +23,7 @@
 
 typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCREENSHOT,
                HK_TURBO /* Turbo Assign, ADR-0045 */,
-               HK_SWAP  /* DS screens, big one to the other screen (TortOS plorpos-3yv.47) */ } hk_action;
+               HK_SWAP  /* DS Display Mode: the next layout (TortOS plorpos-3yv.47, .62) */ } hk_action;
 
 #define HK_MAX 7
 

@@ -65,7 +65,6 @@ static bool state_plane_msg(const diatom_msg *m);
 static void levels_forget(void);
 static void apply_display(int mode, diatom_filter filter);
 /* Which DS screen is the big one: the swap hotkey's (plorpos-3yv.47). */
-static bool g_ds_swapped;
 /* Menu held a second, seen by the main loop itself (plorpos-gl5.4). */
 static bool g_menu_held_switcher;
 
@@ -530,12 +529,11 @@ static void apply_display(int mode, diatom_filter filter)
 	g_dst = diatom_scale_rect(diatom_modes[mode].mode, g_base_w, g_base_h,
 	                          g_base_aspect, g_caps.surface_w, g_caps.surface_h);
 	/* A DS layout: two rects for the two screens, the port draws both. */
-	if (diatom_ds_rects(diatom_modes[mode].mode, g_ds_swapped, g_base_w, g_base_h,
+	if (diatom_ds_rects(diatom_modes[mode].mode, g_base_w, g_base_h,
 	                    g_caps.surface_w, g_caps.surface_h, &top, &bot)) {
 		diatom_port_split(true, top, bot);
-		printf("diatom: ds screens top %dx%d+%d+%d bottom %dx%d+%d+%d%s\n",
-		       top.w, top.h, top.x, top.y, bot.w, bot.h, bot.x, bot.y,
-		       g_ds_swapped ? " (swapped)" : "");
+		printf("diatom: ds screens top %dx%d+%d+%d bottom %dx%d+%d+%d\n",
+		       top.w, top.h, top.x, top.y, bot.w, bot.h, bot.x, bot.y);
 	} else {
 		diatom_rect z = { 0, 0, 0, 0 };
 		diatom_port_split(false, z, z);
@@ -889,10 +887,24 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_SCREENSHOT:
 			if (pressed & bit) shot_take(sn->shots, sn->rom);
 			break;
+		/* Display Mode (TortOS plorpos-3yv.62): Focus Top, Focus Bottom,
+		 * Even Split, round again - a DS's layouts only, for this run;
+		 * the launcher keeps the one chosen in its menu. */
 		case HK_SWAP:
 			if (pressed & bit) {
-				g_ds_swapped = !g_ds_swapped;
-				apply_display(g_mode, g_filter);
+				static const char *const next[][2] = {
+					{ "ds-a", "ds-a-swap" }, { "ds-a-swap", "ds-b" }, { "ds-b", "ds-a" },
+				};
+				for (size_t k = 0; k < sizeof next / sizeof next[0]; k++) {
+					int m;
+					if (strcmp(diatom_modes[g_mode].name, next[k][0])) continue;
+					for (m = 0; m < diatom_mode_count; m++)
+						if (!strcmp(diatom_modes[m].name, next[k][1])) {
+							apply_display(m, g_filter);
+							break;
+						}
+					break;
+				}
 			}
 			break;
 		default: break;

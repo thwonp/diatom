@@ -349,11 +349,13 @@ typedef enum {
 	DIATOM_SCALE_STRETCH,        /* fills both axes, shape ignored            */
 	/* The Nintendo DS's two screens, which the core stacks top over bottom
 	 * in one frame, drawn as two rects (TortOS plorpos-3yv.47). A: the big
-	 * screen as wide as the panel, the small one in what is left below. B:
-	 * both the same size, sharing the height. Swapped makes the bottom
-	 * screen the big one, still below (a no-op for B). */
+	 * screen as wide as the panel, the small one in what is left below
+	 * (Focus Top). A swapped: the bottom screen the big one, still below
+	 * (Focus Bottom). B: both the same size, sharing the height (Even
+	 * Split). TortOS plorpos-3yv.62. */
 	DIATOM_SCALE_DS_A,
-	DIATOM_SCALE_DS_B
+	DIATOM_SCALE_DS_B,
+	DIATOM_SCALE_DS_A_SWAP
 } diatom_scale_mode;
 
 diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
@@ -361,7 +363,7 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 /* For a DS mode and a frame that is two screens stacked (w x 2*(w*3/4)): where
  * the top and the bottom screen go. False for anything else - the frame is
  * then drawn whole, by diatom_scale_rect. */
-bool diatom_ds_rects(diatom_scale_mode mode, bool swapped, int src_w, int src_h,
+bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
                      int surf_w, int surf_h, diatom_rect *top, diatom_rect *bot);
 
 /* Mode and filter are independent axes, cycled independently on device. They
