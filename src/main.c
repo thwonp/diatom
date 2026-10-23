@@ -22,6 +22,7 @@
 #include <unistd.h>
 #ifdef __GLIBC__
 #include <malloc.h>   /* malloc_trim, run_session */
+#include <sys/stat.h>
 #endif
 
 #include "cheevos.h"
@@ -553,6 +554,62 @@ static void apply_display(int mode, diatom_filter filter)
 		                  "\tshader=%s\tfinal=%s",
 		                  diatom_modes[mode].name, filter_name(filter),
 		                  g_dst.w, g_dst.h, g_dst.x, g_dst.y, g_shader, g_sfinal);
+}
+
+/* The log is a file on the SD card (the launcher's, inherited), and a core
+ * that prints every frame writes it as fast as it can - 16 GB in eight
+ * minutes from a melonDS DS stuck in a warning loop (plorpos-3yv.81). The
+ * core log cap in env.c covers what comes through libretro; this covers what
+ * does not (a core's own printf, anything else): past LOG_GAME_BYTES in one
+ * game, stdout and stderr go to /dev/null until the game ends, said once
+ * each way. Checked every 64 frames, an fstat. */
+#define LOG_GAME_BYTES (16L << 20)
+static off_t g_log_at_start = -1;
+static int   g_log_saved[2] = { -1, -1 };
+
+static off_t log_size(void)
+{
+	struct stat st;
+
+	return fstat(1, &st) == 0 && S_ISREG(st.st_mode) ? st.st_size : -1;
+}
+
+static void log_guard_begin(void)
+{
+	fflush(stdout);
+	g_log_at_start = log_size();
+}
+
+static void log_guard_check(void)
+{
+	off_t now;
+	int null;
+
+	if (g_log_at_start < 0 || g_log_saved[0] >= 0) return;
+	fflush(stdout); fflush(stderr);
+	now = log_size();
+	if (now < 0 || now - g_log_at_start <= LOG_GAME_BYTES) return;
+	if ((null = open("/dev/null", O_WRONLY | O_CLOEXEC)) < 0) return;
+	printf("diatom: log: %ld MB this game, the rest of it goes nowhere\n",
+	       (long)((now - g_log_at_start) >> 20));
+	fflush(stdout);
+	g_log_saved[0] = dup(1);
+	g_log_saved[1] = dup(2);
+	dup2(null, 1);
+	dup2(null, 2);
+	close(null);
+}
+
+static void log_guard_end(void)
+{
+	if (g_log_saved[0] < 0) return;
+	fflush(stdout); fflush(stderr);
+	dup2(g_log_saved[0], 1);
+	dup2(g_log_saved[1], 2);
+	close(g_log_saved[0]);
+	close(g_log_saved[1]);
+	g_log_saved[0] = g_log_saved[1] = -1;
+	printf("diatom: log: back after a game that wrote too much\n");
 }
 
 /* Report what a combination cost, so the look and the price are read together.
@@ -1685,6 +1742,7 @@ static int run_session_inner(const diatom_session *sn)
 
 	t_start = diatom_port_now_us();
 	next_us = (double)t_start;
+	log_guard_begin();
 
 	while (!diatom_port_should_quit() && !g_terminate && !stop &&
 	       (sn->limit <= 0 || frames < sn->limit)) {
@@ -1726,6 +1784,7 @@ static int run_session_inner(const diatom_session *sn)
 		if (!diatom_env_polled()) diatom_port_input_poll();
 		if (diatom_env_shutdown()) stop = true;
 		frames++;
+		if (!(frames & 63)) log_guard_check();
 
 		/* Immediately after the frame the core produced, and before anything
 		 * else can touch memory. This is the whole of ADR-0025 in one line:
@@ -2068,6 +2127,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * another name: ActRaiser's 826 KB state took 0.58s, read as 59.53 for a
 	 * 60.10 loop. */
 	const uint64_t t_end = diatom_port_now_us();
+	log_guard_end();
 
 	if (g_terminate)
 		printf("diatom: terminated by signal; saving\n");

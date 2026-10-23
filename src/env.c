@@ -101,14 +101,28 @@ bool diatom_env_new_geometry(int *w, int *h, double *aspect)
  * DIATOM_CORE_LOG=1 keeps everything for anyone debugging a core. */
 static bool g_core_log_quiet;
 
-void diatom_env_core_log_quiet(bool quiet)
+/* And a game's core gets this many lines in all, whatever their level. A
+ * core that warns every frame writes the card as fast as it can: a one-shot
+ * melonDS DS stuck on "restore CPSR under bad mode" put 16 GB into the
+ * launcher's log in eight minutes (plorpos-3yv.81), and a card wears out
+ * from exactly that. The count starts again with each game (diatom_env_bind);
+ * the cut is said once. */
+#define CORE_LOG_LINES 500
+static int g_core_log_left = CORE_LOG_LINES;
+
+static bool core_log_all(void)
 {
 	static int forced = -1;
 	if (forced < 0) {
 		const char *e = getenv("DIATOM_CORE_LOG");
 		forced = (e && *e && *e != '0') ? 1 : 0;
 	}
-	g_core_log_quiet = forced ? false : quiet;
+	return forced;
+}
+
+void diatom_env_core_log_quiet(bool quiet)
+{
+	g_core_log_quiet = core_log_all() ? false : quiet;
 }
 
 static void core_log(enum retro_log_level level, const char *fmt, ...)
@@ -120,13 +134,19 @@ static void core_log(enum retro_log_level level, const char *fmt, ...)
 	                   : DIATOM_LOG_INFO;
 
 	if (g_core_log_quiet && level < RETRO_LOG_WARN) return;
+	if (g_core_log_left <= 0 && !core_log_all()) return;
 
 	va_start(ap, fmt);
 	vsnprintf(buf, sizeof buf, fmt, ap);
 	va_end(ap);
 
 	buf[strcspn(buf, "\n")] = '\0';
-	if (buf[0]) diatom_port_log(l, buf);
+	if (!buf[0]) return;
+	diatom_port_log(l, buf);
+	if (--g_core_log_left == 0 && !core_log_all()) {
+		snprintf(buf, sizeof buf, "core log: %d lines this game, the rest dropped", CORE_LOG_LINES);
+		diatom_port_log(DIATOM_LOG_WARN, buf);
+	}
 }
 
 static bool env_cb(unsigned cmd, void *data)
@@ -754,6 +774,7 @@ void diatom_env_bind(diatom_core *c, diatom_policy *p, diatom_port_caps *caps)
 	g_policy = p;
 	g_caps   = caps;
 	g_bound  = c;
+	g_core_log_left = CORE_LOG_LINES;
 
 	/* Bind the option table BEFORE set_environment: a core declares its
 	 * options from inside that call, and they must land in its own table. */
