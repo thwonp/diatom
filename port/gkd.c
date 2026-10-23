@@ -146,6 +146,47 @@ static bool audio_open(const char *name)
 	return true;
 }
 
+#if defined(DIATOM_PORT_ROTATE)
+/* Let go of the sink between games and while the menu is up, and take it
+ * back at the next write - the h700's claim/release (audio_claim there).
+ * An open SDL device is never idle: paused, SDL 2.32 still feeds PipeWire
+ * silence, so the speaker sink stays RUNNING and the codec analog and the
+ * amp stay powered on the shelf and through system suspend - ~8.5 mA of
+ * the Rotate's sleep current (TortOS plorpos-3yv.74.19). Closed, PipeWire
+ * suspends the sink and the codec powers down. g_audio_dev is kept, so the
+ * claim reopens what the launcher last chose. */
+static bool g_audio_released;
+
+static void audio_release(void)
+{
+	uint64_t t0 = diatom_port_now_us();
+	char msg[96];
+
+	if (!g_audio) return;
+	SDL_CloseAudioDevice(g_audio);
+	g_audio = 0;
+	g_audio_released = true;
+	snprintf(msg, sizeof msg, "audio: released the sink (%llu us)",
+	         (unsigned long long)(diatom_port_now_us() - t0));
+	diatom_port_log(DIATOM_LOG_INFO, msg);
+}
+
+static void audio_claim(void)
+{
+	uint64_t t0 = diatom_port_now_us();
+	char msg[96];
+
+	if (!g_audio_released) return;
+	g_audio_released = false;
+	if (!audio_open(g_audio_dev[0] ? g_audio_dev : NULL) && g_audio_dev[0] &&
+	    audio_open(NULL))
+		g_audio_dev[0] = '\0';
+	snprintf(msg, sizeof msg, "audio: claimed the sink (%llu us)",
+	         (unsigned long long)(diatom_port_now_us() - t0));
+	diatom_port_log(DIATOM_LOG_INFO, msg);
+}
+#endif
+
 bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 {
 	const char *want = name ? name : "";
@@ -160,6 +201,14 @@ bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 		diatom_port_audio_get(actual, cap);
 		return true;
 	}
+#if defined(DIATOM_PORT_ROTATE)
+	/* Not holding the sink: remembered for the next claim, not opened. */
+	if (g_audio_released) {
+		snprintf(g_audio_dev, sizeof g_audio_dev, "%s", want);
+		diatom_port_audio_get(actual, cap);
+		return true;
+	}
+#endif
 
 	ok = audio_open(name);
 
@@ -302,6 +351,11 @@ bool diatom_port_init(diatom_port_caps *out)
 	out->audio_rate         = AUDIO_RATE;
 	out->audio_buffer_frames = g_audio ? AUDIO_BUFFER_FRAMES : 0;
 	out->present_blocks     = false;
+#if defined(DIATOM_PORT_ROTATE)
+	/* Opened above only to find out whether there is sound at all - the caps
+	 * say so. The shelf comes next; the first game's first write claims it. */
+	audio_release();
+#endif
 	return true;
 }
 
@@ -432,6 +486,9 @@ size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 	 * Only when a name was asked for. If the DEFAULT device dies there is
 	 * nowhere better to go, and retrying it every frame would be a reopen
 	 * storm in place of silence. */
+#if defined(DIATOM_PORT_ROTATE)
+	if (frames && n) audio_claim();
+#endif
 	if (g_audio && g_audio_dev[0] &&
 	    SDL_GetAudioDeviceStatus(g_audio) == SDL_AUDIO_STOPPED) {
 		diatom_port_log(DIATOM_LOG_WARN,
@@ -1214,6 +1271,7 @@ void diatom_port_level_invalidate(void)
 void diatom_port_present_stop(diatom_park park)
 {
 #if defined(DIATOM_PORT_ROTATE)
+	audio_release();   /* a pause or the end of a game: see audio_claim */
 	/* A pause keeps the window mapped with its last frame: the launcher
 	 * draws its menu first and then has sway move this window off, and on
 	 * resume brings it back before its own goes - so neither hand-over shows
