@@ -331,19 +331,26 @@ void retro_run(void)
 	 * would land during the warmup and prove less. */
 	if (crash_mode[0] && frame == crash_at) die(crash_mode);
 
-	/* STUBCORE_SPAM=log|printf: a core that writes every frame - a WARN
-	 * through libretro's log, or 64 KB of its own printf - for the log caps
+	/* STUBCORE_SPAM=log|printf|same: a core that writes every frame - a WARN
+	 * through libretro's log, 64 KB of its own printf, or 300 identical
+	 * WARNs - for the log caps
 	 * (plorpos-3yv.81). */
 	{
 		static int spam = -1;
 		if (spam < 0) {
 			const char *e = getenv("STUBCORE_SPAM");
-			spam = !e ? 0 : !strcmp(e, "log") ? 1 : !strcmp(e, "printf") ? 2 : 0;
+			spam = !e ? 0 : !strcmp(e, "log") ? 1 : !strcmp(e, "printf") ? 2
+			     : !strcmp(e, "same") ? 3 : 0;
 		}
 		if (spam == 1) {
 			struct retro_log_callback lc;
 			if (env(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &lc))
 				lc.log(RETRO_LOG_WARN, "stub: spam frame %u\n", frame);
+		} else if (spam == 3) {
+			struct retro_log_callback lc;
+			if (env(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &lc))
+				for (int k = 0; k < 300; k++)
+					lc.log(RETRO_LOG_WARN, "stub: the same line\n");
 		} else if (spam == 2) {
 			static char line[64 * 1024];
 			if (!line[0]) { memset(line, 'x', sizeof line - 2); line[sizeof line - 2] = '\n'; }

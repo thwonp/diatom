@@ -148,6 +148,8 @@ void diatom_env_suppress(uint32_t mask);
 /* Silence a core's DEBUG/INFO chatter once a game is running. See core_log in
  * env.c for the measurement that made this necessary. */
 void diatom_env_core_log_quiet(bool quiet);
+/* Says how many times the last core line repeated, if it did; a game's end. */
+void diatom_env_core_log_flush(void);
 
 /* Once per frame, each consuming its flag: whether the core polled the pad
  * during that frame's run(), and whether it sent RETRO_ENVIRONMENT_SHUTDOWN. */

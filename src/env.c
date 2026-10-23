@@ -125,6 +125,29 @@ void diatom_env_core_log_quiet(bool quiet)
 	g_core_log_quiet = core_log_all() ? false : quiet;
 }
 
+/* A line the same as the one before it is counted, not written: a core that
+ * says the same thing every frame - melonDS DS on Pokemon Pearl, "attempt to
+ * restore CPSR under bad mode", hundreds a frame and harmless - is one line
+ * and a count (plorpos-3yv.83). The count is said when something else is
+ * logged, and at the end of the game (diatom_env_core_log_flush). */
+static char              g_last[512];
+static diatom_log_level  g_last_level;
+static long              g_repeats;
+
+void diatom_env_core_log_flush(void)
+{
+	char msg[96];
+
+	if (g_repeats == 1) {
+		diatom_port_log(g_last_level, g_last);   /* once more reads better than a count */
+	} else if (g_repeats > 1) {
+		snprintf(msg, sizeof msg, "core log: the line above %ld more times", g_repeats);
+		diatom_port_log(g_last_level, msg);
+	}
+	g_repeats = 0;
+	g_last[0] = '\0';
+}
+
 static void core_log(enum retro_log_level level, const char *fmt, ...)
 {
 	char buf[512];
@@ -142,6 +165,10 @@ static void core_log(enum retro_log_level level, const char *fmt, ...)
 
 	buf[strcspn(buf, "\n")] = '\0';
 	if (!buf[0]) return;
+	if (!core_log_all() && !strcmp(buf, g_last)) { g_repeats++; return; }
+	diatom_env_core_log_flush();
+	snprintf(g_last, sizeof g_last, "%s", buf);
+	g_last_level = l;
 	diatom_port_log(l, buf);
 	if (--g_core_log_left == 0 && !core_log_all()) {
 		snprintf(buf, sizeof buf, "core log: %d lines this game, the rest dropped", CORE_LOG_LINES);
@@ -775,6 +802,7 @@ void diatom_env_bind(diatom_core *c, diatom_policy *p, diatom_port_caps *caps)
 	g_caps   = caps;
 	g_bound  = c;
 	g_core_log_left = CORE_LOG_LINES;
+	diatom_env_core_log_flush();
 
 	/* Bind the option table BEFORE set_environment: a core declares its
 	 * options from inside that call, and they must land in its own table. */

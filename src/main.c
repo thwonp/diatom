@@ -2127,6 +2127,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * another name: ActRaiser's 826 KB state took 0.58s, read as 59.53 for a
 	 * 60.10 loop. */
 	const uint64_t t_end = diatom_port_now_us();
+	diatom_env_core_log_flush();
 	log_guard_end();
 
 	if (g_terminate)
