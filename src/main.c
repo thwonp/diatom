@@ -210,6 +210,10 @@ static diatom_rect      g_dst;   /* locked at load - ADR-0011 */
  * budget - a 1% price for not calling malloc or open from a handler. */
 static volatile sig_atomic_t g_terminate;
 static bool g_quit_requested;   /* launcher said QUIT */
+/* --host-menu: something outside Diatom owns MENU (TortOS's PortMaster
+ * RetroArch stand-in, plorpos-3yv.86.6, runs it one-shot under a launcher
+ * that freezes the port and draws its own menu), so a tap is nothing here. */
+static bool g_host_menu;
 
 /* The pipe that lets a blocked poll notice the flag above. See
  * diatom_proto_wake_fd - the flag alone is not enough, because the signal may
@@ -503,6 +507,7 @@ static void usage(void)
 		"              [--cores <dir>]     map every core there before listening\n"
 		"              [--core-option key=value] ...   repeatable\n"
 		"              [--list-options]    what this core offers, then exit\n"
+		"              [--host-menu]       standalone, MENU belongs to the host: a tap does nothing\n"
 		"\n--firmware names a file the content needs, e.g. syscard3.pce for a PC\n"
 		"Engine CD. Diatom does not know which content needs what and will not\n"
 		"learn - it has no core list - so whoever launches it says (ADR-0017).\n"
@@ -1996,7 +2001,7 @@ static int run_session_inner(const diatom_session *sn)
 
 		if (menu_now || switcher_now || take_pause_request()) {
 			if (!diatom_proto_active()) {
-				stop = true;
+				if (!g_host_menu) stop = true;
 			} else {
 				uint64_t pause_t0 = diatom_port_now_us();
 				bool resumed = menu_pause(sn, switcher_now && !menu_now);
@@ -2312,6 +2317,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--socket") && i + 1 < argc) sock = argv[++i];
 		else if (!strcmp(argv[i], "--cores") && i + 1 < argc) cores_dir = argv[++i];
 		else if (!strcmp(argv[i], "--list-options")) list_options = true;
+		else if (!strcmp(argv[i], "--host-menu")) g_host_menu = true;
 		else if (!strcmp(argv[i], "--core-option") && i + 1 < argc) {
 			/* Recorded now, applied when the core declares its options - the
 			 * command line is parsed long before retro_set_environment runs. */
