@@ -157,6 +157,18 @@ def main():
         ck((d.line() or "").startswith("ERROR"), "an out-of-range speed is refused")
         ck(d.line("REWINDSPEED") == "REWINDSPEED\tevery=0", "leaving the speed as it was")
 
+        # Fast-forward hotkey speed (plorpos-pyz.5): 2..max, 4 by default.
+        d.send("FFSPEED")
+        ck(d.line("FFSPEED") == "FFSPEED\tspeed=4", "FFSPEED answers with the default 4")
+        d.send("SETFFSPEED\tspeed=8")
+        ck(d.line("FFSPEED") == "FFSPEED\tspeed=8", "SETFFSPEED answers with the new speed")
+        d.send("SETFFSPEED\tspeed=1")
+        ck((d.line() or "").startswith("ERROR\tcode=bad_ffspeed"), "1 is not a fast-forward speed")
+        ck(d.line("FFSPEED") == "FFSPEED\tspeed=8", "and the speed stays")
+        d.send("SETFFSPEED")
+        ck((d.line() or "").startswith("ERROR\tcode=bad_ffspeed"), "a bare SETFFSPEED is refused")
+        ck(d.line("FFSPEED") == "FFSPEED\tspeed=8", "leaving the speed as it was")
+
         # Hotkeys (ADR-0035): L1/R1/A/B bind too since plorpos-gkd.22 retired
         # the fixed display chord. The modifier is chosen, MENU by default
         # (plorpos-gkd.43.1, ADR-0038).

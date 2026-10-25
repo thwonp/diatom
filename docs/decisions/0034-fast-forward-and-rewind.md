@@ -223,3 +223,8 @@ and Muse over Bluetooth running: ~1.5 GB still available, one core busy
   does `SETHOTKEYS`. The budget stays fixed, so a slower speed is a shorter
   history - accepted by the player. No `proto=` bump, as with this ADR's
   other verbs: an older Diatom ignores it and keeps its default speed.
+- The fast-forward hotkey's speed is the player's too (plorpos-pyz.5):
+  `SETFFSPEED speed=N`, 2..`DIATOM_MAX_FF_SPEED` (the launcher offers 2, 4
+  and 8), `FFSPEED` asks, both answer `FFSPEED speed=N`. Reset to 4 at every
+  `RUN` and re-sent after it, as `SETREWINDSPEED` is; a press already held
+  keeps the speed it started at. No `proto=` bump, for the same reason.

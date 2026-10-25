@@ -892,6 +892,9 @@ static bool menu_pause(const diatom_session *sn, bool switcher)
  * an unrelated reason. Nothing in this fork drives both at once today, but
  * cheap to keep separate rather than to assume that stays true. */
 #define DIATOM_HOTKEY_FF_SPEED 4   /* within DIATOM_MAX_FF_SPEED; see rewind.c */
+/* The player's choice of it (plorpos-pyz.5): SETFFSPEED, reset at every RUN
+ * and re-sent by the launcher after it, as SETREWINDSPEED is. */
+static int g_hotkey_ff_speed = DIATOM_HOTKEY_FF_SPEED;
 
 /* Whether THIS mechanism is what currently has g_ff_speed/g_rewind_active
  * raised, so releasing a hotkey only ever undoes what a hotkey itself set -
@@ -973,7 +976,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		}
 	}
 
-	if (ff_held)                          { g_ff_speed = DIATOM_HOTKEY_FF_SPEED; g_hotkey_ff_active = true; }
+	if (ff_held)                          { g_ff_speed = g_hotkey_ff_speed; g_hotkey_ff_active = true; }
 	else if (g_hotkey_ff_active)          { g_ff_speed = 1; g_hotkey_ff_active = false; }
 	if (rewind_held)                      { g_rewind_active = true;  g_hotkey_rewind_active = true; }
 	else if (g_hotkey_rewind_active)      { g_rewind_active = false; g_hotkey_rewind_active = false; }
@@ -1447,6 +1450,17 @@ static bool state_plane_msg(const diatom_msg *m)
 			diatom_proto_send("ERROR\tcode=bad_rewindspeed\tmsg=%d", m->every);
 		diatom_proto_send("REWINDSPEED\tevery=%u", diatom_rewind_every());
 		return true;
+	case DIATOM_MSG_FFSPEED:
+		diatom_proto_send("FFSPEED\tspeed=%d", g_hotkey_ff_speed);
+		return true;
+	case DIATOM_MSG_SETFFSPEED:
+		/* Same shape as SETREWINDSPEED: idle or not, until the next RUN, and
+		 * answered either way. Takes hold at the next press of the hotkey;
+		 * one held now keeps the speed it started at. */
+		if (m->speed >= 2 && m->speed <= DIATOM_MAX_FF_SPEED) g_hotkey_ff_speed = m->speed;
+		else diatom_proto_send("ERROR\tcode=bad_ffspeed\tmsg=%d", m->speed);
+		diatom_proto_send("FFSPEED\tspeed=%d", g_hotkey_ff_speed);
+		return true;
 	default: return false;
 	}
 }
@@ -1658,6 +1672,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * restored into another is not a smaller rewind, it is a crash. */
 	diatom_rewind_reset(g_core);
 	g_ff_speed = 1;
+	g_hotkey_ff_speed = DIATOM_HOTKEY_FF_SPEED;
 	g_rewind_active = false;
 	g_ff_quieted_us = false;
 	/* Reset to no bindings, the same reason SETMAP is reset to identity on

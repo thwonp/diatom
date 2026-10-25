@@ -222,6 +222,8 @@ typedef enum {
 	DIATOM_MSG_SETREWIND,  /* engage/disengage stepping backward: `on` = 1 | 0 */
 	DIATOM_MSG_REWINDSPEED,    /* report the rewind speed: `every` */
 	DIATOM_MSG_SETREWINDSPEED, /* set it, 0 (off)..DIATOM_REWIND_MAX_EVERY: `every` */
+	DIATOM_MSG_FFSPEED,        /* report the fast-forward hotkey's speed: `speed` */
+	DIATOM_MSG_SETFFSPEED,     /* set it, 2..DIATOM_MAX_FF_SPEED: `speed` */
 	/* The hotkey submenu (sibling TortOS feature). The verbs are this repo's
 	 * (MIT); the bindings they set are ported from NextUI's OptionShortcuts_*
 	 * alongside the same rewind/FF port and are PolyForm Noncommercial -

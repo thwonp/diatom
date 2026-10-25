@@ -197,6 +197,8 @@ static void parse_line(char *line, diatom_msg *out)
 	else if (!strcmp(field, "SETREWIND"))  out->kind = DIATOM_MSG_SETREWIND;
 	else if (!strcmp(field, "REWINDSPEED"))    out->kind = DIATOM_MSG_REWINDSPEED;
 	else if (!strcmp(field, "SETREWINDSPEED")) out->kind = DIATOM_MSG_SETREWINDSPEED;
+	else if (!strcmp(field, "FFSPEED"))        out->kind = DIATOM_MSG_FFSPEED;
+	else if (!strcmp(field, "SETFFSPEED"))     out->kind = DIATOM_MSG_SETFFSPEED;
 	else if (!strcmp(field, "HOTKEYS"))    out->kind = DIATOM_MSG_HOTKEYS;
 	else if (!strcmp(field, "SETHOTKEYS")) out->kind = DIATOM_MSG_SETHOTKEYS;
 	else if (!strcmp(field, "DISC"))       out->kind = DIATOM_MSG_DISC;
