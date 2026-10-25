@@ -351,7 +351,7 @@ bool diatom_port_should_quit(void);
  * the launcher reads on its own screens. The port knows - it is what turns
  * a lone Menu into a tap on release, so the main loop never sees a held one.
  * A port without the hold returns false. */
-#define DIATOM_SWITCHER_HOLD_US 1000000ull
+#define DIATOM_SWITCHER_HOLD_US 700000ull
 bool diatom_port_take_switcher(void);
 
 /* What was last presented, as pixels: no domain nouns, and every backend

@@ -66,7 +66,7 @@ static bool state_plane_msg(const diatom_msg *m);
 static void levels_forget(void);
 static void apply_display(int mode, diatom_filter filter);
 /* Which DS screen is the big one: the swap hotkey's (plorpos-3yv.47). */
-/* Menu held a second, seen by the main loop itself (plorpos-gl5.4). */
+/* Menu held 700 ms, seen by the main loop itself (plorpos-gl5.4). */
 static bool g_menu_held_switcher;
 
 static diatom_core     *g_core;   /* resident, never unloaded - ADR-0006 */
@@ -1983,7 +1983,7 @@ static int run_session_inner(const diatom_session *sn)
 			uint32_t pressed = buttons & ~prev_buttons;
 
 			if (hotkeys_modifier() == DIATOM_BTN_MENU) {
-				/* Held alone a second: the switcher (TortOS plorpos-gl5.4).
+				/* Held alone 700 ms: the switcher (TortOS plorpos-gl5.4).
 				 * Only where the port hands Menu over raw - the Brick, the
 				 * GKD; the Rotate and H700 ports show it as a one-poll tap
 				 * and time the hold themselves (diatom_port_take_switcher). */
@@ -2008,7 +2008,7 @@ static int run_session_inner(const diatom_session *sn)
 				menu_now = (pressed & menu_bit) != 0;
 			}
 		}
-		/* Menu held a second: the switcher, which only a launcher has. */
+		/* Menu held 700 ms: the switcher, which only a launcher has. */
 		bool switcher_now = (diatom_port_take_switcher() || g_menu_held_switcher) &&
 		                    diatom_proto_active();
 
