@@ -34,6 +34,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#if defined(DIATOM_PORT_ROTATE)
+#include <alsa/asoundlib.h>
+#endif
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
@@ -192,64 +195,105 @@ static void audio_claim(void)
 /* The default PipeWire source, the internal mic: a stereo node whose LEFT
  * channel is an unfed ADC sitting at the rail and whose RIGHT channel is the
  * mic (main mic -> ADCL -> slot R, seq 138). So capture both and keep the
- * right one, rather than let a mono request average the mic with the rail. */
-#define MIC_CHANNEL 1
+ * right one, rather than let a mono request average the mic with the rail.
+ *
+ * On a thread of its own, through PipeWire's ALSA plugin rather than SDL:
+ * opening the source costs 40-285 ms (measured, cold), and done in the frame
+ * that first read the mic it was a visible stutter. SDL is no help there - it
+ * is not safe opening a device while another is opened or closed (see
+ * audio_open). The thread opens, reads and closes; the frame only copies out
+ * of a ring, and never waits. The first reads after a game starts listening
+ * come back empty while the source wakes, which a game hears as silence. */
+#define MIC_PCM      "pipewire"
+#define MIC_CHANNEL  1
 #define MIC_CHANNELS 2
+#define MIC_RING     16384           /* samples; > 100 ms at any rate a core asks */
 
-static SDL_AudioDeviceID g_mic;
-static unsigned g_mic_rate;     /* what the core asked for; SDL converts */
-static bool     g_mic_on;       /* the core has it running */
-/* A summary per stretch of capture, logged when the device goes: how much
- * came in and how loud, so a session shows the mic worked without a line per
- * frame (TortOS: no per-event lines on the card). */
-static uint64_t g_mic_samples, g_mic_dropped;
-static int      g_mic_peak;
-static double   g_mic_sq;
+static pthread_mutex_t g_mic_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_mic_cond = PTHREAD_COND_INITIALIZER;
+static bool     g_mic_thread_up;
+static bool     g_mic_want;         /* the thread should hold the device */
+static bool     g_mic_on;           /* the core has it running (main only) */
+static unsigned g_mic_rate;         /* what the core asked for; ALSA converts */
+static int16_t  g_mic_ring[MIC_RING];
+static size_t   g_mic_r, g_mic_n;   /* oldest sample, how many */
 
-static void mic_release(void)
+static void *mic_main(void *arg)
 {
-	char msg[160];
+	(void)arg;
+	pthread_mutex_lock(&g_mic_lock);
+	for (;;) {
+		snd_pcm_t *pcm = NULL;
+		unsigned rate;
+		uint64_t t0, got = 0, dropped = 0;
+		double sq = 0;
+		int peak = 0, err;
+		char msg[192];
 
-	if (!g_mic) return;
-	SDL_CloseAudioDevice(g_mic);
-	g_mic = 0;
-	snprintf(msg, sizeof msg,
-	         "mic: released after %llu samples (%llu dropped), peak %d, rms %.0f",
-	         (unsigned long long)g_mic_samples, (unsigned long long)g_mic_dropped,
-	         g_mic_peak, g_mic_samples ? sqrt(g_mic_sq / (double)g_mic_samples) : 0.0);
-	diatom_port_log(DIATOM_LOG_INFO, msg);
+		while (!g_mic_want) pthread_cond_wait(&g_mic_cond, &g_mic_lock);
+		rate = g_mic_rate;
+		g_mic_r = g_mic_n = 0;
+		pthread_mutex_unlock(&g_mic_lock);
+
+		t0 = diatom_port_now_us();
+		if ((err = snd_pcm_open(&pcm, MIC_PCM, SND_PCM_STREAM_CAPTURE, 0)) < 0 ||
+		    (err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16, SND_PCM_ACCESS_RW_INTERLEAVED,
+		                              MIC_CHANNELS, rate, 1, 20000)) < 0) {
+			snprintf(msg, sizeof msg, "mic: could not open %s: %s", MIC_PCM, snd_strerror(err));
+			diatom_port_log(DIATOM_LOG_WARN, msg);
+			if (pcm) snd_pcm_close(pcm);
+			pthread_mutex_lock(&g_mic_lock);
+			g_mic_want = false;          /* not again until the next read asks */
+			continue;
+		}
+		snprintf(msg, sizeof msg, "mic: capturing at %u Hz (%llu us, off the frame)",
+		         rate, (unsigned long long)(diatom_port_now_us() - t0));
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+
+		pthread_mutex_lock(&g_mic_lock);
+		while (g_mic_want) {
+			int16_t buf[MIC_CHANNELS * 256];
+			snd_pcm_sframes_t n;
+			size_t keep = rate / 10, i;
+
+			pthread_mutex_unlock(&g_mic_lock);
+			n = snd_pcm_readi(pcm, buf, 256);
+			if (n < 0) n = snd_pcm_recover(pcm, (int)n, 1) < 0 ? -1 : 0;
+			pthread_mutex_lock(&g_mic_lock);
+			if (n < 0) break;
+			/* Only the last ~100 ms: older input is a backlog, not the
+			 * present - a game that stopped reading (a pause) gets now. */
+			for (i = 0; i < (size_t)n; i++) {
+				int v = buf[i * MIC_CHANNELS + MIC_CHANNEL];
+
+				g_mic_ring[(g_mic_r + g_mic_n) % MIC_RING] = (int16_t)v;
+				if (g_mic_n < keep) g_mic_n++;
+				else { g_mic_r = (g_mic_r + 1) % MIC_RING; dropped++; }
+				if (abs(v) > peak) peak = abs(v);
+				sq += (double)v * v;
+			}
+			got += (uint64_t)n;
+		}
+		g_mic_want = false;
+		pthread_mutex_unlock(&g_mic_lock);
+		snd_pcm_close(pcm);
+		snprintf(msg, sizeof msg,
+		         "mic: released after %llu samples (%llu dropped), peak %d, rms %.0f",
+		         (unsigned long long)got, (unsigned long long)dropped, peak,
+		         got ? sqrt(sq / (double)got) : 0.0);
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+		pthread_mutex_lock(&g_mic_lock);
+	}
+	return NULL;
 }
 
-static bool mic_claim(void)
+/* Let go of the device: the thread closes it on its own time. Nothing here
+ * waits - this runs at a pause and the end of a game. */
+static void mic_release(void)
 {
-	SDL_AudioSpec want, have;
-	uint64_t t0 = diatom_port_now_us();
-	char msg[160];
-
-	if (g_mic) return true;
-	if (SDL_WasInit(SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
-		return false;
-	SDL_memset(&want, 0, sizeof want);
-	want.freq     = (int)g_mic_rate;
-	want.format   = AUDIO_S16SYS;
-	want.channels = MIC_CHANNELS;
-	want.samples  = 512;
-	g_mic = SDL_OpenAudioDevice(NULL, 1, &want, &have, 0);
-	if (!g_mic) {
-		snprintf(msg, sizeof msg, "mic: could not open the capture device: %s",
-		         SDL_GetError());
-		diatom_port_log(DIATOM_LOG_WARN, msg);
-		g_mic_on = false;      /* not again every frame */
-		return false;
-	}
-	SDL_PauseAudioDevice(g_mic, 0);
-	g_mic_samples = g_mic_dropped = 0;
-	g_mic_peak = 0;
-	g_mic_sq = 0;
-	snprintf(msg, sizeof msg, "mic: capturing at %d Hz (%llu us)", have.freq,
-	         (unsigned long long)(diatom_port_now_us() - t0));
-	diatom_port_log(DIATOM_LOG_INFO, msg);
-	return true;
+	pthread_mutex_lock(&g_mic_lock);
+	g_mic_want = false;
+	pthread_mutex_unlock(&g_mic_lock);
 }
 
 bool diatom_port_mic_open(unsigned rate)
@@ -265,47 +309,40 @@ void diatom_port_mic_close(void)
 	mic_release();
 }
 
+/* Opened at the first read, not here. melonDS DS turns the mic on as a game
+ * starts and then reads only while the game listens - Pokemon Pearl's title
+ * read 0 samples in 25 s - so opening here would hold the codec's ADC up
+ * through every DS game. */
 void diatom_port_mic_run(bool on)
 {
 	g_mic_on = on;
-	/* Opened at the first read, not here. melonDS DS turns the mic on as a
-	 * game starts and then reads only while the game listens - Pokemon
-	 * Pearl's title read 0 samples in 25 s - so opening here would hold the
-	 * codec's ADC up through every DS game. The price is one open (50-280
-	 * ms measured, cold PipeWire source) when a game first listens. */
 	if (!on) mic_release();
 }
 
 size_t diatom_port_mic_read(int16_t *mono, size_t max)
 {
-	int16_t buf[MIC_CHANNELS * 512];
-	size_t keep = g_mic_rate / 10, got = 0, avail;
+	size_t got = 0;
 
-	if (!g_mic_on || !mono || !max || !mic_claim()) return 0;
-	avail = SDL_GetQueuedAudioSize(g_mic) / (MIC_CHANNELS * sizeof(int16_t));
-	/* Only the last ~100 ms: older input is a backlog, not the present. */
-	while (avail > keep) {
-		size_t n = avail - keep > 512 ? 512 : avail - keep;
-		SDL_DequeueAudio(g_mic, buf, (Uint32)(n * sizeof buf[0] * MIC_CHANNELS));
-		g_mic_dropped += n;
-		avail -= n;
-	}
-	while (got < max && got < avail) {
-		size_t n = max - got, i;
-		if (n > avail - got) n = avail - got;
-		if (n > 512) n = 512;
-		n = SDL_DequeueAudio(g_mic, buf, (Uint32)(n * sizeof buf[0] * MIC_CHANNELS))
-		    / (MIC_CHANNELS * sizeof(int16_t));
-		if (!n) break;
-		for (i = 0; i < n; i++) {
-			int v = buf[i * MIC_CHANNELS + MIC_CHANNEL];
-			mono[got + i] = (int16_t)v;
-			if (abs(v) > g_mic_peak) g_mic_peak = abs(v);
-			g_mic_sq += (double)v * v;
+	if (!g_mic_on || !mono || !max) return 0;
+	pthread_mutex_lock(&g_mic_lock);
+	if (!g_mic_want) {
+		if (!g_mic_thread_up) {
+			pthread_t t;
+
+			if (pthread_create(&t, NULL, mic_main, NULL) == 0) {
+				pthread_detach(t);
+				g_mic_thread_up = true;
+			}
 		}
-		got += n;
+		g_mic_want = g_mic_thread_up;
+		pthread_cond_signal(&g_mic_cond);
 	}
-	g_mic_samples += got;
+	while (got < max && g_mic_n) {
+		mono[got++] = g_mic_ring[g_mic_r];
+		g_mic_r = (g_mic_r + 1) % MIC_RING;
+		g_mic_n--;
+	}
+	pthread_mutex_unlock(&g_mic_lock);
 	return got;
 }
 #endif

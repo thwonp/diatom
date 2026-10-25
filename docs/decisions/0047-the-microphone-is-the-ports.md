@@ -42,13 +42,24 @@ takes it back. A read returns at most ~100 ms of input: a backlog after a
 pause is dropped. Per-stretch summaries (samples, dropped, peak, rms) are
 logged when the device goes, never per frame.
 
+On the Rotate the device lives on a thread of its own, through PipeWire's ALSA
+plugin (`pipewire` PCM), not SDL: the first version opened an SDL capture
+device inside the frame that first read it, a visible 40-285 ms stutter, and
+SDL is not safe opening one device while another is opened or closed. The
+thread opens, reads and closes; the frame copies out of a ring and never
+waits. Reads in the first few hundred ms after a game starts listening come
+back empty while the source wakes, which the game hears as silence.
+
 ## Consequences
 
-- A DS game that listens pays one open (40-285 ms) the first time it does,
-  and again after each pause. A game that never listens never opens it.
+- A DS game that listens gets silence for the open (40-310 ms, off the
+  frame) the first time it does, and again after each pause. A game that
+  never listens never opens it.
 - Nothing is open across a system suspend, so .75.1 cannot happen in a game.
 - Ports without a mic refuse the interface; their cores substitute silence
   as before.
 - Verified with the stub core (`STUBCORE_MIC=1`) on the Rotate: 10 s silent
-  room rms 33-118, the same with a 1 kHz tone from the speaker rms ~5000,
-  0 dropped, 59.73 fps unchanged.
+  room rms ~40, with a 1 kHz tone from the speaker rms ~2100 (the same tone
+  read directly: `arecord -D pipewire` 2703, `pw-record` 2719 - so the level
+  is the source's own), 0 dropped, 59.73 fps, warmup 13-18 ms. The SDL
+  version had read ~5000 for the tone; the ALSA level matches pw-record.

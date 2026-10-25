@@ -196,6 +196,7 @@ ifeq ($(PORT),rotate)
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -Wl,--allow-shlib-undefined
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
+  LDFLAGS += -lasound   # the mic thread, through PipeWire's ALSA plugin
 endif
 
 .PHONY: all clean check check-seam check-proto check-port check-register check-register-diff \

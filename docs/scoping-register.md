@@ -933,6 +933,12 @@ Two levers the spike discovered:
       music sent 0 of 1360466 samples non-zero, and Eric heard no click at the
       10 ms fade. check-stateplane reads the fade back from the tap.
 
+- [x] **[OPEN]** **Does a core get the device's microphone?** →
+      **[ADR-0047](decisions/0047-the-microphone-is-the-ports.md)**
+      *(Accepted)*. The libretro interface over a port capture API, only where
+      `caps.mic`. The Rotate captures on a thread (PipeWire's ALSA plugin), so
+      the frame never waits on an open; stub core: 0 dropped, 59.73 fps.
+
 ---
 
 ## 8. Input
