@@ -2489,6 +2489,13 @@ int main(int argc, char **argv)
 			sn.disc       = m.disc;
 			sn.mode   = start_mode;
 			sn.filter = start_filter;
+			/* The game's own mode from its first frame. Sent after RUN, as
+			 * SETDISPLAY, it arrived only after the warmup had put three
+			 * frames on the panel in this one - a GBA set to Aspect or a
+			 * DS layout flashed full-screen on every launch (TortOS,
+			 * 2026-10-25). Unknown or absent: the start mode, as before. */
+			for (int k = 0; m.dmode[0] && k < diatom_mode_count; k++)
+				if (!strcmp(diatom_modes[k].name, m.dmode)) { sn.mode = k; break; }
 			run_session(&sn);   /* its own ERROR/EXIT is the report */
 
 			/* The options the launcher sent were for THAT game. Cores are

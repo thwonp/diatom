@@ -268,6 +268,20 @@ send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so")
 drain(3.0); send("STOP"); drain(2.0)
 check_that("the next RUN without save= is back on --save",
            os.path.exists(f"{SAVE_DEFAULT}/stubcore.probe"), os.listdir(SAVE_DEFAULT))
+# --- RUN mode=: the first frame in the game's own mode (TortOS 2026-10-25) --
+# SETDISPLAY after RUN lands after the warmup's three frames, so a GBA in
+# Aspect or a DS layout flashed full-screen first. The mode rides on RUN.
+send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so\tmode=integer")
+got = drain(3.0); send("STOP"); drain(2.0)
+disp = [l for l in got if l.startswith("DISPLAY\t")]
+check_that("RUN mode= is the mode of the first DISPLAY",
+           disp and disp[0].startswith("DISPLAY\tmode=integer"), got)
+send(f"RUN\tcore={ROOT}/build/desktop/stubcore.so\tmode=nonsense")
+got = drain(3.0); send("STOP"); drain(2.0)
+disp = [l for l in got if l.startswith("DISPLAY\t")]
+check_that("an unknown RUN mode= falls back to the start mode",
+           disp and disp[0].startswith("DISPLAY\tmode=stretch")
+           and not any(l.startswith("ERROR") for l in got), got)
 # --- battery saves, game after game in one resident (plorpos-gkd.75) -------
 # The stub's SRAM changes at frame 30 of every game. Each game must get its
 # .srm, not only the first: the writer thread is started per game, and once
