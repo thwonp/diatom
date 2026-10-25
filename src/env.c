@@ -176,6 +176,63 @@ static void core_log(enum retro_log_level level, const char *fmt, ...)
 	}
 }
 
+/* ---- the microphone (TortOS plorpos-3yv.75) -----------------------------
+ *
+ * The libretro interface over diatom_port_mic_*: one mic, the port's. The
+ * handle is a token - the state is the port's - and it stays valid until the
+ * core closes it, across pauses and games, as the interface promises; the port
+ * lets the device itself go at each pause and takes it back on the next read. */
+struct retro_microphone { int unused; };
+static struct retro_microphone g_mic;
+static bool     g_mic_open, g_mic_active;
+static unsigned g_mic_rate;
+
+static retro_microphone_t *RETRO_CALLCONV mic_open(const retro_microphone_params_t *p)
+{
+	unsigned rate = p && p->rate ? p->rate : (unsigned)g_caps->audio_rate;
+
+	if (g_mic_open || !diatom_port_mic_open(rate)) return NULL;
+	g_mic_open   = true;
+	g_mic_active = false;
+	g_mic_rate   = rate;
+	diatom_port_log(DIATOM_LOG_INFO, "core opened the microphone");
+	return &g_mic;
+}
+
+static void RETRO_CALLCONV mic_close(retro_microphone_t *m)
+{
+	if (m != &g_mic || !g_mic_open) return;
+	diatom_port_mic_close();
+	g_mic_open = g_mic_active = false;
+}
+
+static bool RETRO_CALLCONV mic_get_params(const retro_microphone_t *m,
+                                          retro_microphone_params_t *p)
+{
+	if (m != &g_mic || !g_mic_open || !p) return false;
+	p->rate = g_mic_rate;      /* the port converts to what was asked for */
+	return true;
+}
+
+static bool RETRO_CALLCONV mic_set_state(retro_microphone_t *m, bool on)
+{
+	if (m != &g_mic || !g_mic_open) return false;
+	g_mic_active = on;
+	diatom_port_mic_run(on);
+	return true;
+}
+
+static bool RETRO_CALLCONV mic_get_state(const retro_microphone_t *m)
+{
+	return m == &g_mic && g_mic_open && g_mic_active;
+}
+
+static int RETRO_CALLCONV mic_read(retro_microphone_t *m, int16_t *samples, size_t n)
+{
+	if (m != &g_mic || !g_mic_open || !g_mic_active) return -1;
+	return (int)diatom_port_mic_read(samples, n);
+}
+
 static bool env_cb(unsigned cmd, void *data)
 {
 	switch (MASK(cmd)) {
@@ -248,6 +305,21 @@ static bool env_cb(unsigned cmd, void *data)
 		 * device rate natively and skip resampling entirely. */
 		*(unsigned *)data = (unsigned)g_caps->audio_rate;
 		return true;
+	case MASK(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE): {
+		/* Only where there is one: refused, a core substitutes silence and
+		 * says so once, rather than failing an open every game. */
+		struct retro_microphone_interface *mi = data;
+
+		if (!g_caps->mic || !mi) return false;
+		mi->interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+		mi->open_mic      = mic_open;
+		mi->close_mic     = mic_close;
+		mi->get_params    = mic_get_params;
+		mi->set_mic_state = mic_set_state;
+		mi->get_mic_state = mic_get_state;
+		mi->read_mic      = mic_read;
+		return true;
+	}
 	case MASK(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE):
 		*(int *)data = 3;              /* both enabled; asked every frame */
 		return true;

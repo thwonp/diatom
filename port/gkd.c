@@ -33,6 +33,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
@@ -184,6 +185,128 @@ static void audio_claim(void)
 	snprintf(msg, sizeof msg, "audio: claimed the sink (%llu us)",
 	         (unsigned long long)(diatom_port_now_us() - t0));
 	diatom_port_log(DIATOM_LOG_INFO, msg);
+}
+
+/* ---------- the microphone (TortOS plorpos-3yv.75) ------------------------ */
+
+/* The default PipeWire source, the internal mic: a stereo node whose LEFT
+ * channel is an unfed ADC sitting at the rail and whose RIGHT channel is the
+ * mic (main mic -> ADCL -> slot R, seq 138). So capture both and keep the
+ * right one, rather than let a mono request average the mic with the rail. */
+#define MIC_CHANNEL 1
+#define MIC_CHANNELS 2
+
+static SDL_AudioDeviceID g_mic;
+static unsigned g_mic_rate;     /* what the core asked for; SDL converts */
+static bool     g_mic_on;       /* the core has it running */
+/* A summary per stretch of capture, logged when the device goes: how much
+ * came in and how loud, so a session shows the mic worked without a line per
+ * frame (TortOS: no per-event lines on the card). */
+static uint64_t g_mic_samples, g_mic_dropped;
+static int      g_mic_peak;
+static double   g_mic_sq;
+
+static void mic_release(void)
+{
+	char msg[160];
+
+	if (!g_mic) return;
+	SDL_CloseAudioDevice(g_mic);
+	g_mic = 0;
+	snprintf(msg, sizeof msg,
+	         "mic: released after %llu samples (%llu dropped), peak %d, rms %.0f",
+	         (unsigned long long)g_mic_samples, (unsigned long long)g_mic_dropped,
+	         g_mic_peak, g_mic_samples ? sqrt(g_mic_sq / (double)g_mic_samples) : 0.0);
+	diatom_port_log(DIATOM_LOG_INFO, msg);
+}
+
+static bool mic_claim(void)
+{
+	SDL_AudioSpec want, have;
+	uint64_t t0 = diatom_port_now_us();
+	char msg[160];
+
+	if (g_mic) return true;
+	if (SDL_WasInit(SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
+		return false;
+	SDL_memset(&want, 0, sizeof want);
+	want.freq     = (int)g_mic_rate;
+	want.format   = AUDIO_S16SYS;
+	want.channels = MIC_CHANNELS;
+	want.samples  = 512;
+	g_mic = SDL_OpenAudioDevice(NULL, 1, &want, &have, 0);
+	if (!g_mic) {
+		snprintf(msg, sizeof msg, "mic: could not open the capture device: %s",
+		         SDL_GetError());
+		diatom_port_log(DIATOM_LOG_WARN, msg);
+		g_mic_on = false;      /* not again every frame */
+		return false;
+	}
+	SDL_PauseAudioDevice(g_mic, 0);
+	g_mic_samples = g_mic_dropped = 0;
+	g_mic_peak = 0;
+	g_mic_sq = 0;
+	snprintf(msg, sizeof msg, "mic: capturing at %d Hz (%llu us)", have.freq,
+	         (unsigned long long)(diatom_port_now_us() - t0));
+	diatom_port_log(DIATOM_LOG_INFO, msg);
+	return true;
+}
+
+bool diatom_port_mic_open(unsigned rate)
+{
+	g_mic_rate = rate ? rate : AUDIO_RATE;
+	g_mic_on = false;
+	return true;
+}
+
+void diatom_port_mic_close(void)
+{
+	g_mic_on = false;
+	mic_release();
+}
+
+void diatom_port_mic_run(bool on)
+{
+	g_mic_on = on;
+	/* Opened at the first read, not here. melonDS DS turns the mic on as a
+	 * game starts and then reads only while the game listens - Pokemon
+	 * Pearl's title read 0 samples in 25 s - so opening here would hold the
+	 * codec's ADC up through every DS game. The price is one open (50-280
+	 * ms measured, cold PipeWire source) when a game first listens. */
+	if (!on) mic_release();
+}
+
+size_t diatom_port_mic_read(int16_t *mono, size_t max)
+{
+	int16_t buf[MIC_CHANNELS * 512];
+	size_t keep = g_mic_rate / 10, got = 0, avail;
+
+	if (!g_mic_on || !mono || !max || !mic_claim()) return 0;
+	avail = SDL_GetQueuedAudioSize(g_mic) / (MIC_CHANNELS * sizeof(int16_t));
+	/* Only the last ~100 ms: older input is a backlog, not the present. */
+	while (avail > keep) {
+		size_t n = avail - keep > 512 ? 512 : avail - keep;
+		SDL_DequeueAudio(g_mic, buf, (Uint32)(n * sizeof buf[0] * MIC_CHANNELS));
+		g_mic_dropped += n;
+		avail -= n;
+	}
+	while (got < max && got < avail) {
+		size_t n = max - got, i;
+		if (n > avail - got) n = avail - got;
+		if (n > 512) n = 512;
+		n = SDL_DequeueAudio(g_mic, buf, (Uint32)(n * sizeof buf[0] * MIC_CHANNELS))
+		    / (MIC_CHANNELS * sizeof(int16_t));
+		if (!n) break;
+		for (i = 0; i < n; i++) {
+			int v = buf[i * MIC_CHANNELS + MIC_CHANNEL];
+			mono[got + i] = (int16_t)v;
+			if (abs(v) > g_mic_peak) g_mic_peak = abs(v);
+			g_mic_sq += (double)v * v;
+		}
+		got += n;
+	}
+	g_mic_samples += got;
+	return got;
 }
 #endif
 
@@ -352,6 +475,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	out->audio_buffer_frames = g_audio ? AUDIO_BUFFER_FRAMES : 0;
 	out->present_blocks     = false;
 #if defined(DIATOM_PORT_ROTATE)
+	out->mic                = true;
 	/* Opened above only to find out whether there is sound at all - the caps
 	 * say so. The shelf comes next; the first game's first write claims it. */
 	audio_release();
@@ -362,6 +486,9 @@ bool diatom_port_init(diatom_port_caps *out)
 void diatom_port_shutdown(void)
 {
 	if (g_audio)    SDL_CloseAudioDevice(g_audio);
+#if defined(DIATOM_PORT_ROTATE)
+	mic_release();
+#endif
 	if (g_gl) {
 		gkdgl_shutdown();
 		SDL_GL_DeleteContext(g_gl);
@@ -1272,6 +1399,7 @@ void diatom_port_present_stop(diatom_park park)
 {
 #if defined(DIATOM_PORT_ROTATE)
 	audio_release();   /* a pause or the end of a game: see audio_claim */
+	mic_release();     /* and the mic: the next read takes it back */
 	/* A pause keeps the window mapped with its last frame: the launcher
 	 * draws its menu first and then has sway move this window off, and on
 	 * resume brings it back before its own goes - so neither hand-over shows
@@ -1293,6 +1421,12 @@ void diatom_port_mute_set(bool on) { g_muted = on; }
 bool diatom_port_mute_get(void) { return g_muted; }
 
 #if !defined(DIATOM_PORT_ROTATE)
+/* No microphone on the GKD (diatom_port.h). */
+bool   diatom_port_mic_open(unsigned rate) { (void)rate; return false; }
+void   diatom_port_mic_close(void) {}
+void   diatom_port_mic_run(bool on) { (void)on; }
+size_t diatom_port_mic_read(int16_t *mono, size_t max) { (void)mono; (void)max; return 0; }
+
 /* The GKD draws a DS split but has no panel. */
 bool diatom_port_pointer(int16_t *x, int16_t *y) { (void)x; (void)y; return false; }
 #endif

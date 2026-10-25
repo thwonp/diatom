@@ -61,6 +61,7 @@ typedef struct {
 	int  audio_rate;            /* what the device actually runs at */
 	int  audio_buffer_frames;   /* capacity; DRC needs this, not just queued */
 	bool present_blocks;        /* does present() wait for vblank? */
+	bool mic;                   /* has a microphone: diatom_port_mic_* work */
 } diatom_port_caps;
 
 /* Canonical Diatom buttons. Digital only - ADR-0003, no analog axes anywhere.
@@ -226,6 +227,25 @@ void diatom_port_split(bool on, diatom_rect top, diatom_rect bot);
  * bottom screen, in the whole frame's -0x7fff..0x7fff (top half is screen 1,
  * bottom half screen 2). True while pressed. A port with no panel: false. */
 bool diatom_port_pointer(int16_t *x, int16_t *y);
+
+/* The microphone, for the libretro microphone interface (TortOS
+ * plorpos-3yv.75). One mic, mono S16 at the rate asked for at open - the port
+ * converts. Opened stopped; run(true) starts capture, run(false) stops it and
+ * lets the device go. read returns what has arrived since the last read, at
+ * most `max` samples and never more than ~100 ms behind: a game that did not
+ * read for a while (a pause) gets the present, not a backlog. NEVER blocks.
+ *
+ * The port lets the device go by itself at a pause or the end of a game, as
+ * it does the sink, and takes it back at the next read while running: a
+ * capture held across a system suspend stalls on the Rotate (.75.1), and an
+ * open capture device keeps the codec's ADC powered.
+ *
+ * A port without one (caps.mic false): open returns false, the rest do
+ * nothing and read returns 0. */
+bool   diatom_port_mic_open(unsigned rate);
+void   diatom_port_mic_close(void);
+void   diatom_port_mic_run(bool on);
+size_t diatom_port_mic_read(int16_t *mono, size_t max);
 
 /* Interleaved stereo S16 at caps.audio_rate. NEVER blocks; drops on overflow.
  * A blocking write is a legitimate sync strategy but is incompatible with

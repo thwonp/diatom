@@ -38,6 +38,10 @@
  * core's, outlive the game, and whose first byte goes up by one at frame 30 of
  * every game - a save, as far as the frontend can tell.
  *
+ * STUBCORE_MIC=1 opens the frontend's microphone at 48 kHz and reads it every
+ * frame, and at unload logs how many samples came and how loud (TortOS
+ * plorpos-3yv.75): a mic consumer that, unlike a DS game, always listens.
+ *
  * It also exposes a small, entirely predictable block of system RAM, so the
  * achievement path has bytes to watch without an emulator. See sysram below.
  *
@@ -227,6 +231,12 @@ static const struct retro_input_descriptor descriptors[] = {
 	{ 0 }
 };
 
+static struct retro_microphone_interface mic_if;
+static retro_microphone_t *mic;
+static unsigned long long mic_n;
+static int mic_peak;
+static double mic_sq;
+
 bool retro_load_game(const struct retro_game_info *game)
 {
 	enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_RGB565;
@@ -256,11 +266,45 @@ bool retro_load_game(const struct retro_game_info *game)
 			if ((f = fopen(path, "w"))) fclose(f);
 		}
 	}
+	if (getenv("STUBCORE_MIC") && env) {
+		retro_microphone_params_t p = { 48000 };
+
+		memset(&mic_if, 0, sizeof mic_if);
+		mic_if.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+		mic_n = 0; mic_peak = 0; mic_sq = 0;
+		if (env(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, &mic_if) &&
+		    (mic = mic_if.open_mic(&p)) && !mic_if.set_mic_state(mic, true)) {
+			mic_if.close_mic(mic);
+			mic = NULL;
+		}
+	}
 	return env && env(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
 }
 bool retro_load_game_special(unsigned t, const struct retro_game_info *i, size_t n)
 { (void)t; (void)i; (void)n; return false; }
-void retro_unload_game(void) { }
+static void mic_frame(void)
+{
+	int16_t buf[2048];
+	int n, i;
+
+	if (!mic) return;
+	n = mic_if.read_mic(mic, buf, sizeof buf / sizeof buf[0]);
+	for (i = 0; i < n; i++) {
+		int v = buf[i] < 0 ? -buf[i] : buf[i];
+		if (v > mic_peak) mic_peak = v;
+		mic_sq += (double)buf[i] * buf[i];
+	}
+	if (n > 0) mic_n += (unsigned long long)n;
+}
+
+void retro_unload_game(void)
+{
+	if (!mic) return;
+	fprintf(stderr, "stubcore: mic %llu samples, peak %d, rms %.0f\n",
+	        mic_n, mic_peak, mic_n ? sqrt(mic_sq / (double)mic_n) : 0.0);
+	mic_if.close_mic(mic);
+	mic = NULL;
+}
 unsigned retro_get_region(void) { return RETRO_REGION_PAL; }
 
 size_t retro_serialize_size(void) { return sizeof frame; }
@@ -326,6 +370,7 @@ void retro_run(void)
 	size_t n, i;
 	int16_t held;
 
+	mic_frame();
 	/* Die from inside retro_run, on a frame late enough that RUNNING has long
 	 * gone out and the frontend is in its steady loop. Doing it on frame 0
 	 * would land during the warmup and prove less. */
