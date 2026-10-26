@@ -557,6 +557,46 @@ static void test_no_game_no_questions(void)
 	CHECK(mem_calls > 0, "and it does ask once the game is loaded");
 }
 
+/* A map is not clamped to a SYSTEM_RAM size the core under-reports.
+ *
+ * REGRESSION, plorpos-3yv.107.5. libretro mGBA hands back the GBA's 256 KB
+ * EWRAM as SYSTEM_RAM and sizes it at 32 KB. Its map describes EWRAM
+ * honestly; clamping the map to that size left 224 KB unreadable, and GBA
+ * achievements reading it never fired. */
+static uint8_t g_ewram[0x40000], g_iwram[0x8000];
+
+static void *gba_data(unsigned id)
+{
+	return id == RETRO_MEMORY_SYSTEM_RAM ? g_ewram : NULL;
+}
+
+static size_t gba_size(unsigned id)
+{
+	return id == RETRO_MEMORY_SYSTEM_RAM ? 0x8000 : 0;   /* mGBA's answer */
+}
+
+static void test_undersized_system_ram(void)
+{
+	static struct retro_memory_descriptor d[2];
+	struct retro_memory_map mm = { d, 2 };
+
+	printf("a map over an under-reported SYSTEM_RAM, GBA:\n");
+	console_reset();
+	g_core.get_memory_data = gba_data;
+	g_core.get_memory_size = gba_size;
+	diatom_cheevos_set_console(RC_CONSOLE_GAMEBOY_ADVANCE);
+	memset(d, 0, sizeof d);
+	d[0].ptr = g_iwram; d[0].start = 0x03000000; d[0].len = sizeof g_iwram; d[0].select = 0xFF000000;
+	d[1].ptr = g_ewram; d[1].start = 0x02000000; d[1].len = sizeof g_ewram; d[1].select = 0xFF000000;
+	diatom_cheevos_note_map(&mm);
+
+	CHECK(diatom_cheevos_resolve(&g_core) == sizeof g_iwram + sizeof g_ewram,
+	      "IWRAM and all of EWRAM readable");
+	g_ewram[0x3ffff] = 0x42;
+	CHECK(diatom_cheevos_peek(0x8000 + 0x3ffff, 1, NULL) == 0x42,
+	      "the last byte of EWRAM, past the 32 KB the core reported");
+}
+
 int main(void)
 {
 	printf("cheevos: address space and evaluation\n");
@@ -567,6 +607,7 @@ int main(void)
 	test_end_to_end();
 	test_runtime_reset();
 	test_no_game_no_questions();
+	test_undersized_system_ram();
 	measure_cost();
 	if (g_set_path[0]) unlink(g_set_path);
 

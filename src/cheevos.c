@@ -308,19 +308,21 @@ static void blocks_of(diatom_core *c, core_blocks *b)
  * clamp ever firing, which needs a span measured shorter than its descriptor
  * claims, and no build carrying this code has run on the device yet.
  *
- * The three blocks retro_get_memory_data answers for are the only memory
- * whose true size can be asked for, so a pointer inside one of them is
- * clamped to the end of it. A pointer belonging to none is left alone rather
- * than rejected: cores describe memory through their map that they expose by
- * no other route, and refusing to read it would break every core whose map is
- * honest to fix a hypothetical one whose window overruns. */
+ * Only save RAM is clamped - the block where a window wider than its
+ * allocation is real (MBC2). retro_get_memory_size is no better an answer
+ * than the map for the other two: libretro mGBA hands back the GBA's 256 KB
+ * work RAM as SYSTEM_RAM and sizes it at the Game Boy's 32 KB, and clamping
+ * to that turned 224 KB of EWRAM into a hole, so every GBA achievement
+ * reading it never fired (plorpos-3yv.107.5). A pointer outside save RAM is
+ * left alone: cores describe memory through their map that they expose by
+ * no other route, and refusing to read it would break every core whose map
+ * is honest to fix a hypothetical one whose window overruns. */
 static size_t bytes_behind(const core_blocks *b, const uint8_t *p)
 {
-	int i;
+	const int save = 1;                      /* blocks_of's RETRO_MEMORY_SAVE_RAM */
 
-	for (i = 0; i < 3; i++)
-		if (b->base[i] && p >= b->base[i] && p < b->base[i] + b->size[i])
-			return (size_t)(b->base[i] + b->size[i] - p);
+	if (b->base[save] && p >= b->base[save] && p < b->base[save] + b->size[save])
+		return (size_t)(b->base[save] + b->size[save] - p);
 	return (size_t)-1;                       /* not ours to bound */
 }
 
