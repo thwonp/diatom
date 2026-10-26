@@ -111,7 +111,7 @@ ifeq ($(PORT),h700)
   CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(128u * 1024 * 1024)' \
-             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+             -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
   # The SP's panel runs at ~59.6 Hz, below most cores: play is paced by the
   # panel (every frame shown, ~0.8% slow) - diatom_port_pace.
   CFLAGS  += -DDIATOM_PORT_PACED
@@ -139,7 +139,7 @@ ifeq ($(PORT),brick)
   # in a game; only PlayStation (~110 KB a delta) reaches it, at ~1160
   # entries, ~19 s. The ring is freed at the end of every game.
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(128u * 1024 * 1024)' \
-             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+             -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
   LDFLAGS += -L$(SYSROOT)/usr/trimui/lib -Wl,-rpath-link,$(SYSROOT)/usr/trimui/lib
   # Explicit -ldl/-lpthread: the toolchain's glibc 2.31 predates their merge
   # into libc proper (2.34).
@@ -161,9 +161,11 @@ ifeq ($(PORT),gkd)
   # ~1.5 GB free in a game (plorpos-gkd.38), a snapshot every 5 frames so
   # rewind plays at 5x. Since LZ4 (plorpos-gkd.59) the 1800-entry cap binds
   # first for every system: ~30 s of hold, ~150 s of play. PlayStation comes
-  # closest to the budget (~180 MB at the cap, measured in flight).
+  # closest to the budget (~180 MB at the cap, measured in flight). The build
+  # default is off (plorpos-3yv.93): the launcher's SETREWINDSPEED turns it on
+  # per run (5 = 5x), and a one-shot run (a PortMaster port) has no rewind.
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
-             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+             -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
   # Resident cores: 16, not the Brick's 8. The GKD has nine cores today and
   # PICO-8's fake08 was the one refused at 8 (plorpos-gkd.50.2). Each stays
   # mapped once played; FBNeo, the largest, is ~38 MB against ~1.5 GB free.
@@ -191,7 +193,7 @@ ifeq ($(PORT),rotate)
   CFLAGS  += -DDIATOM_PORT_ROTATE
   # The GKD's budgets: ~2 GB free idle (sway and PipeWire included).
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
-             -DDIATOM_REWIND_CAPTURE_EVERY=5 -DDIATOM_REWIND_MAX_DEPTH=1800
+             -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -Wl,--allow-shlib-undefined
