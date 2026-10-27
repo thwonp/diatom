@@ -129,3 +129,13 @@ that was already correct on Genesis and is unchanged by it.
   means the ownership split is the wrong model rather than a working one.
 - A launcher wants the mode to survive `RUN` without re-sending it, which would
   mean the reset rule is wrong here even though it is right for the remap table.
+
+### DS pause previews (plorpos-46o.16, 2026-10-27)
+
+For two-screen layouts, `DISPLAY` also reports optional `top=WxH+X+Y` and
+`bottom=WxH+X+Y` destinations in panel pixels. They come from the same
+`diatom_ds_rects` calculation used to draw gameplay. The preview stays the raw
+stacked core frame: the launcher crops its top/bottom halves and places each
+at the reported destination. This preserves Focus Top, Focus Bottom and Even
+Split behind menus without duplicating layout arithmetic in the launcher.
+Single-frame replies omit both fields; older consumers ignore the extension.

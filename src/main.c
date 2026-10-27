@@ -529,6 +529,7 @@ static const char *filter_name(diatom_filter f)
 static void apply_display(int mode, diatom_filter filter)
 {
 	diatom_rect top, bot;
+	char screens[128] = "";
 
 	g_mode   = mode;
 	g_filter = filter;
@@ -538,6 +539,10 @@ static void apply_display(int mode, diatom_filter filter)
 	if (diatom_ds_rects(diatom_modes[mode].mode, g_base_w, g_base_h,
 	                    g_caps.surface_w, g_caps.surface_h, &top, &bot)) {
 		diatom_port_split(true, top, bot);
+		/* The preview is the raw stacked core frame. Its consumer needs
+		 * both actual destinations, not the single-frame fallback rect. */
+		snprintf(screens, sizeof screens, "\ttop=%dx%d+%d+%d\tbottom=%dx%d+%d+%d",
+		         top.w, top.h, top.x, top.y, bot.w, bot.h, bot.x, bot.y);
 		printf("diatom: ds screens top %dx%d+%d+%d bottom %dx%d+%d+%d\n",
 		       top.w, top.h, top.x, top.y, bot.w, bot.h, bot.x, bot.y);
 	} else {
@@ -556,9 +561,9 @@ static void apply_display(int mode, diatom_filter filter)
 	 * have. ADR-0022. */
 	if (diatom_proto_connected())
 		diatom_proto_send("DISPLAY\tmode=%s\tfilter=%s\trect=%dx%d+%d+%d"
-		                  "\tshader=%s\tfinal=%s",
+		                  "\tshader=%s\tfinal=%s%s",
 		                  diatom_modes[mode].name, filter_name(filter),
-		                  g_dst.w, g_dst.h, g_dst.x, g_dst.y, g_shader, g_sfinal);
+		                  g_dst.w, g_dst.h, g_dst.x, g_dst.y, g_shader, g_sfinal, screens);
 }
 
 /* The log is a file on the SD card (the launcher's, inherited), and a core
