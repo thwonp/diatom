@@ -91,6 +91,7 @@ static bool g_switcher;
 static int evdev_open(const char *want);
 static bool g_hidden;
 static void draw_osd(void);
+static void draw_cursor(void);
 static void levels_init(void);
 
 /* ---------- the audio sink (ADR-0029) ------------------------------------- */
@@ -618,6 +619,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	g_last_linear = filter == DIATOM_FILTER_SHARP;
 	if (g_split) gkdgl_draw_split(g_sw, g_sh, g_split_top, g_split_bot, g_last_linear);
 	else         gkdgl_draw(g_sw, g_sh, dst, g_last_linear);
+	draw_cursor();
 	draw_overlay();
 	draw_osd();
 	SDL_GL_SwapWindow(g_window);
@@ -1018,6 +1020,10 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 	return true;
 }
 
+/* The panel is the stylus: no cursor, no stylus hotkey. */
+void diatom_port_stylus(bool down) { (void)down; }
+static void draw_cursor(void) {}
+
 static void touch_event(const SDL_Event *e)
 {
 	if (g_split) { pointer_event(e); return; }
@@ -1050,6 +1056,81 @@ static void touch_hold(void)
 }
 #endif
 
+#if !defined(DIATOM_PORT_ROTATE)
+/* THE DS STYLUS WITHOUT A PANEL (TortOS plorpos-46o.4). While a DS layout is
+ * up the stick is a cursor over the bottom screen - not its four bits, which
+ * the DS has no use for - and the stylus hotkey (HK_STYLUS, R2 out of the
+ * box, remappable in Hotkeys) holds it down where it is. Relative, not
+ * absolute: a stick let go leaves the cursor where it was, as a stylus
+ * lifted off the screen would. Full travel crosses the screen's width in
+ * CURSOR_CROSS_S; squared under that, so half travel is a quarter of the
+ * speed, fine enough to aim at a menu item. */
+#define CURSOR_DEAD    80      /* of 900: clear of the stick's 32 flat */
+#define CURSOR_CROSS_S 0.8f
+static float    g_cx = -1, g_cy;          /* surface px; -1 = not placed */
+static bool     g_stylus;
+static uint64_t g_cur_us;
+
+void diatom_port_stylus(bool down) { g_stylus = down; }
+
+static float stick_speed(int v)
+{
+	float n = (float)((v < 0 ? -v : v) - CURSOR_DEAD) / (900 - CURSOR_DEAD);
+
+	if (n <= 0) return 0;
+	if (n > 1) n = 1;
+	return v < 0 ? -n * n : n * n;
+}
+
+static void cursor_tick(void)
+{
+	const diatom_rect b = g_split_bot;
+	uint64_t now = diatom_port_now_us();
+	float dt = g_cur_us ? (now - g_cur_us) / 1e6f : 0, v;
+
+	g_cur_us = now;
+	if (!g_split || b.w <= 0 || b.h <= 0) { g_cx = -1; return; }
+	if (g_cx < b.x || g_cx > b.x + b.w - 1 || g_cy < b.y || g_cy > b.y + b.h - 1) {
+		g_cx = b.x + b.w / 2.0f;            /* a new layout: the middle */
+		g_cy = b.y + b.h / 2.0f;
+	}
+	if (dt > 0.05f) dt = 0.05f;             /* back from a pause: no jump */
+	v = b.w / CURSOR_CROSS_S;
+	g_cx += stick_speed(g_stick_x) * v * dt;
+	g_cy += stick_speed(g_stick_y) * v * dt;
+	if (g_cx < b.x) g_cx = b.x;
+	if (g_cx > b.x + b.w - 1) g_cx = b.x + b.w - 1;
+	if (g_cy < b.y) g_cy = b.y;
+	if (g_cy > b.y + b.h - 1) g_cy = b.y + b.h - 1;
+}
+
+/* Where the cursor is, pressed or not: a core that draws its own cursor can
+ * follow the hover, and a press lands where the player was aiming. */
+bool diatom_port_pointer(int16_t *x, int16_t *y)
+{
+	const diatom_rect b = g_split_bot;
+
+	if (!g_split || g_cx < 0 || b.w <= 0 || b.h <= 0) return false;
+	*x = (int16_t)(((g_cx - b.x) / b.w * 2 - 1) * 0x7fff);
+	*y = (int16_t)((g_cy - b.y) / b.h * 0x7fff);
+	return g_stylus;
+}
+
+/* A cross, dark-edged so it reads on any picture; filled while pressed. */
+static void draw_cursor(void)
+{
+	const diatom_rect b = g_split_bot;
+	int arm = b.w / 36, th = arm / 4 + 1, cx = (int)g_cx, cy = (int)g_cy, e = 2;
+	uint8_t c = g_stylus ? 0 : 255;
+
+	if (!g_split || g_cx < 0 || arm < 4) return;
+	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - arm - e, cy - th / 2 - e, 2 * arm + 2 * e, th + 2 * e }, 0, 0, 0, 200);
+	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - th / 2 - e, cy - arm - e, th + 2 * e, 2 * arm + 2 * e }, 0, 0, 0, 200);
+	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - arm, cy - th / 2, 2 * arm, th }, 255, 255, c, 255);
+	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - th / 2, cy - arm, th, 2 * arm }, 255, 255, c, 255);
+}
+#endif
+
 void diatom_port_input_poll(void)
 {
 	SDL_Event ev;
@@ -1069,6 +1150,9 @@ void diatom_port_input_poll(void)
 #endif
 	if (g_pad_fd >= 0)  pad_read();
 	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
+#if !defined(DIATOM_PORT_ROTATE)
+	cursor_tick();
+#endif
 #if defined(DIATOM_PORT_ROTATE)
 	if (g_home && !g_menu_sent && !g_menu_spent &&
 	    diatom_port_now_us() - g_menu_t0_us >= DIATOM_SWITCHER_HOLD_US) {
@@ -1078,10 +1162,15 @@ void diatom_port_input_poll(void)
 #endif
 
 	s = g_pad_buttons;
-	if (g_stick_x >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SRIGHT);
-	if (g_stick_x <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SLEFT);
-	if (g_stick_y >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SDOWN);
-	if (g_stick_y <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SUP);
+#if !defined(DIATOM_PORT_ROTATE)
+	if (!g_split)                       /* a DS's: the stylus cursor's */
+#endif
+	{
+		if (g_stick_x >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SRIGHT);
+		if (g_stick_x <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SLEFT);
+		if (g_stick_y >=  STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SDOWN);
+		if (g_stick_y <= -STICK_THRESHOLD) s |= DIATOM_BIT(DIATOM_BTN_SUP);
+	}
 	g_buttons = s;
 }
 
@@ -1463,7 +1552,4 @@ bool   diatom_port_mic_open(unsigned rate) { (void)rate; return false; }
 void   diatom_port_mic_close(void) {}
 void   diatom_port_mic_run(bool on) { (void)on; }
 size_t diatom_port_mic_read(int16_t *mono, size_t max) { (void)mono; (void)max; return 0; }
-
-/* The GKD draws a DS split but has no panel. */
-bool diatom_port_pointer(int16_t *x, int16_t *y) { (void)x; (void)y; return false; }
 #endif

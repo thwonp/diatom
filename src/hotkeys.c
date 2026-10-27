@@ -72,6 +72,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "screenshot")) return HK_SCREENSHOT;
 	if (!strcmp(s, "turbo"))     return HK_TURBO;
 	if (!strcmp(s, "swap"))      return HK_SWAP;
+	if (!strcmp(s, "stylus"))    return HK_STYLUS;
 	return HK_NONE;
 }
 

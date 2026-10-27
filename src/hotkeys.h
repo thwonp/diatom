@@ -23,9 +23,11 @@
 
 typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCREENSHOT,
                HK_TURBO /* Turbo Assign, ADR-0045 */,
-               HK_SWAP  /* DS Display Mode: the next layout (TortOS plorpos-3yv.47, .62) */ } hk_action;
+               HK_SWAP  /* DS Display Mode: the next layout (TortOS plorpos-3yv.47, .62) */,
+               HK_STYLUS /* held: the DS stylus down where the port's cursor is
+                          * (diatom_port_stylus; the GKD, TortOS plorpos-46o.4) */ } hk_action;
 
-#define HK_MAX 7
+#define HK_MAX 8
 
 /* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
  * a spec that is half garbage is refused whole rather than applying the good

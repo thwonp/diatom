@@ -228,6 +228,12 @@ void diatom_port_split(bool on, diatom_rect top, diatom_rect bot);
  * bottom half screen 2). True while pressed. A port with no panel: false. */
 bool diatom_port_pointer(int16_t *x, int16_t *y);
 
+/* The stylus hotkey (HK_STYLUS), every frame: held or not. A port with no
+ * panel but a stick (the GKD, TortOS plorpos-46o.4) moves a cursor over the
+ * split's bottom screen with the stick and has diatom_port_pointer press it
+ * while this is held. Anywhere else it does nothing. */
+void diatom_port_stylus(bool down);
+
 /* The microphone, for the libretro microphone interface (TortOS
  * plorpos-3yv.75). One mic, mono S16 at the rate asked for at open - the port
  * converts. Opened stopped; run(true) starts capture, run(false) stops it and
