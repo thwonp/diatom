@@ -236,6 +236,7 @@ static void parse_line(char *line, diatom_msg *out)
 			snprintf(out->resume, sizeof out->resume, "%s", v);
 		else if (!strcmp(field, "save"))
 			snprintf(out->save, sizeof out->save, "%s", v);
+		else if (!strcmp(field, "lazy")) out->lazy = v[0] == '1';
 		else if (!strcmp(field, "exit_state"))
 			snprintf(out->exit_state, sizeof out->exit_state, "%s", v);
 		else if (!strcmp(field, "preview"))

@@ -209,6 +209,10 @@ static diatom_rect      g_dst;   /* locked at load - ADR-0011 */
  * the process dies on power-off, and one frame of retro_run is ~10 ms of that
  * budget - a 1% price for not calling malloc or open from a handler. */
 static volatile sig_atomic_t g_terminate;
+/* The STOP that ended this game came from the in-game menu's Quit, which may
+ * leave the exit state to a thread. Never set by power, sleep, a signal or any
+ * other way out: those save in line, as before (plorpos-2wl.12). */
+static bool g_stop_lazy;
 static bool g_quit_requested;   /* launcher said QUIT */
 /* --host-menu: something outside Diatom owns MENU (TortOS's PortMaster
  * RetroArch stand-in, plorpos-3yv.86.6, runs it one-shot under a launcher
@@ -797,6 +801,7 @@ static bool menu_pause(const diatom_session *sn, bool switcher)
 			diatom_proto_send("RUNNING");
 			return true;
 		case DIATOM_MSG_STOP:
+			g_stop_lazy = m.lazy;
 			return false;
 		case DIATOM_MSG_QUIT:
 			g_quit_requested = true;
@@ -1511,6 +1516,7 @@ static int run_session_inner(const diatom_session *sn)
 
 	uint64_t st0 = diatom_port_now_us(), st1, st2, st3, st4;
 
+	g_stop_lazy = false;
 	g_core = diatom_core_resident(sn->core);
 	if (!g_core) {
 		diatom_proto_send("ERROR\tcode=core_missing\tmsg=%s", sn->core);
@@ -1916,7 +1922,7 @@ static int run_session_inner(const diatom_session *sn)
 		if (diatom_proto_active()) {
 			diatom_msg m;
 			switch (diatom_proto_poll(&m, 0, true)) {
-			case DIATOM_MSG_STOP: stop = true; break;
+			case DIATOM_MSG_STOP: stop = true; g_stop_lazy = m.lazy; break;
 			case DIATOM_MSG_QUIT: stop = true; g_quit_requested = true; break;
 			/* Consumed at the top of the next frame, beside the MENU press it
 			 * stands in for - not here, because the menu takes the display and
@@ -2186,7 +2192,10 @@ static int run_session_inner(const diatom_session *sn)
 	/* Both paths, and in this order: the game's own save first, because losing
 	 * it is a defect, then the state, which is a convenience. */
 	diatom_save_shutdown();
-	if (sn->state_exit) diatom_state_save(g_core, sn->state_exit);
+	if (sn->state_exit) {
+		if (g_stop_lazy && !g_terminate) diatom_state_save_lazy(g_core, sn->state_exit);
+		else diatom_state_save(g_core, sn->state_exit);
+	}
 	diatom_rewind_stats(&rw_stat);   /* for the summary, before the ring goes */
 	diatom_rewind_shutdown();
 	if (g_ff_quieted_us) { diatom_audio_quiet(false); g_ff_quieted_us = false; }
@@ -2549,6 +2558,7 @@ int main(int argc, char **argv)
 		int rc = run_session(&sn);
 		if (rc) return rc;
 	}
+	diatom_state_wait();   /* a deferred exit state is on the card before we go */
 	diatom_audio_tap_close();
 	diatom_port_shutdown();
 	free(g_frame);

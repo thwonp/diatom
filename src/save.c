@@ -293,15 +293,16 @@ void diatom_save_shutdown(void)
 	g_sram_size = 0;
 }
 
-bool diatom_state_save(diatom_core *c, const char *path)
+/* The state to write, header and payload in one malloc'd buffer; NULL if the
+ * core cannot serialise. *total is its size, *payload the core's part. */
+static uint8_t *state_build(diatom_core *c, size_t *total, size_t *payload)
 {
 	struct state_header h;
 	struct retro_system_info si;
 	uint8_t *buf;
 	size_t   n;
-	bool     ok;
 
-	if (!c->serialize_size || !c->serialize || !path) return false;
+	if (!c->serialize_size || !c->serialize) return NULL;
 
 	/* A tray still open from a disc pick would be in the state, and a game
 	 * resumed from it would wake to an open lid (plorpos-gkd.47.2). */
@@ -312,10 +313,10 @@ bool diatom_state_save(diatom_core *c, const char *path)
 	 * quirks 0x0, having never declared CORE_VARIABLE_SIZE. A cached size that
 	 * later grows makes saving fail silently. */
 	n = c->serialize_size();
-	if (!n) { logf_(DIATOM_LOG_ERROR, "state: core reports no state"); return false; }
+	if (!n) { logf_(DIATOM_LOG_ERROR, "state: core reports no state"); return NULL; }
 
 	buf = malloc(sizeof h + n);
-	if (!buf) return false;
+	if (!buf) return NULL;
 
 	memset(&h, 0, sizeof h);
 	memcpy(h.magic, STATE_MAGIC, sizeof h.magic);
@@ -330,13 +331,69 @@ bool diatom_state_save(diatom_core *c, const char *path)
 	if (!c->serialize(buf + sizeof h, n)) {
 		logf_(DIATOM_LOG_ERROR, "state: serialize failed");
 		free(buf);
-		return false;
+		return NULL;
 	}
 	memcpy(buf, &h, sizeof h);
+	*total = sizeof h + n;
+	*payload = n;
+	return buf;
+}
 
-	ok = write_atomic(path, buf, sizeof h + n);
+/* One deferred write at a time. Anything that reads or replaces a state file
+ * calls diatom_state_wait first, so a launch straight after a quit loads the
+ * state that quit wrote, never the one before it. */
+static struct { char path[1088]; uint8_t *buf; size_t total, payload; } g_lz;
+static pthread_t g_lz_thr;
+static bool      g_lz_live;
+
+static void *lazy_write(void *arg)
+{
+	(void)arg;
+	if (write_atomic(g_lz.path, g_lz.buf, g_lz.total))
+		logf_(DIATOM_LOG_INFO, "state: wrote %zu bytes to %s", g_lz.payload, g_lz.path);
+	free(g_lz.buf);
+	g_lz.buf = NULL;
+	return NULL;
+}
+
+void diatom_state_wait(void)
+{
+	if (!g_lz_live) return;
+	pthread_join(g_lz_thr, NULL);
+	g_lz_live = false;
+}
+
+bool diatom_state_save_lazy(diatom_core *c, const char *path)
+{
+	uint8_t *buf;
+	size_t   total, payload;
+
+	if (!path) return false;
+	diatom_state_wait();
+	if (!(buf = state_build(c, &total, &payload))) return false;
+	snprintf(g_lz.path, sizeof g_lz.path, "%s", path);
+	g_lz.buf = buf; g_lz.total = total; g_lz.payload = payload;
+	if (pthread_create(&g_lz_thr, NULL, lazy_write, NULL) == 0) {
+		g_lz_live = true;
+		return true;
+	}
+	/* No thread: the same write, in line. */
+	lazy_write(NULL);
+	return true;
+}
+
+bool diatom_state_save(diatom_core *c, const char *path)
+{
+	uint8_t *buf;
+	size_t   total, payload;
+	bool     ok;
+
+	if (!path) return false;
+	diatom_state_wait();
+	if (!(buf = state_build(c, &total, &payload))) return false;
+	ok = write_atomic(path, buf, total);
 	free(buf);
-	if (ok) logf_(DIATOM_LOG_INFO, "state: wrote %zu bytes to %s", n, path);
+	if (ok) logf_(DIATOM_LOG_INFO, "state: wrote %zu bytes to %s", payload, path);
 	return ok;
 }
 
@@ -402,6 +459,7 @@ bool diatom_state_load(diatom_core *c, const char *path)
 	bool     ok;
 
 	if (!c->unserialize || !path) return false;
+	diatom_state_wait();
 	f = fopen(path, "rb");
 	if (!f) return false;                     /* absent is not an error */
 

@@ -253,6 +253,7 @@ typedef struct {
 	 * (ADR-0016), and these are how they arrive. All optional. */
 	char resume[1024];     /* RUN: state to load at start, if it exists */
 	char exit_state[1024]; /* RUN: state written on every way out */
+	bool lazy;             /* STOP: the exit state may reach the card after EXIT (menu Quit only) */
 	char save[1024];       /* RUN: this game's save dir; absent = --save */
 	char preview[1024];    /* RUN: BMP of the frame, on pause and on exit */
 	char shots[512];       /* RUN: the screenshot hotkey's folder, made if missing */
@@ -340,6 +341,10 @@ void diatom_save_now(void);        /* synchronous, through the writer; PAUSE */
 void diatom_save_flush(void);      /* synchronous; exit and signal paths */
 void diatom_save_shutdown(void);
 bool diatom_state_save(diatom_core *c, const char *path);
+/* Serialised now, written behind: same write, fsync, rename, sync, on a thread.
+ * Everything that touches a state file waits for it first (plorpos-2wl.12). */
+bool diatom_state_save_lazy(diatom_core *c, const char *path);
+void diatom_state_wait(void);
 bool diatom_state_load(diatom_core *c, const char *path);
 
 /* scale.c - geometry is arithmetic and lives here, once, so every port agrees.
