@@ -1472,6 +1472,8 @@ static bool state_plane_msg(const diatom_msg *m)
 	}
 }
 
+extern double diatom_core_read_ms;
+
 static int run_session_inner(const diatom_session *sn)
 {
 	struct retro_system_av_info av;
@@ -1506,6 +1508,8 @@ static int run_session_inner(const diatom_session *sn)
 	g_frame_w = g_frame_h = 0;
 	g_frame_pitch = 0;
 	g_frame_fresh = false;
+
+	uint64_t st0 = diatom_port_now_us(), st1, st2, st3, st4;
 
 	g_core = diatom_core_resident(sn->core);
 	if (!g_core) {
@@ -1572,6 +1576,7 @@ static int run_session_inner(const diatom_session *sn)
 		return 4;
 	}
 
+	st1 = diatom_port_now_us();
 	if (sn->list_only) {
 		diatom_options_list();
 		diatom_core_stop(g_core);
@@ -1618,6 +1623,7 @@ static int run_session_inner(const diatom_session *sn)
 		sigaction(SIGHUP,  &sa, NULL);
 	}
 
+	st2 = diatom_port_now_us();
 	g_core->get_system_av_info(&av);
 	printf("diatom: %ux%u (max %ux%u) aspect %.4f, %.4f fps, %.0f Hz -> %d Hz\n",
 	       av.geometry.base_width, av.geometry.base_height,
@@ -1702,6 +1708,7 @@ static int run_session_inner(const diatom_session *sn)
 	/* The display handover, and the reason ADR-0009 separates ERROR from EXIT:
 	 * from here the launcher must stop drawing. Announced before the warmup,
 	 * because the warmup already puts frames on the panel. */
+	st3 = diatom_port_now_us();
 	diatom_proto_send("RUNNING");
 	g_phase = PHASE_RUNNING;   /* a crash from here on is EXIT, not ERROR */
 
@@ -1763,8 +1770,23 @@ static int run_session_inner(const diatom_session *sn)
 			                    g_filter);
 		}
 		g_audio_warmup = false;
-		printf("diatom: warmup 3 frames in %.1f ms\n",
-		       (diatom_port_now_us() - w0) / 1000.0);
+		st4 = diatom_port_now_us();
+		printf("diatom: warmup 3 frames in %.1f ms\n", (st4 - w0) / 1000.0);
+		/* One line a game: where RUN to first frame went (2wl.12). */
+		unsigned long dirty = 0, wb = 0;
+		FILE *mi = fopen("/proc/meminfo", "r");
+		char ml[96];
+
+		while (mi && fgets(ml, sizeof ml, mi)) {
+			sscanf(ml, "Dirty: %lu", &dirty);
+			sscanf(ml, "Writeback: %lu", &wb);
+		}
+		if (mi) fclose(mi);
+		printf("diatom: stages core %.0f (rom read %.0f), save+state %.0f, "
+		       "setup %.0f, to-warmup %.0f, total %.0f ms; dirty %lu wb %lu kB\n",
+		       (st1 - st0) / 1000.0, diatom_core_read_ms, (st2 - st1) / 1000.0,
+		       (st3 - st2) / 1000.0, (st4 - st3) / 1000.0,
+		       (st4 - st0) / 1000.0, dirty, wb);
 	}
 
 	t_start = diatom_port_now_us();

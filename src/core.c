@@ -224,6 +224,9 @@ static bool read_file(const char *path, void **out, size_t *len)
 	return true;
 }
 
+/* How long the last start spent reading the ROM (plorpos-2wl.12). */
+double diatom_core_read_ms;
+
 bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
 {
 	struct retro_system_info si;
@@ -310,7 +313,11 @@ bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
 			gi.size = len;
 		}
 	} else if (!si.need_fullpath) {
-		if (!read_file(rom_path, &data, &len)) {
+		double rt0 = dbg_now_ms();
+		bool rok = read_file(rom_path, &data, &len);
+
+		diatom_core_read_ms = dbg_now_ms() - rt0;
+		if (!rok) {
 			fprintf(stderr, "diatom: cannot read %s\n", rom_path);
 			return false;
 		}
