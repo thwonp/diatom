@@ -49,6 +49,22 @@ static int g_joy_vol_up = 14;
 #define JOY_VOL_DN g_joy_vol_dn
 #define JOY_VOL_UP g_joy_vol_up
 
+/* SDL joystick button index -> Diatom button; the indexes are the SP's until
+ * joy_codes_init works them out (see the table's notes further down). */
+static struct { int code; int idx; int btn; } joymap[] = {
+	{ 304, 0, DIATOM_BTN_A },      { 305, 1, DIATOM_BTN_B },
+	{ 306, 2, DIATOM_BTN_Y },      { 307, 3, DIATOM_BTN_X },
+	{ 308, 4, DIATOM_BTN_L1 },     { 309, 5, DIATOM_BTN_R1 },
+	{ 310, 6, DIATOM_BTN_SELECT }, { 311, 7, DIATOM_BTN_START },
+	{ 314, 9, DIATOM_BTN_L2 },     { 315, 10, DIATOM_BTN_R2 },
+	/* The RG35XX H's stick clicks (codes 313 and 316): hotkey choices, never
+	 * core inputs (ADR-0044). No such index on the SP. */
+	{ 313, -1, DIATOM_BTN_L3 },    { 316, -1, DIATOM_BTN_R3 },
+};
+
+/* SDL axis indexes of the RG35XX H's sticks; -1 where there are none. */
+static int g_axis_lx = -1, g_axis_ly = -1, g_axis_rx = -1, g_axis_ry = -1;
+
 static void joy_codes_init(SDL_Joystick *j)
 {
 	unsigned char bits[KEY_MAX / 8 + 1] = { 0 };
@@ -57,15 +73,40 @@ static void joy_codes_init(SDL_Joystick *j)
 
 	if (!path || (fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)) < 0) return;
 	if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof bits), bits) < 0) { close(fd); return; }
-	close(fd);
 	for (pass = 0; pass < 2; pass++)
 		for (c = pass ? 0 : BTN_JOYSTICK; c < (pass ? BTN_JOYSTICK : KEY_MAX); c++) {
+			size_t k;
+
 			if (!(bits[c / 8] & (1 << (c % 8)))) continue;
 			if (c == BTN_TL2)       g_joy_menu   = n;
 			if (c == KEY_VOLUMEDOWN) g_joy_vol_dn = n;
 			if (c == KEY_VOLUMEUP)   g_joy_vol_up = n;
+			for (k = 0; k < sizeof joymap / sizeof joymap[0]; k++)
+				if (joymap[k].code == c) joymap[k].idx = n;
 			n++;
 		}
+	/* The sticks: ABS_Z..ABS_RZ present means the RG35XX H. SDL numbers axes
+	 * in ascending code order with the hats left out. */
+	{
+		unsigned char abits[ABS_MAX / 8 + 1] = { 0 };
+
+		if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abits), abits) >= 0) {
+			int have = 0;
+
+			n = 0;
+			for (c = 0; c < ABS_HAT0X; c++) {
+				if (!(abits[c / 8] & (1 << (c % 8)))) continue;
+				if (c == ABS_Z)  g_axis_lx = n;
+				if (c == ABS_RX) g_axis_ly = n;
+				if (c == ABS_RY) g_axis_rx = n;
+				if (c == ABS_RZ) g_axis_ry = n;
+				if (c >= ABS_Z && c <= ABS_RZ) have++;
+				n++;
+			}
+			if (have < 4) g_axis_lx = g_axis_ly = g_axis_rx = g_axis_ry = -1;
+		}
+	}
+	close(fd);
 }
 
 #define AUDIO_RATE 48000
@@ -2262,17 +2303,32 @@ size_t diatom_port_audio_queued(void)
  *   2  306 Y        6  310 Select  10  315 R2       14 115 VOL_UP
  *   3  307 X        7  311 Start   11  354 (unused)
  *
+ * The RG35XX H has two more codes in the middle (313 and 316, its stick
+ * clicks), which move L2/R2 up by one - so the indexes are worked out from the
+ * pad's own key list at init (joy_codes_init), these being the SP's.
  * The d-pad is hat 0. Menu is not in the table: see menu_* below. */
-static const struct { int idx; int btn; } joymap[] = {
-	{ 0, DIATOM_BTN_A },      { 1, DIATOM_BTN_B },
-	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
-	{ 4, DIATOM_BTN_L1 },     { 5, DIATOM_BTN_R1 },
-	{ 6, DIATOM_BTN_SELECT }, { 7, DIATOM_BTN_START },
-	{ 9, DIATOM_BTN_L2 },     { 10, DIATOM_BTN_R2 },
-};
 
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
                  | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT))
+
+/* The sticks as the Brick Pro's port reports them (port/brick.c): the stick's
+ * own four bits, which the host folds onto the d-pad, and the right stick's,
+ * which are hotkeys only (ADR-0044). Half travel to press, a third to let go. */
+#define STICK_PRESS   16384
+#define STICK_RELEASE 10923
+#define STICK_BITS (DIATOM_BIT(DIATOM_BTN_SUP) | DIATOM_BIT(DIATOM_BTN_SDOWN) \
+                  | DIATOM_BIT(DIATOM_BTN_SLEFT) | DIATOM_BIT(DIATOM_BTN_SRIGHT) \
+                  | DIATOM_BIT(DIATOM_BTN_RSUP) | DIATOM_BIT(DIATOM_BTN_RSDOWN) \
+                  | DIATOM_BIT(DIATOM_BTN_RSLEFT) | DIATOM_BIT(DIATOM_BTN_RSRIGHT))
+static uint32_t g_stick_bits;
+
+static void stick_axis(int value, int neg_btn, int pos_btn)
+{
+	uint32_t neg = DIATOM_BIT(neg_btn), pos = DIATOM_BIT(pos_btn);
+	bool n = value < -((g_stick_bits & neg) ? STICK_RELEASE : STICK_PRESS);
+	bool p = value >  ((g_stick_bits & pos) ? STICK_RELEASE : STICK_PRESS);
+	g_stick_bits = (g_stick_bits & ~(neg | pos)) | (n ? neg : 0) | (p ? pos : 0);
+}
 
 /* No brightness keys, so Menu held turns the volume keys into them - and a
  * Menu that did that must not then open the menu. src/main.c opens it on a
@@ -2405,6 +2461,26 @@ void diatom_port_input_poll(void)
 			if (ev.jhat.value & SDL_HAT_LEFT)  dpad |= DIATOM_BIT(DIATOM_BTN_LEFT);
 			if (ev.jhat.value & SDL_HAT_RIGHT) dpad |= DIATOM_BIT(DIATOM_BTN_RIGHT);
 			g_buttons = (g_buttons & ~DPAD_BITS) | dpad;
+			break;
+		}
+
+		case SDL_JOYAXISMOTION: {
+			int a = ev.jaxis.axis, v = ev.jaxis.value;
+			uint32_t was = g_stick_bits;
+
+			debug_event("joy axis", a, v);
+			if (a < 0) break;
+			if (a == g_axis_lx)      stick_axis(v, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);
+			else if (a == g_axis_ly) stick_axis(v, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);
+			else if (a == g_axis_rx) stick_axis(v, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT);
+			else if (a == g_axis_ry) stick_axis(v, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);
+			else break;
+			g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
+			/* A direction pushed with Menu held is a chord, like a button. */
+			if ((g_stick_bits & ~was) && g_menu_down && !g_menu_sent && !g_menu_spent) {
+				set_bit(DIATOM_BTN_MENU, true);
+				g_menu_sent = true;
+			}
 			break;
 		}
 		}
