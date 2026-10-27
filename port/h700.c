@@ -36,6 +36,38 @@
 #include "gkd_gl.h"
 #include "port_clock.h"
 
+/* SDL numbers a pad's buttons by evdev code: BTN_JOYSTICK up first, then
+ * everything below it. The RG SP's pad has the 13 face buttons and the two
+ * volume keys, so Menu is 8 and the volume keys 13 and 14. The RG35XX H's
+ * has two more codes (KEY_OK above and KEY_ESC below), which moved the volume
+ * keys to 15 and 16 - and left Vol+ and Vol- doing nothing in a game. They are
+ * worked out from the pad's own key list at init; these are the SP's. */
+static int g_joy_menu   = 8;
+static int g_joy_vol_dn = 13;
+static int g_joy_vol_up = 14;
+#define JOY_MENU   g_joy_menu
+#define JOY_VOL_DN g_joy_vol_dn
+#define JOY_VOL_UP g_joy_vol_up
+
+static void joy_codes_init(SDL_Joystick *j)
+{
+	unsigned char bits[KEY_MAX / 8 + 1] = { 0 };
+	const char *path = SDL_JoystickPath(j);
+	int fd, n = 0, c, pass;
+
+	if (!path || (fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)) < 0) return;
+	if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof bits), bits) < 0) { close(fd); return; }
+	close(fd);
+	for (pass = 0; pass < 2; pass++)
+		for (c = pass ? 0 : BTN_JOYSTICK; c < (pass ? BTN_JOYSTICK : KEY_MAX); c++) {
+			if (!(bits[c / 8] & (1 << (c % 8)))) continue;
+			if (c == BTN_TL2)       g_joy_menu   = n;
+			if (c == KEY_VOLUMEDOWN) g_joy_vol_dn = n;
+			if (c == KEY_VOLUMEUP)   g_joy_vol_up = n;
+			n++;
+		}
+}
+
 #define AUDIO_RATE 48000
 /* Capacity in FRAMES (one frame = two int16 samples), as the host is told:
  * rate control aims at half, so this sets the latency. 4096 at 48kHz is ~85ms,
@@ -1596,6 +1628,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * "ANBERNIC-keys"; the power key is the PMIC's and the launcher's. */
 	if (SDL_NumJoysticks() > 0)
 		g_joy = SDL_JoystickOpen(0);
+	if (g_joy) joy_codes_init(g_joy);
 	if (!g_joy)
 		diatom_port_log(DIATOM_LOG_WARN, "no joystick found; no game input");
 
@@ -2237,9 +2270,6 @@ static const struct { int idx; int btn; } joymap[] = {
 	{ 6, DIATOM_BTN_SELECT }, { 7, DIATOM_BTN_START },
 	{ 9, DIATOM_BTN_L2 },     { 10, DIATOM_BTN_R2 },
 };
-#define JOY_MENU   8
-#define JOY_VOL_DN 13
-#define JOY_VOL_UP 14
 
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
                  | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT))
@@ -2293,7 +2323,7 @@ static void level_step(int k)
 
 static void levels_repeat(void)
 {
-	static const int idx[2] = { JOY_VOL_UP, JOY_VOL_DN };
+	const int idx[2] = { JOY_VOL_UP, JOY_VOL_DN };
 	uint64_t now = diatom_port_now_us();
 	int k;
 
