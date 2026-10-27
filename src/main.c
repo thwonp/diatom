@@ -1977,14 +1977,17 @@ static int run_session_inner(const diatom_session *sn)
 		 * the launcher it opens the launcher's menu. Edge-triggered, or holding
 		 * it would re-enter the menu every frame.
 		 *
-		 * When MENU is also the hotkey modifier (the default, ADR-0038) it
-		 * acts on the RELEASE, and only for a tap: any other button pressed
-		 * while it was down made it a chord, and a chord is not a menu. */
+		 * It acts on the RELEASE, and only for a tap: any other button pressed
+		 * while it was down made it a chord (MENU is the default hotkey
+		 * modifier, ADR-0038), and a chord is not a menu. */
 		{
 			const uint32_t menu_bit = DIATOM_BIT(DIATOM_BTN_MENU);
 			uint32_t pressed = buttons & ~prev_buttons;
 
-			if (hotkeys_modifier() == DIATOM_BTN_MENU) {
+			/* Whatever the modifier (TortOS plorpos-46o.8): with another,
+			 * a press-edge menu left a Menu hold nothing to be - no
+			 * switcher in a game. */
+			{
 				/* Held alone 700 ms: the switcher (TortOS plorpos-gl5.4).
 				 * Only where the port hands Menu over raw - the Brick, the
 				 * GKD; the Rotate and H700 ports show it as a one-poll tap
@@ -2006,8 +2009,6 @@ static int run_session_inner(const diatom_session *sn)
 				 * close it, still held as the game resumes, is released here
 				 * as a second tap and reopens the menu. */
 				if (menu_now) menu_tap = false;
-			} else {
-				menu_now = (pressed & menu_bit) != 0;
 			}
 		}
 		/* Menu held 700 ms: the switcher, which only a launcher has. */

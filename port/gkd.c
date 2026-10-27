@@ -1507,32 +1507,23 @@ void diatom_port_level_invalidate(void)
 	g_level_next_us[0] = g_level_next_us[1] = 0;
 }
 
-/* The handover. The launcher is another Wayland client under the same sway,
- * so giving it the display means getting out of its way: unmap this window
- * and let the compositor show what is behind it. The next present() maps it
- * again. Design: plorpos design.md "Display"; latency is gkd.5's to measure.
- *
- * `park` does not change what happens here. Both answers are about what
- * stays on glass for the launcher, and under a compositor nothing of this
- * window stays: at a pause the launcher draws its menu over the PREVIEW
- * image the host wrote first, not over this window.
- *
- * Nothing is in flight to drain - present() is synchronous here - but the
- * unmap has to REACH sway before the host sends PAUSED or EXIT, or both
- * windows are up at once. Pumping flushes the Wayland connection. */
+/* Keep the paused game's last frame mapped until the launcher has drawn its
+ * replacement. Only an exit unmaps; pumping flushes that to sway before EXIT.
+ * Design: plorpos design.md "Display"; plorpos-f5d. */
 
 void diatom_port_present_stop(diatom_park park)
 {
 #if defined(DIATOM_PORT_ROTATE)
 	audio_release();   /* a pause or the end of a game: see audio_claim */
 	mic_release();     /* and the mic: the next read takes it back */
+#endif
 	/* A pause keeps the window mapped with its last frame: the launcher
 	 * draws its menu first and then has sway move this window off, and on
 	 * resume brings it back before its own goes - so neither hand-over shows
-	 * sway's black background (TortOS platform_rotate.c screen_yield,
-	 * plorpos-3yv.25). An exit (BLANK) still unmaps: nothing is coming back. */
+	 * sway's black background (TortOS platform_rotate.c / platform_gkd.c
+	 * screen_yield, plorpos-3yv.25, plorpos-f5d). An exit (BLANK) still
+	 * unmaps: nothing is coming back. */
 	if (park == DIATOM_PARK_KEEP) return;
-#endif
 	(void)park;
 	if (!g_window || g_hidden) return;
 	SDL_HideWindow(g_window);
