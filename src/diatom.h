@@ -183,6 +183,7 @@ typedef enum {
 	DIATOM_MSG_NONE = 0,
 	DIATOM_MSG_RUN,
 	DIATOM_MSG_STOP,
+	DIATOM_MSG_FLUSH,      /* SRAM to the card, then FLUSHED (plorpos-2wl.12) */
 	DIATOM_MSG_QUIT,
 	DIATOM_MSG_PAUSE,      /* open the menu, as a MENU press would */
 	DIATOM_MSG_SETIDLE,    /* report idleness after `ms` without input; 0 off */
@@ -337,7 +338,8 @@ void diatom_proto_emit_fatal(const char *line);
  * slot, a game or a system, and the launcher owns all three (ADR-0016). */
 bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path);
 void diatom_save_tick(void);       /* once per frame; may schedule a write */
-void diatom_save_now(void);        /* synchronous, through the writer; PAUSE */
+void diatom_save_now(void);        /* synchronous, through the writer; FLUSH */
+void diatom_save_kick(void);       /* queues a write if SRAM changed, never waits; PAUSE */
 void diatom_save_flush(void);      /* synchronous; exit and signal paths */
 void diatom_save_shutdown(void);
 bool diatom_state_save(diatom_core *c, const char *path);

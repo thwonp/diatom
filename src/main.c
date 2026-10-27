@@ -761,10 +761,14 @@ static bool menu_pause(const diatom_session *sn, bool switcher)
 	diatom_port_present_stop(DIATOM_PARK_KEEP);
 
 	/* A menu or a sleep is where a player stops, and a sleeping device may
-	 * never wake. SRAM is on the card before the launcher hears PAUSED, so
-	 * the 60 s autosave interval never decides what a pause loses
-	 * (plorpos-gkd.88, ADR-0016). */
-	diatom_save_now();
+	 * never wake. The SRAM write starts here, but the pause does not wait for
+	 * it: a synced write was 0.4-2.1 s on the RG35XX H's card, with the menu
+	 * (or the screen, going to sleep) held up for all of it. What sleep needs
+	 * is durability BEFORE it suspends, and the launcher asks for exactly that
+	 * with FLUSH once the screen is dark; an exit flushes in shutdown. So the
+	 * 60 s autosave interval still never decides what a sleep or an exit loses
+	 * (plorpos-gkd.88, ADR-0016; plorpos-2wl.12). */
+	diatom_save_kick();
 
 	/* Symmetrical with RUNNING: the launcher may draw from here. A Menu
 	 * hold says so, and the launcher opens its game switcher instead of
@@ -800,6 +804,10 @@ static bool menu_pause(const diatom_session *sn, bool switcher)
 			idle_restart();
 			diatom_proto_send("RUNNING");
 			return true;
+		case DIATOM_MSG_FLUSH:
+			diatom_save_now();
+			diatom_proto_send("FLUSHED");
+			break;
 		case DIATOM_MSG_STOP:
 			g_stop_lazy = m.lazy;
 			return false;
@@ -1923,6 +1931,7 @@ static int run_session_inner(const diatom_session *sn)
 			diatom_msg m;
 			switch (diatom_proto_poll(&m, 0, true)) {
 			case DIATOM_MSG_STOP: stop = true; g_stop_lazy = m.lazy; break;
+			case DIATOM_MSG_FLUSH: diatom_save_now(); diatom_proto_send("FLUSHED"); break;
 			case DIATOM_MSG_QUIT: stop = true; g_quit_requested = true; break;
 			/* Consumed at the top of the next frame, beside the MENU press it
 			 * stands in for - not here, because the menu takes the display and
@@ -2498,6 +2507,7 @@ int main(int argc, char **argv)
 			 * would ask. Found 2026-08-25 while testing the crash paths: every
 			 * run ended on the watchdog's SIGKILL rather than on QUIT. */
 			case DIATOM_MSG_QUIT:    g_quit_requested = true; continue;
+			case DIATOM_MSG_FLUSH:   diatom_proto_send("FLUSHED"); continue;
 			default:                 state_plane_msg(&m); continue;
 			}
 			if (!m.core[0]) {

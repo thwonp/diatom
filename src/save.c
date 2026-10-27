@@ -263,6 +263,24 @@ void diatom_save_now(void)
 	g_last_write = now_us();
 }
 
+/* The pause's version: the write is started and nobody waits for it. A busy
+ * writer is already putting the last one on the card; whatever is still dirty
+ * after it is what FLUSH finds, before a sleep, and the shutdown flush finds,
+ * before an exit. Nothing here makes the 60 s interval any longer. */
+void diatom_save_kick(void)
+{
+	if (!g_sram_size || !g_running) return;
+	pthread_mutex_lock(&g_mx);
+	if (!g_busy && !g_pending && memcmp(g_sram, g_shadow, g_sram_size)) {
+		memcpy(g_staging, g_sram, g_sram_size);
+		memcpy(g_shadow,  g_sram, g_sram_size);
+		g_pending = true;
+		pthread_cond_signal(&g_cv);
+		g_last_write = now_us();
+	}
+	pthread_mutex_unlock(&g_mx);
+}
+
 void diatom_save_flush(void)
 {
 	if (!g_sram_size) return;
