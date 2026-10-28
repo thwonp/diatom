@@ -25,7 +25,7 @@ typedef struct { int btn; hk_action action; bool direct; } hk_binding;
 
 static hk_binding g_hotkeys[HK_MAX];
 static int  g_nhotkeys;
-static char g_hotkeys_spec[128];
+static char g_hotkeys_spec[192];
 static int  g_modifier = DIATOM_BTN_MENU;
 
 static const struct { const char *name; int btn; } g_modifiers[] = {
@@ -73,6 +73,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "turbo"))     return HK_TURBO;
 	if (!strcmp(s, "swap"))      return HK_SWAP;
 	if (!strcmp(s, "stylus"))    return HK_STYLUS;
+	if (!strcmp(s, "stylusmode")) return HK_STYLUSMODE;
 	return HK_NONE;
 }
 
@@ -80,7 +81,7 @@ bool hotkeys_set(const char *spec)
 {
 	hk_binding parsed[HK_MAX];
 	int n = 0;
-	char buf[128], *save = NULL, *tok;
+	char buf[192], *save = NULL, *tok;
 
 	if (!spec) return false;
 	if (!*spec) {

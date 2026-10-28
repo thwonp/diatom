@@ -288,7 +288,7 @@ typedef struct {
 	int  speed;            /* SETSPEED: 1 = normal. Its own field rather than
 	                        * `index`/`count` - see the warning on those two
 	                        * about one slot serving verbs that disagree. */
-	char hotkeys[128];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
+	char hotkeys[192];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
 	char modifier[16];     /* SETHOTKEYS: "menu"|"select"|"l3"|"home"; empty = keep */
 	int  every;            /* SETREWINDSPEED: capture cadence in frames, which
 	                        * is the rewind speed (5 = 5x); 0 = off. -1 when
@@ -366,7 +366,12 @@ typedef enum {
 	 * Split). TortOS plorpos-3yv.62. */
 	DIATOM_SCALE_DS_A,
 	DIATOM_SCALE_DS_B,
-	DIATOM_SCALE_DS_A_SWAP
+	DIATOM_SCALE_DS_A_SWAP,
+	/* One DS screen at a time, fullscreen, for the ports that draw no
+	 * split (Brick, H700: TortOS plorpos-reo.21). Diatom crops the stacked
+	 * frame itself; the port sees an ordinary 256x192 frame. */
+	DIATOM_SCALE_DS_TOP,
+	DIATOM_SCALE_DS_BOTTOM
 } diatom_scale_mode;
 
 diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,

@@ -39,6 +39,10 @@ const diatom_display_mode_info diatom_modes[] = {
 	  "DS: the bottom screen big, the top one small above" },
 	{ "ds-b",      DIATOM_SCALE_DS_B,
 	  "DS: both screens the same size, stacked" },
+	{ "ds-top",    DIATOM_SCALE_DS_TOP,
+	  "DS: the top screen alone, fullscreen" },
+	{ "ds-bottom", DIATOM_SCALE_DS_BOTTOM,
+	  "DS: the bottom screen alone, fullscreen" },
 };
 const int diatom_mode_count =
 	(int)(sizeof diatom_modes / sizeof diatom_modes[0]);
@@ -91,6 +95,16 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 	case DIATOM_SCALE_DS_A_SWAP:
 	case DIATOM_SCALE_DS_B:     /* whole, as fit, when the frame is not a DS's */
 	case DIATOM_SCALE_ASPECT_FIT:
+		a = target_aspect(src_w, src_h, aspect);
+		if ((double)surf_w / a <= (double)surf_h)
+			return centered(surf_w, (int)((double)surf_w / a + 0.5),
+			               surf_w, surf_h);
+		return centered((int)((double)surf_h * a + 0.5), surf_h,
+		               surf_w, surf_h);
+
+	case DIATOM_SCALE_DS_TOP:   /* one screen of the stacked frame: 4:3 */
+	case DIATOM_SCALE_DS_BOTTOM:
+		if (src_h == src_w * 3 / 2) { src_h /= 2; aspect = 0; }
 		a = target_aspect(src_w, src_h, aspect);
 		if ((double)surf_w / a <= (double)surf_h)
 			return centered(surf_w, (int)((double)surf_w / a + 0.5),

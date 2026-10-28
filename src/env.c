@@ -16,6 +16,7 @@
 
 #include "cheevos.h"
 #include "diatom.h"
+#include "stylus.h"
 
 #define MASK(x) ((x) & 0xffff)   /* experimental commands carry 0x10000 */
 
@@ -767,7 +768,7 @@ static int16_t cb_input_state(unsigned port, unsigned device,
 	 * DS's bottom screen, TortOS plorpos-3yv.47). */
 	if (port == 0 && device == RETRO_DEVICE_POINTER) {
 		int16_t x = 0, y = 0;
-		bool down = diatom_port_pointer(&x, &y);
+		bool down = sty_active() ? sty_pointer(&x, &y) : diatom_port_pointer(&x, &y);
 
 		if (id == RETRO_DEVICE_ID_POINTER_PRESSED) return down;
 		if (id == RETRO_DEVICE_ID_POINTER_X) return x;

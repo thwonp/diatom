@@ -37,7 +37,7 @@ PORT_EXTRA_h700  := port/gkd_gl.c
 # The Rotate is the GKD's session (sway, PipeWire): the same port file.
 PORT_SRC_rotate  := port/gkd.c
 PORT_EXTRA_rotate := port/gkd_gl.c
-SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/shot.c $(or $(PORT_SRC_$(PORT)),port/$(PORT).c) $(PORT_EXTRA_$(PORT))
+SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/stylus.c src/shot.c $(or $(PORT_SRC_$(PORT)),port/$(PORT).c) $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
 CONFORM := $(BUILD)/diatom-conform
@@ -337,7 +337,7 @@ $(BUILD)/%.o: %.c
 # fails when it is broken. check-seam has held since day one for exactly that
 # reason; the register drifted 418 -> 992 lines in three days because nothing
 # ever complained.
-check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign check-options
+check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign check-stylus check-options
 
 # Does a RetroAchievements address reach the byte it names? Offline, needs no
 # core and no ROM, and links only cheevos.c plus the vendored runtime - so it
@@ -399,6 +399,16 @@ $(BUILD)/turboassign-test: test/turboassign_test.c src/turboassign.c src/turboas
 	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
 	   -fno-sanitize-recover=all -o $@ test/turboassign_test.c src/turboassign.c
 .PHONY: check-turboassign
+
+# Stylus Mode's cursor (TortOS plorpos-reo.21), on a fake clock. Host compiler.
+check-stylus: $(BUILD)/stylus-test
+	@./$(BUILD)/stylus-test
+
+$(BUILD)/stylus-test: test/stylus_test.c src/stylus.c src/stylus.h
+	@mkdir -p $(BUILD)
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Isrc -fsanitize=address,undefined \
+	   -fno-sanitize-recover=all -o $@ test/stylus_test.c src/stylus.c
+.PHONY: check-stylus
 
 # Deliberately NOT part of `check`. It needs a build and it runs in real time -
 # Diatom paces to the core's frame rate, so 300 frames costs five seconds of

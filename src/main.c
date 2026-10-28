@@ -30,6 +30,7 @@
 #include "hotkeys.h"
 #include "turboassign.h"
 #include "shot.h"
+#include "stylus.h"
 #include "rewind.h"
 
 /* --- the frame the core last handed us ----------------------------------- */
@@ -530,6 +531,31 @@ static const char *filter_name(diatom_filter f)
 	return f == DIATOM_FILTER_SHARP ? "sharp" : "nearest";
 }
 
+static bool ds_stacked(void) { return g_base_h == g_base_w * 3 / 2; }
+
+/* Present the core's frame. A DS screen shown alone is the top or bottom half
+ * of the stacked frame, cropped here so the port draws an ordinary frame; the
+ * bottom one carries Stylus Mode's cursor. */
+static void present_frame(bool fresh)
+{
+	const diatom_scale_mode m = diatom_modes[g_mode].mode;
+	const int bpp = g_policy.pixfmt == DIATOM_PIX_RGB565 ? 2 : 4;
+	uint8_t *src = fresh ? g_frame : NULL;
+	int h = g_frame_h;
+
+	if ((m == DIATOM_SCALE_DS_TOP || m == DIATOM_SCALE_DS_BOTTOM)
+	    && g_frame_h == g_frame_w * 3 / 2) {
+		h /= 2;
+		if (m == DIATOM_SCALE_DS_BOTTOM) {
+			if (fresh) {
+				src += (size_t)h * g_frame_pitch;
+				sty_stamp(src, g_frame_pitch, bpp);
+			}
+		}
+	}
+	diatom_port_present(src, g_frame_w, h, g_frame_pitch, g_policy.pixfmt, g_dst, g_filter);
+}
+
 static void apply_display(int mode, diatom_filter filter)
 {
 	diatom_rect top, bot;
@@ -539,6 +565,9 @@ static void apply_display(int mode, diatom_filter filter)
 	g_filter = filter;
 	g_dst = diatom_scale_rect(diatom_modes[mode].mode, g_base_w, g_base_h,
 	                          g_base_aspect, g_caps.surface_w, g_caps.surface_h);
+	/* Stylus Mode follows the bottom screen being the one shown alone. */
+	sty_screen(diatom_modes[mode].mode == DIATOM_SCALE_DS_BOTTOM && ds_stacked(),
+	           g_base_w, g_base_h / 2);
 	/* A DS layout: two rects for the two screens, the port draws both. */
 	if (diatom_ds_rects(diatom_modes[mode].mode, g_base_w, g_base_h,
 	                    g_caps.surface_w, g_caps.surface_h, &top, &bot)) {
@@ -960,6 +989,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_FF:     if (buttons & bit) ff_held = true;     break;
 		case HK_REWIND: if (buttons & bit) rewind_held = true; break;
 		case HK_STYLUS: if (buttons & bit) stylus_held = true; break;
+		case HK_STYLUSMODE: if (pressed & bit) sty_toggle(); break;
 		case HK_SAVESTATE:
 			if ((pressed & bit) && sn->state_exit)
 				diatom_state_save(g_core, sn->state_exit);
@@ -978,6 +1008,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 			if (pressed & bit) {
 				static const char *const next[][2] = {
 					{ "ds-a", "ds-a-swap" }, { "ds-a-swap", "ds-b" }, { "ds-b", "ds-a" },
+					{ "ds-top", "ds-bottom" }, { "ds-bottom", "ds-top" },
 				};
 				for (size_t k = 0; k < sizeof next / sizeof next[0]; k++) {
 					int m;
@@ -1000,6 +1031,19 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 	if (rewind_held)                      { g_rewind_active = true;  g_hotkey_rewind_active = true; }
 	else if (g_hotkey_rewind_active)      { g_rewind_active = false; g_hotkey_rewind_active = false; }
 	diatom_port_stylus(stylus_held);
+	/* Stylus Mode (stylus.h): the d-pad is the cursor's, and the game does
+	 * not see it. */
+	{
+		const unsigned dirs = ((buttons >> DIATOM_BTN_UP) & 1 ? STY_UP : 0)
+		                    | ((buttons >> DIATOM_BTN_DOWN) & 1 ? STY_DOWN : 0)
+		                    | ((buttons >> DIATOM_BTN_LEFT) & 1 ? STY_LEFT : 0)
+		                    | ((buttons >> DIATOM_BTN_RIGHT) & 1 ? STY_RIGHT : 0);
+
+		sty_frame(dirs, stylus_held, diatom_port_now_us());
+		if (sty_active())
+			mask |= DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN)
+			      | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT);
+	}
 
 	return mask;
 }
@@ -1707,6 +1751,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * silently keep governing this one. The launcher re-sends SETHOTKEYS
 	 * after RUN, on the same terms turbo's SETMAP already is. */
 	hotkeys_reset();
+	sty_reset();
 	g_hotkey_ff_active = g_hotkey_rewind_active = false;
 
 	/* Idle reporting belongs to this game, and this game has not asked yet.
@@ -1779,9 +1824,7 @@ static int run_session_inner(const diatom_session *sn)
 		g_audio_warmup = true;
 		for (w = 0; w < 3; w++) {
 			g_core->run();
-			diatom_port_present(g_frame, g_frame_w, g_frame_h, g_frame_pitch,
-			                    g_policy.pixfmt, g_dst,
-			                    g_filter);
+			present_frame(true);
 		}
 		g_audio_warmup = false;
 		st4 = diatom_port_now_us();
@@ -1914,10 +1957,7 @@ static int run_session_inner(const diatom_session *sn)
 #ifdef DIATOM_PORT_FF_SKIP
 			diatom_port_fast(g_ff_speed > 1);
 #endif
-			diatom_port_present(g_frame_fresh ? g_frame : NULL,
-			                    g_frame_w, g_frame_h, g_frame_pitch,
-			                    g_policy.pixfmt, g_dst,
-			                    g_filter);
+			present_frame(g_frame_fresh);
 			g_stat[SLOT(g_mode, g_filter)].present_us
 				+= diatom_port_now_us() - p0;
 			g_stat[SLOT(g_mode, g_filter)].frames++;
