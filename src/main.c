@@ -1636,7 +1636,17 @@ static int run_session_inner(const diatom_session *sn)
 	levels_forget();
 	audio_forget();
 	diatom_port_level_invalidate();
-	long frames = 0, geom_changes = 0, resyncs = 0;
+	long frames = 0, geom_changes = 0, resyncs = 0, skipped = 0;
+	/* Frame skip (TortOS plorpos-reo.21). A heavy scene can need more than a
+	 * frame's time for the core plus the 5 ms blit; the core then runs slow
+	 * (a DS 3D scene on the Brick: 13-17 ms + 5 ms against 16.7). When
+	 * presenting would leave the schedule more than FS_TOL behind, only the
+	 * blit is skipped - the core still runs every frame, so speed and audio
+	 * hold and the panel repeats one picture - never more than twice in a
+	 * row. DIATOM_FRAMESKIP_MS sets the tolerance, 0 turns it off. */
+	const double fs_tol_us = (getenv("DIATOM_FRAMESKIP_MS") ? atof(getenv("DIATOM_FRAMESKIP_MS")) : 8.0) * 1000.0;
+	double pres_est_us = 5000.0;
+	int fs_run = 0;
 	size_t q_min = (size_t)-1, q_max = 0;
 	bool q_live = false;
 	bool stop = false;
@@ -2042,7 +2052,15 @@ static int run_session_inner(const diatom_session *sn)
 #ifdef DIATOM_PORT_FF_SKIP
 			diatom_port_fast(g_ff_speed > 1);
 #endif
-			present_frame(g_frame_fresh);
+			bool fs = fs_tol_us > 0 && g_ff_speed == 1 && !g_rewind_active && g_frame_fresh && fs_run < 2
+			          && (double)p0 + pres_est_us - (next_us + frame_us) > fs_tol_us;
+
+			if (fs) { fs_run++; skipped++; present_frame(false); }
+			else {
+				fs_run = 0;
+				present_frame(g_frame_fresh);
+				if (g_frame_fresh) pres_est_us += ((double)(diatom_port_now_us() - p0) - pres_est_us) * 0.1;
+			}
 			g_stat[SLOT(g_mode, g_filter)].present_us
 				+= diatom_port_now_us() - p0;
 			g_stat[SLOT(g_mode, g_filter)].frames++;
@@ -2367,6 +2385,7 @@ static int run_session_inner(const diatom_session *sn)
 		printf("diatom: %ld geometry change(s), last rect %dx%d at %d,%d\n",
 		       geom_changes, g_dst.w, g_dst.h, g_dst.x, g_dst.y);
 		printf("diatom: %ld resync(s)\n", resyncs);
+		if (skipped) printf("diatom: %ld frame(s) not presented to keep time\n", skipped);
 		{
 			const diatom_rewind_stat rs = rw_stat;
 
