@@ -26,9 +26,10 @@ typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCR
                HK_SWAP  /* DS Display Mode: the next layout (TortOS plorpos-3yv.47, .62) */,
                HK_STYLUS /* held: the DS stylus down where the port's cursor is
                           * (diatom_port_stylus; the GKD, TortOS plorpos-46o.4) */,
-               HK_STYLUSMODE /* the d-pad as the stylus's cursor, on and off (stylus.h) */ } hk_action;
+               HK_STYLUSMODE /* the d-pad as the stylus's cursor, on and off (stylus.h) */,
+               HK_SWAPBACK /* DS Layout <-: HK_SWAP the other way round */ } hk_action;
 
-#define HK_MAX 9
+#define HK_MAX 10
 
 /* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
  * a spec that is half garbage is refused whole rather than applying the good

@@ -1528,6 +1528,12 @@ static const uint32_t *cache_row(const void *src, size_t pitch, diatom_pixfmt fm
 		}
 	} else {
 		const uint32_t *in = (const uint32_t *)((const uint8_t *)src + (size_t)row * pitch);
+
+		if (ro == 16 && go == 8 && bo == 0) {   /* the panel's own order: no repacking */
+			for (x = 0; x < src_w; x++) dst[x] = opaque | (in[x] & 0x00ffffffu);
+			g_rc_row[slot] = row;
+			return dst;
+		}
 		for (x = 0; x < src_w; x++) {
 			const uint32_t c = in[x];
 			dst[x] = opaque
@@ -1658,6 +1664,8 @@ static void blit(uint8_t *page, const void *src, int w, int h, size_t pitch,
 		const uint32_t *c1 = ty.w ? cache_row(src, pitch, fmt, ty.idx + 1, w) : NULL;
 
 		if (ty.w) BLIT_ROW_BLEND();
+		else if (w == dst.w)   /* 1:1 across: the cache row IS the output row */
+			memcpy(out + x0, c0 + (x0 - dst.x), (size_t)(x1 - x0) * sizeof *out);
 		else      BLIT_ROW_NEAREST();
 
 		/* Drawn in ordinary memory, then copied to the page and to the

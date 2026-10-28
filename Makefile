@@ -337,7 +337,7 @@ $(BUILD)/%.o: %.c
 # fails when it is broken. check-seam has held since day one for exactly that
 # reason; the register drifted 418 -> 992 lines in three days because nothing
 # ever complained.
-check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign check-stylus check-options
+check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign check-stylus check-dslayout check-options
 
 # Does a RetroAchievements address reach the byte it names? Offline, needs no
 # core and no ROM, and links only cheevos.c plus the vendored runtime - so it
@@ -409,6 +409,16 @@ $(BUILD)/stylus-test: test/stylus_test.c src/stylus.c src/stylus.h
 	cc -std=gnu11 -Wall -Wextra -O1 -g -Isrc -fsanitize=address,undefined \
 	   -fno-sanitize-recover=all -o $@ test/stylus_test.c src/stylus.c
 .PHONY: check-stylus
+
+# The DS Focus layouts' rectangles (TortOS plorpos-reo.21). Host compiler.
+check-dslayout: $(BUILD)/dslayout-test
+	@./$(BUILD)/dslayout-test
+
+$(BUILD)/dslayout-test: test/dslayout_test.c src/scale.c src/diatom.h
+	@mkdir -p $(BUILD)
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
+	   -fno-sanitize-recover=all -o $@ test/dslayout_test.c src/scale.c
+.PHONY: check-dslayout
 
 # Deliberately NOT part of `check`. It needs a build and it runs in real time -
 # Diatom paces to the core's frame rate, so 300 frames costs five seconds of

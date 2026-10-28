@@ -43,6 +43,10 @@ const diatom_display_mode_info diatom_modes[] = {
 	  "DS: the top screen alone, fullscreen" },
 	{ "ds-bottom", DIATOM_SCALE_DS_BOTTOM,
 	  "DS: the bottom screen alone, fullscreen" },
+	{ "ds-topfocus", DIATOM_SCALE_DS_TOP_FOCUS,
+	  "DS: the top screen big, the bottom one small at its right" },
+	{ "ds-bottomfocus", DIATOM_SCALE_DS_BOTTOM_FOCUS,
+	  "DS: the bottom screen big, the top one small at its right" },
 };
 const int diatom_mode_count =
 	(int)(sizeof diatom_modes / sizeof diatom_modes[0]);
@@ -113,10 +117,25 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 		               surf_w, surf_h);
 
 	case DIATOM_SCALE_STRETCH:
+	case DIATOM_SCALE_DS_TOP_FOCUS:     /* composed to the whole panel */
+	case DIATOM_SCALE_DS_BOTTOM_FOCUS:
 		return centered(surf_w, surf_h, surf_w, surf_h);
 	}
 
 	return centered(src_w, src_h, surf_w, surf_h);
+}
+
+void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
+                           diatom_rect *focus, diatom_rect *small)
+{
+	int fw = surf_w * 3 / 4, fh = fw * 3 / 4, sw, sh, x0;
+
+	if (fh > surf_h) { fh = surf_h; fw = fh * 4 / 3; }
+	sw = fw / 3;
+	sh = sw * 3 / 4;
+	x0 = (surf_w - fw - sw) / 2;
+	*focus = (diatom_rect){ x0, (surf_h - fh) / 2, fw, fh };
+	*small = (diatom_rect){ x0 + fw, top_focus ? focus->y + fh - sh : focus->y, sw, sh };
 }
 
 bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,

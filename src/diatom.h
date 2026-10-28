@@ -371,7 +371,11 @@ typedef enum {
 	 * split (Brick, H700: TortOS plorpos-reo.21). Diatom crops the stacked
 	 * frame itself; the port sees an ordinary 256x192 frame. */
 	DIATOM_SCALE_DS_TOP,
-	DIATOM_SCALE_DS_BOTTOM
+	DIATOM_SCALE_DS_BOTTOM,
+	/* Both screens, one big at the left and the other a third its width
+	 * at its right (see diatom_ds_focus_rects); composed in main.c. */
+	DIATOM_SCALE_DS_TOP_FOCUS,
+	DIATOM_SCALE_DS_BOTTOM_FOCUS
 } diatom_scale_mode;
 
 diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
@@ -379,6 +383,15 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 /* For a DS mode and a frame that is two screens stacked (w x 2*(w*3/4)): where
  * the top and the bottom screen go. False for anything else - the frame is
  * then drawn whole, by diatom_scale_rect. */
+/* The Focus layouts' two rects in a surf_w x surf_h panel: the focus screen
+ * 3 parts wide at the left, vertically centred; the other 1 part wide
+ * against its right edge, at its bottom corner when the focus screen is the
+ * top one (the small one is the bottom screen) and at its top corner when
+ * it is the bottom one. 4:3 screens; letterboxed in a panel of another
+ * shape. */
+void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
+                           diatom_rect *focus, diatom_rect *small);
+
 bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
                      int surf_w, int surf_h, diatom_rect *top, diatom_rect *bot);
 
