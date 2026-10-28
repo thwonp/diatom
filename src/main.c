@@ -1644,7 +1644,11 @@ static int run_session_inner(const diatom_session *sn)
 	 * blit is skipped - the core still runs every frame, so speed and audio
 	 * hold and the panel repeats one picture - never more than twice in a
 	 * row. DIATOM_FRAMESKIP_MS sets the tolerance, 0 turns it off. */
+#ifdef DIATOM_PORT_FRAMESKIP   /* a port opts in: the rule is measured only on the Brick */
 	const double fs_tol_us = (getenv("DIATOM_FRAMESKIP_MS") ? atof(getenv("DIATOM_FRAMESKIP_MS")) : 8.0) * 1000.0;
+#else
+	const double fs_tol_us = 0;
+#endif
 	double pres_est_us = 5000.0;
 	int fs_run = 0;
 	size_t q_min = (size_t)-1, q_max = 0;

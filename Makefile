@@ -124,6 +124,9 @@ ifeq ($(PORT),brick)
   # sysroot/brick by tools/fetch-brick-sysroot.sh and never committed.
   # Its GL swap waits for vsync: FF skips frames there - diatom_port_fast.
   CFLAGS  += -DDIATOM_PORT_FF_SKIP
+  # A busy frame can miss its deadline by the 5 ms blit; skip the blit then
+  # (main.c, TortOS plorpos-reo.21). Only measured on this port.
+  CFLAGS  += -DDIATOM_PORT_FRAMESKIP
   CROSS   ?= aarch64-linux-gnu-
   CC       = $(CROSS)gcc
   SYSROOT ?= sysroot/brick
