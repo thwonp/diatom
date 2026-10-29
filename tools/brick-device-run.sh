@@ -58,7 +58,12 @@ fi
 #
 # `Headphone Volume` stays 0 and is not a speaker level: raising it routes to
 # the headphone JACK and mutes the speakers. TortOS zeroes it deliberately.
+# The mixer as it was is saved first and put back by restore(): left at DAC
+# 200 (+30 dB) the device was over-loud and distorted until reset by hand
+# (plorpos-gkd.83.10).
+MIXER_SAVED=
 if [ -n "${DIATOM_GAIN:-}" ]; then
+    alsactl -f /tmp/brick-run.mixer store 2>/dev/null && MIXER_SAVED=1
     amixer sset 'Headphone' 0            >/dev/null 2>&1
     amixer sset 'digital volume' "${DIATOM_GAIN}" >/dev/null 2>&1
     amixer sset 'DAC volume' 200         >/dev/null 2>&1
@@ -72,6 +77,7 @@ fi
 # inside the "freeze" through a whole afternoon of probe runs. Hence one kill
 # per pid, and the check below that the freeze actually held.
 restore() {
+    [ -n "$MIXER_SAVED" ] && alsactl -f /tmp/brick-run.mixer restore 2>/dev/null
     for p in $SUP; do kill -CONT "$p" 2>/dev/null; done
     exit "${1:-0}"
 }
