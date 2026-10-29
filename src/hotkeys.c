@@ -51,6 +51,7 @@ static const struct { const char *name; int btn; bool direct; } g_inputs[] = {
 	{ "sleft",  DIATOM_BTN_SLEFT,  false }, { "sright", DIATOM_BTN_SRIGHT, false },
 	{ "rsup",   DIATOM_BTN_RSUP,   true  }, { "rsdown", DIATOM_BTN_RSDOWN, true  },
 	{ "rsleft", DIATOM_BTN_RSLEFT, true  }, { "rsright", DIATOM_BTN_RSRIGHT, true },
+	{ "fn1",    DIATOM_BTN_FN1,    true  }, { "fn2",    DIATOM_BTN_FN2,    true  },
 };
 
 static int hk_btn_from_name(const char *s, bool direct)

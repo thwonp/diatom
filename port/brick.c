@@ -1937,9 +1937,9 @@ static const struct { int idx; int btn; } joymap[] = {
 #define JOY_VOL_UP 14
 
 /* The two front keys, reported as BTN_THUMBL/THUMBR - SDL indices 9 and 10,
- * which minarch calls L3/R3. They are not game inputs; the firmware spends
- * them on brightness and so do we. Absent from joymap[] on purpose: mapping
- * them would send every brightness press to the core. */
+ * which minarch calls L3/R3. Not game inputs: Fn1 (left) and Fn2, hotkey
+ * triggers since brightness moved to MENU + Volume (TortOS plorpos-reo.22).
+ * Absent from joymap[] on purpose - a core never sees them. */
 #define JOY_FN_L   9
 #define JOY_FN_R   10
 
@@ -2006,28 +2006,31 @@ static void stick_axis(int value, int neg_btn, int pos_btn)
  * so a release this loop never saw cannot leave a level climbing. */
 #define LEVEL_REPEAT_DELAY_US 300000ull
 #define LEVEL_REPEAT_RATE_US   90000ull
-static const struct { int idx; bool bright; int dir; } level_buttons[] = {
-	{ JOY_VOL_UP, false, +1 }, { JOY_VOL_DN, false, -1 },
-	{ JOY_FN_R,   true,  +1 }, { JOY_FN_L,   true,  -1 },
+/* Volume, or with MENU held brightness, as on every other device (TortOS
+ * plorpos-reo.22). A hold keeps the kind its press had. */
+static const struct { int idx; int dir; } level_buttons[] = {
+	{ JOY_VOL_UP, +1 }, { JOY_VOL_DN, -1 },
 };
 #define LEVEL_BUTTONS (sizeof level_buttons / sizeof level_buttons[0])
-
-/* The joystick button for level_buttons[k]: the Brick Pro's function keys
- * are other buttons than the Brick's. */
-static int level_idx(size_t k)
-{
-	int i = level_buttons[k].idx;
-
-	if (is_brick_pro() && i == JOY_FN_R) return JOY_PRO_FN_R;
-	if (is_brick_pro() && i == JOY_FN_L) return JOY_PRO_FN_L;
-	return i;
-}
 static uint64_t g_level_next_us[LEVEL_BUTTONS];   /* when it next repeats; 0 is not held */
+static bool     g_level_bright[LEVEL_BUTTONS];
 
 static void level_step(size_t k)
 {
-	if (level_buttons[k].bright) bright_nudge(level_buttons[k].dir);
-	else                         gain_nudge(level_buttons[k].dir);
+	if (g_level_bright[k]) bright_nudge(level_buttons[k].dir);
+	else                   gain_nudge(level_buttons[k].dir);
+}
+
+/* While a brightness key is held under MENU: LEVEL makes that MENU a chord
+ * for the host, so its release opens no menu. */
+static void level_chord(void)
+{
+	size_t k;
+	bool any = false;
+
+	for (k = 0; k < LEVEL_BUTTONS; k++) any |= g_level_next_us[k] && g_level_bright[k];
+	if (any) g_buttons |=  DIATOM_BIT(DIATOM_BTN_LEVEL);
+	else     g_buttons &= ~DIATOM_BIT(DIATOM_BTN_LEVEL);
 }
 
 /* Whether `button` is a level button, handled here if so. */
@@ -2036,8 +2039,10 @@ static bool level_button(int button, bool down)
 	size_t k;
 
 	for (k = 0; k < LEVEL_BUTTONS; k++) {
-		if (level_idx(k) != button) continue;
+		if (level_buttons[k].idx != button) continue;
+		if (down) g_level_bright[k] = (g_buttons & DIATOM_BIT(DIATOM_BTN_MENU)) != 0;
 		g_level_next_us[k] = down ? diatom_port_now_us() + LEVEL_REPEAT_DELAY_US : 0;
+		level_chord();
 		if (down) level_step(k);
 		return true;
 	}
@@ -2051,8 +2056,9 @@ static void levels_repeat(void)
 
 	for (k = 0; k < LEVEL_BUTTONS; k++) {
 		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
-		if (!g_joy || !SDL_JoystickGetButton(g_joy, level_idx(k))) {
+		if (!g_joy || !SDL_JoystickGetButton(g_joy, level_buttons[k].idx)) {
 			g_level_next_us[k] = 0;
+			level_chord();
 			continue;
 		}
 		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
@@ -2098,14 +2104,24 @@ void diatom_port_input_poll(void)
 
 			/* The Pro's stick clicks: L3 and R3, hotkey choices
 			 * (plorpos-gkd.43.1, ADR-0044). The same indexes are the plain
-			 * Brick's front brightness keys, handled above. */
-			if (is_brick_pro() && (ev.jbutton.button == JOY_FN_L
-			                       || ev.jbutton.button == JOY_FN_R)) {
-				uint32_t bit = DIATOM_BIT(ev.jbutton.button == JOY_FN_L
-				                          ? DIATOM_BTN_L3 : DIATOM_BTN_R3);
-				if (down) g_buttons |=  bit;
-				else      g_buttons &= ~bit;
-				break;
+			 * Brick's function keys, Fn1 and Fn2; the Pro's are 11 and 12. */
+			{
+				int b = ev.jbutton.button, btn = -1;
+
+				if (is_brick_pro()) {
+					if (b == JOY_FN_L)          btn = DIATOM_BTN_L3;
+					else if (b == JOY_FN_R)     btn = DIATOM_BTN_R3;
+					else if (b == JOY_PRO_FN_L) btn = DIATOM_BTN_FN1;
+					else if (b == JOY_PRO_FN_R) btn = DIATOM_BTN_FN2;
+				} else {
+					if (b == JOY_FN_L)          btn = DIATOM_BTN_FN1;
+					else if (b == JOY_FN_R)     btn = DIATOM_BTN_FN2;
+				}
+				if (btn >= 0) {
+					if (down) g_buttons |=  DIATOM_BIT(btn);
+					else      g_buttons &= ~DIATOM_BIT(btn);
+					break;
+				}
 			}
 
 			for (i = 0; i < sizeof joymap / sizeof joymap[0]; i++) {
@@ -2174,9 +2190,7 @@ static int not_level_press(void *u, SDL_Event *e)
 
 	(void)u;
 	if (e->type != SDL_JOYBUTTONDOWN) return 1;
-	return !(b == JOY_VOL_UP || b == JOY_VOL_DN ||
-	         b == (is_brick_pro() ? JOY_PRO_FN_L : JOY_FN_L) ||
-	         b == (is_brick_pro() ? JOY_PRO_FN_R : JOY_FN_R));
+	return !(b == JOY_VOL_UP || b == JOY_VOL_DN);
 }
 
 void diatom_port_level_invalidate(void)

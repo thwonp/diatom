@@ -59,7 +59,7 @@ static bool unmappable(int b)
 {
 	return b == DIATOM_BTN_MENU || b == DIATOM_BTN_HOTKEY || b == DIATOM_BTN_L3
 	    || (b >= DIATOM_BTN_SUP && b <= DIATOM_BTN_SRIGHT)
-	    || (b >= DIATOM_BTN_R3 && b <= DIATOM_BTN_RSRIGHT);
+	    || (b >= DIATOM_BTN_R3 && b <= DIATOM_BTN_LEVEL);
 }
 
 bool diatom_env_geometry_changed(void)
@@ -477,7 +477,8 @@ static void cb_input_poll(void)
 static const char *const button_names[DIATOM_BTN_COUNT] = {
 	"up", "down", "left", "right", "a", "b", "x", "y",
 	"l1", "r1", "l2", "r2", "select", "start", "menu", "hotkey", "l3",
-	"sup", "sdown", "sleft", "sright", "r3", "rsup", "rsdown", "rsleft", "rsright"
+	"sup", "sdown", "sleft", "sright", "r3", "rsup", "rsdown", "rsleft", "rsright",
+	"fn1", "fn2", "level"
 };
 
 /* Canonical Diatom buttons -> retropad. Near-identity by design; its purpose is
@@ -513,6 +514,9 @@ static int button_map[DIATOM_BTN_COUNT] = {
 	[DIATOM_BTN_RSDOWN]  = -1,
 	[DIATOM_BTN_RSLEFT]  = -1,
 	[DIATOM_BTN_RSRIGHT] = -1,
+	[DIATOM_BTN_FN1]     = -1,         /* the Bricks' function keys: hotkeys only */
+	[DIATOM_BTN_FN2]     = -1,
+	[DIATOM_BTN_LEVEL]   = -1,
 };
 
 static int identity_map[DIATOM_BTN_COUNT];

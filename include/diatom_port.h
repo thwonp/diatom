@@ -102,6 +102,13 @@ enum {
 	 * choice, and triggers on either layer; ADR-0044). */
 	DIATOM_BTN_R3,
 	DIATOM_BTN_RSUP, DIATOM_BTN_RSDOWN, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT,
+	/* The Bricks' two function keys, Fn1 the left and Fn2 the right, freed
+	 * when brightness moved to MENU + Volume (TortOS plorpos-reo.22): Diatom's
+	 * own like R3, hotkey triggers and nothing else. */
+	DIATOM_BTN_FN1, DIATOM_BTN_FN2,
+	/* Held by a port while a level key acts under MENU, so that MENU press is
+	 * a chord and not a menu tap. Never a core's, never a trigger. */
+	DIATOM_BTN_LEVEL,
 	DIATOM_BTN_COUNT
 };
 #define DIATOM_BIT(b) (1u << (b))
