@@ -51,6 +51,10 @@ typedef struct {
 	 * one struct holds either; `disk_ext` says whether the tail is valid. */
 	struct retro_disk_control_ext_callback disk;
 	bool          has_disk, disk_ext;
+	/* Audio buffer status (frame skipping done by the core, RetroArch's way):
+	 * the core registers it in retro_init and the host calls it before every
+	 * frame with whether the frame is likely to run late. NULL = not asked. */
+	retro_audio_buffer_status_callback_t audio_status;
 	int           disk_close_in;   /* frames until the tray closes; 0 = shut */
 	uint64_t      disk_closed_us;  /* when the tray last closed; see settle */
 

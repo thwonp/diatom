@@ -424,6 +424,14 @@ static bool env_cb(unsigned cmd, void *data)
 		g_bound->disk_ext = true;
 		return true;
 
+	/* A core that skips its own rendering when told the frontend is behind
+	 * (DSperate's GPU does: 3D raster and line output, nothing else). The host
+	 * answers it from the frame loop, main.c. */
+	case MASK(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK):
+		if (!g_bound) return false;
+		g_bound->audio_status = data ? ((const struct retro_audio_buffer_status_callback *)data)->callback : NULL;
+		return true;
+
 	/* ---- misc ------------------------------------------------------------ */
 	case MASK(RETRO_ENVIRONMENT_GET_LOG_INTERFACE):
 		((struct retro_log_callback *)data)->log = core_log;
