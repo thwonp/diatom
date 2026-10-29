@@ -200,6 +200,7 @@ static void parse_line(char *line, diatom_msg *out)
 	else if (!strcmp(field, "SETREWINDSPEED")) out->kind = DIATOM_MSG_SETREWINDSPEED;
 	else if (!strcmp(field, "FFSPEED"))        out->kind = DIATOM_MSG_FFSPEED;
 	else if (!strcmp(field, "SETFFSPEED"))     out->kind = DIATOM_MSG_SETFFSPEED;
+	else if (!strcmp(field, "SETSTYLUSSTICK")) out->kind = DIATOM_MSG_SETSTYLUSSTICK;
 	else if (!strcmp(field, "HOTKEYS"))    out->kind = DIATOM_MSG_HOTKEYS;
 	else if (!strcmp(field, "SETHOTKEYS")) out->kind = DIATOM_MSG_SETHOTKEYS;
 	else if (!strcmp(field, "DISC"))       out->kind = DIATOM_MSG_DISC;
@@ -270,6 +271,8 @@ static void parse_line(char *line, diatom_msg *out)
 		else if (!strcmp(field, "disc"))  out->disc  = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "hotkeys"))
 			snprintf(out->hotkeys, sizeof out->hotkeys, "%s", v);
+		else if (!strcmp(field, "stick"))
+			snprintf(out->stick, sizeof out->stick, "%s", v);
 		else if (!strcmp(field, "modifier"))
 			snprintf(out->modifier, sizeof out->modifier, "%s", v);
 		/* anything else: forward compatibility, ignore */

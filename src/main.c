@@ -1119,15 +1119,20 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 	/* Stylus Mode (stylus.h): the d-pad is the cursor's, and the game does
 	 * not see it. */
 	{
-		const unsigned dirs = ((buttons >> DIATOM_BTN_UP) & 1 ? STY_UP : 0)
-		                    | ((buttons >> DIATOM_BTN_DOWN) & 1 ? STY_DOWN : 0)
-		                    | ((buttons >> DIATOM_BTN_LEFT) & 1 ? STY_LEFT : 0)
-		                    | ((buttons >> DIATOM_BTN_RIGHT) & 1 ? STY_RIGHT : 0);
+		/* The d-pad, or one stick: the stick's four bits sit in the same
+		 * order, so the same shift reads either. A stick that moves the
+		 * cursor is hidden from the game; the d-pad then stays the game's. */
+		const int src = sty_source();
+		const int first = src == STY_SRC_LSTICK ? DIATOM_BTN_SUP
+		                : src == STY_SRC_RSTICK ? DIATOM_BTN_RSUP : DIATOM_BTN_UP;
+		const unsigned dirs = ((buttons >> first) & 1 ? STY_UP : 0)
+		                    | ((buttons >> (first + 1)) & 1 ? STY_DOWN : 0)
+		                    | ((buttons >> (first + 2)) & 1 ? STY_LEFT : 0)
+		                    | ((buttons >> (first + 3)) & 1 ? STY_RIGHT : 0);
 
 		sty_frame(dirs, stylus_held, diatom_port_now_us());
 		if (sty_active())
-			mask |= DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN)
-			      | DIATOM_BIT(DIATOM_BTN_LEFT) | DIATOM_BIT(DIATOM_BTN_RIGHT);
+			mask |= (0xFu << first);
 	}
 
 	return mask;
@@ -1598,6 +1603,12 @@ static bool state_plane_msg(const diatom_msg *m)
 		if (!diatom_rewind_set_every(m->every))
 			diatom_proto_send("ERROR\tcode=bad_rewindspeed\tmsg=%d", m->every);
 		diatom_proto_send("REWINDSPEED\tevery=%u", diatom_rewind_every());
+		return true;
+	case DIATOM_MSG_SETSTYLUSSTICK:
+		/* After RUN, like SETREWINDSPEED, and answered either way. */
+		if (!sty_set_source(m->stick))
+			diatom_proto_send("ERROR\tcode=bad_stylusstick\tmsg=%s", m->stick);
+		diatom_proto_send("STYLUSSTICK\tstick=%s", sty_source_name());
 		return true;
 	case DIATOM_MSG_FFSPEED:
 		diatom_proto_send("FFSPEED\tspeed=%d", g_hotkey_ff_speed);

@@ -20,6 +20,14 @@
 #define STY_LEFT  4u
 #define STY_RIGHT 8u
 
+/* What moves the cursor: the d-pad, or a stick that leaves the d-pad to the
+ * game. The launcher says (SETSTYLUSSTICK), because it knows which unit has
+ * sticks; the d-pad is the default. */
+enum { STY_SRC_DPAD, STY_SRC_LSTICK, STY_SRC_RSTICK };
+bool sty_set_source(const char *name);   /* "dpad" | "left" | "right" */
+int  sty_source(void);
+const char *sty_source_name(void);
+
 /* A new game: mode off, cursor unplaced. */
 void sty_reset(void);
 void sty_toggle(void);

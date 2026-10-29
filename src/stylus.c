@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* See stylus.h. */
 #include "stylus.h"
+#include <string.h>
 
 /* Slow to start, so a menu item can be aimed at; the GKD's full-tilt speed
  * (the screen's width in 0.8 s) after RAMP_S held. */
@@ -106,4 +107,22 @@ void sty_stamp(void *frame, size_t pitch, int bpp)
 				put(frame, pitch, bpp, cx + t, cy + i, r, g, b);
 			}
 		}
+}
+
+/* Not reset with a game: the launcher sends it after every RUN, as it does the
+ * rewind speed, and a launch that sends nothing keeps the d-pad. */
+static int g_source = STY_SRC_DPAD;
+bool sty_set_source(const char *name)
+{
+	if (!name) return false;
+	if (!strcmp(name, "dpad"))       g_source = STY_SRC_DPAD;
+	else if (!strcmp(name, "left"))  g_source = STY_SRC_LSTICK;
+	else if (!strcmp(name, "right")) g_source = STY_SRC_RSTICK;
+	else return false;
+	return true;
+}
+int sty_source(void) { return g_source; }
+const char *sty_source_name(void)
+{
+	return g_source == STY_SRC_LSTICK ? "left" : g_source == STY_SRC_RSTICK ? "right" : "dpad";
 }

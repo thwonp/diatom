@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* Stylus Mode's cursor, on a fake clock. */
 #include <stdio.h>
+#include <string.h>
 
 #include "stylus.h"
 
@@ -52,6 +53,13 @@ int main(void)
 	CHECK(f[y * 256 + x] == 0xFFFF, "cross centre is white");
 	sty_reset();
 	CHECK(!sty_active(), "reset turns it off");
+	CHECK(sty_source() == STY_SRC_DPAD && !strcmp(sty_source_name(), "dpad"), "the d-pad by default");
+	CHECK(sty_set_source("left") && sty_source() == STY_SRC_LSTICK, "left stick");
+	CHECK(sty_set_source("right") && sty_source() == STY_SRC_RSTICK, "right stick");
+	CHECK(!sty_set_source("up") && sty_source() == STY_SRC_RSTICK, "a bad name changes nothing");
+	sty_reset();
+	CHECK(sty_source() == STY_SRC_RSTICK, "a new game keeps what the launcher chose");
+	sty_set_source("dpad");
 	printf(failures ? "FAILED\n" : "all ok\n");
 	return failures != 0;
 }

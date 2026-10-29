@@ -229,6 +229,7 @@ typedef enum {
 	DIATOM_MSG_SETREWINDSPEED, /* set it, 0 (off)..DIATOM_REWIND_MAX_EVERY: `every` */
 	DIATOM_MSG_FFSPEED,        /* report the fast-forward hotkey's speed: `speed` */
 	DIATOM_MSG_SETFFSPEED,     /* set it, 2..DIATOM_MAX_FF_SPEED: `speed` */
+	DIATOM_MSG_SETSTYLUSSTICK, /* which input moves the DS stylus: `stick` dpad|left|right */
 	/* The hotkey submenu (sibling TortOS feature). The verbs are this repo's
 	 * (MIT); the bindings they set are ported from NextUI's OptionShortcuts_*
 	 * alongside the same rewind/FF port and are PolyForm Noncommercial -
@@ -293,6 +294,7 @@ typedef struct {
 	                        * `index`/`count` - see the warning on those two
 	                        * about one slot serving verbs that disagree. */
 	char hotkeys[192];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
+	char stick[8];         /* SETSTYLUSSTICK: "dpad"|"left"|"right" */
 	char modifier[16];     /* SETHOTKEYS: "menu"|"select"|"l3"|"home"; empty = keep */
 	int  every;            /* SETREWINDSPEED: capture cadence in frames, which
 	                        * is the rewind speed (5 = 5x); 0 = off. -1 when
