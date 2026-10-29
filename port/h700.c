@@ -2061,6 +2061,11 @@ bool diatom_port_pace(bool want)
 	return g_pace || (want && g_win);
 }
 
+/* What the last present cost on the CPU: blit, overlay and publish, without
+ * the wait for the panel above them. 0 when the last frame took the GL path. */
+static uint64_t g_blit_t0, g_blit_us;
+uint64_t diatom_port_blit_us(void) { return g_blit_us; }
+
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
@@ -2203,6 +2208,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		memset(&g_ov_painted[page], 0, sizeof g_ov_painted[page]);
 		g_page_stale[page] = false;
 	}
+	g_blit_t0 = diatom_port_now_us();
 	blit(page_base(page), src, w, h, pitch, fmt, dst);
 	/* Painted, or unpainted. A page keeps whatever was last written outside
 	 * dst, so the bar has to be taken off the same page it was put on - and
@@ -2222,6 +2228,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	g_pending = page;
 	pthread_cond_signal(&g_flip_cv);
 	pthread_mutex_unlock(&g_flip_mx);
+	g_blit_us = diatom_port_now_us() - g_blit_t0;
 
 	if (g_present_debug) {
 		static int n;

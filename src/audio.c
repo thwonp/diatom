@@ -50,6 +50,14 @@ void diatom_audio_tap_close(void)
 /* How far the resample ratio may be nudged. 0.5% is the usual figure: enough to
  * absorb clock drift, small enough that the pitch shift is inaudible. */
 #define MAX_DEVIATION 0.005
+/* A paced port runs the core at the panel's rate, and the sound device on the
+ * H700 drains ~0.5-1% slower than that: the 0.5% above saturates and the queue
+ * overflows. Same gains, three times the reach (plorpos-reo.21.7). */
+#ifdef DIATOM_PORT_PACED
+#define ADJ_CLAMP 3.0
+#else
+#define ADJ_CLAMP 1.0
+#endif
 #define P_GAIN 1.0
 #define I_GAIN 0.002     /* per frame; deliberately slow, ~8s to full authority */
 
@@ -296,12 +304,12 @@ void diatom_audio_sync(void)
 	 * The integral is clamped rather than left to wind up: without that, a long
 	 * stall banks correction that then overshoots for just as long. */
 	g_integral += delta * I_GAIN;
-	if (g_integral < -1.0) g_integral = -1.0;
-	if (g_integral >  1.0) g_integral =  1.0;
+	if (g_integral < -ADJ_CLAMP) g_integral = -ADJ_CLAMP;
+	if (g_integral >  ADJ_CLAMP) g_integral =  ADJ_CLAMP;
 
 	adjust = delta * P_GAIN + g_integral;
-	if (adjust < -1.0) adjust = -1.0;
-	if (adjust >  1.0) adjust =  1.0;
+	if (adjust < -ADJ_CLAMP) adjust = -ADJ_CLAMP;
+	if (adjust >  ADJ_CLAMP) adjust =  ADJ_CLAMP;
 
 	/* Buffer filling up means we are producing too fast, so consume more source
 	 * per output frame - a larger ratio yields fewer output frames. */

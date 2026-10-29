@@ -1644,13 +1644,21 @@ static int run_session_inner(const diatom_session *sn)
 	 * blit is skipped - the core still runs every frame, so speed and audio
 	 * hold and the panel repeats one picture - never more than twice in a
 	 * row. DIATOM_FRAMESKIP_MS sets the tolerance, 0 turns it off. */
-#ifdef DIATOM_PORT_FRAMESKIP   /* a port opts in: the rule is measured only on the Brick */
+#ifdef DIATOM_PORT_FRAMESKIP   /* a port opts in: measured on the Brick and the H700 */
 	const double fs_tol_us = (getenv("DIATOM_FRAMESKIP_MS") ? atof(getenv("DIATOM_FRAMESKIP_MS")) : 8.0) * 1000.0;
 #else
 	const double fs_tol_us = 0;
 #endif
 	double pres_est_us = 5000.0;
 	int fs_run = 0;
+#if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
+	/* Paced play resets next_us every frame, so the debt is kept here: how far
+	 * the frames since the last present exceeded the panel's period, summed,
+	 * never below 0 (waiting for the panel is not credit). */
+	double pdebt_us = 0;
+	uint64_t fs_exit = 0;
+	const double panel_us = 1000000.0 / diatom_port_refresh_hz();
+#endif
 	size_t q_min = (size_t)-1, q_max = 0;
 	bool q_live = false;
 	bool stop = false;
@@ -2056,15 +2064,47 @@ static int run_session_inner(const diatom_session *sn)
 #ifdef DIATOM_PORT_FF_SKIP
 			diatom_port_fast(g_ff_speed > 1);
 #endif
+#if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
+			/* Core time since the last present left, plus the blit, against
+			 * the panel's period, on top of the debt already carried. */
+			bool fs = fs_tol_us > 0 && paced && g_ff_speed == 1 && !g_rewind_active
+			          && g_frame_fresh && fs_run < 2 && fs_exit
+			          && pdebt_us + (double)(p0 - fs_exit) + pres_est_us - panel_us > fs_tol_us;
+#else
 			bool fs = fs_tol_us > 0 && g_ff_speed == 1 && !g_rewind_active && g_frame_fresh && fs_run < 2
 			          && (double)p0 + pres_est_us - (next_us + frame_us) > fs_tol_us;
+#endif
 
 			if (fs) { fs_run++; skipped++; present_frame(false); }
 			else {
 				fs_run = 0;
 				present_frame(g_frame_fresh);
+#if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
+				if (g_frame_fresh && diatom_port_blit_us())
+					pres_est_us += ((double)diatom_port_blit_us() - pres_est_us) * 0.1;
+#else
 				if (g_frame_fresh) pres_est_us += ((double)(diatom_port_now_us() - p0) - pres_est_us) * 0.1;
+#endif
 			}
+#if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
+			{
+				uint64_t e = diatom_port_now_us();
+				double per = fs_exit ? (double)(e - fs_exit) : 0;
+				/* A stall (menu, pause) is not debt. */
+				if (per > 100000.0) pdebt_us = 0;
+				else if (fs_exit) {
+					pdebt_us += per - panel_us;
+					if (pdebt_us < 0) pdebt_us = 0;
+					/* Repaying a long debt would run the core flat out for
+					 * seconds, faster than the sound device drains: the
+					 * queue overflows and the game runs fast. Two frames is
+					 * what the audio queue can take back; a scene that cannot
+					 * hold speed plays slow rather than catching up. */
+					if (pdebt_us > 2 * panel_us) pdebt_us = 2 * panel_us;
+				}
+				fs_exit = e;
+			}
+#endif
 			g_stat[SLOT(g_mode, g_filter)].present_us
 				+= diatom_port_now_us() - p0;
 			g_stat[SLOT(g_mode, g_filter)].frames++;

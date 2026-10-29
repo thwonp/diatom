@@ -131,6 +131,9 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
  * host keeps no schedule of its own. */
 double diatom_port_refresh_hz(void);
 bool   diatom_port_pace(bool want);
+/* Paced ports only: CPU time of the last present without the panel wait, for
+ * the frame-skip rule (0 = unknown). */
+uint64_t diatom_port_blit_us(void);
 #endif
 
 #ifdef DIATOM_PORT_FF_SKIP

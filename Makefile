@@ -115,6 +115,9 @@ ifeq ($(PORT),h700)
   # The SP's panel runs at ~59.6 Hz, below most cores: play is paced by the
   # panel (every frame shown, ~0.8% slow) - diatom_port_pace.
   CFLAGS  += -DDIATOM_PORT_PACED
+  # A heavy scene (DS 3D) can need core + 6 ms blit > the panel's 16.8 ms: skip
+  # the blit then (main.c, TortOS plorpos-reo.21.7).
+  CFLAGS  += -DDIATOM_PORT_FRAMESKIP
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
 endif
