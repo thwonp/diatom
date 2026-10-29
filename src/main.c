@@ -1651,13 +1651,15 @@ static int run_session_inner(const diatom_session *sn)
 #endif
 	double pres_est_us = 5000.0;
 	int fs_run = 0;
+#ifdef DIATOM_PORT_FRAMESKIP
+	int  cs_run = 0;      /* frames in a row the core was told to skip drawing */
+	long cskipped = 0;
+#endif
 #if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
 	/* Paced play resets next_us every frame, so the debt is kept here: how far
 	 * the frames since the last present exceeded the panel's period, summed,
 	 * never below 0 (waiting for the panel is not credit). */
 	double pdebt_us = 0;
-	int cs_run = 0;
-	long cskipped = 0;
 	uint64_t fs_exit = 0;
 	const double panel_us = 1000000.0 / diatom_port_refresh_hz();
 #endif
@@ -1983,13 +1985,21 @@ static int run_session_inner(const diatom_session *sn)
 			if (diatom_rewind_step_back(g_core))
 				g_core->run();   /* renders the frame the restore left us at */
 		} else {
-#if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
+#ifdef DIATOM_PORT_FRAMESKIP
 			/* Behind by more than the tolerance: tell the core, which then
 			 * leaves the next frame's rendering out - the work the blit skip
 			 * below cannot save. Twice in a row at most, as with the blit. */
 			if (g_core->audio_status) {
-				bool late = fs_tol_us > 0 && paced && g_ff_speed == 1
-				            && pdebt_us > fs_tol_us && cs_run < 2;
+#ifdef DIATOM_PORT_PACED
+				double behind = pdebt_us;
+#else
+				double behind = (double)diatom_port_now_us() - next_us;
+#endif
+				bool late = fs_tol_us > 0 && g_ff_speed == 1 && !g_rewind_active
+#ifdef DIATOM_PORT_PACED
+				            && paced
+#endif
+				            && behind > fs_tol_us && cs_run < 2;
 				cs_run = late ? cs_run + 1 : 0;
 				if (late) cskipped++;
 				g_core->audio_status(true, 50, late);
@@ -2444,7 +2454,7 @@ static int run_session_inner(const diatom_session *sn)
 		       geom_changes, g_dst.w, g_dst.h, g_dst.x, g_dst.y);
 		printf("diatom: %ld resync(s)\n", resyncs);
 		if (skipped) printf("diatom: %ld frame(s) not presented to keep time\n", skipped);
-#if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
+#ifdef DIATOM_PORT_FRAMESKIP
 		if (cskipped) printf("diatom: %ld frame(s) the core was told to skip drawing\n", cskipped);
 #endif
 		{
