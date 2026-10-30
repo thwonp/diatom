@@ -295,7 +295,7 @@ typedef struct {
 	int  speed;            /* SETSPEED: 1 = normal. Its own field rather than
 	                        * `index`/`count` - see the warning on those two
 	                        * about one slot serving verbs that disagree. */
-	char hotkeys[192];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
+	char hotkeys[320];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
 	char stick[8];         /* SETSTYLUSSTICK: "dpad"|"left"|"right" */
 	char modifier[16];     /* SETHOTKEYS: "menu"|"select"|"l3"|"home"; empty = keep */
 	int  every;            /* SETREWINDSPEED: capture cadence in frames, which

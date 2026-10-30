@@ -1123,38 +1123,60 @@ static int g_hotkey_ff_speed = DIATOM_HOTKEY_FF_SPEED;
 static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 
 /* Checked every frame. Returns what the core must not see: every direct-bound
- * button, always - that system's game has given it up - and, while the
- * modifier is held, the modifier plus every modifier-bound input. Whether or
+ * button, always - that system's game has given it up - and, while a
+ * modifier is held, it plus every input bound under it. Whether or
  * not any of them changed anything this frame, because a bound button must
  * disappear from the core for as long as it is held, not only on the frame
  * this function acted on it. The binding table itself (parsing, validation,
  * storage) is hotkeys.c/.h - SDL-free and tested there; this is the part
  * that touches g_ff_speed/g_rewind_active/g_core and so stays
  * here, next to them. */
+/* The modifiers held this frame: the global one (MENU unless set) and every
+ * key a binding names as its own (TortOS plorpos-6ei.6). */
+static uint32_t hotkey_mods_held(uint32_t buttons)
+{
+	uint32_t mods = DIATOM_BIT(hotkeys_modifier());
+	int i, n = hotkeys_count();
+
+	for (i = 0; i < n; i++) {
+		int btn, mod;
+		hk_action action;
+
+		hotkeys_at(i, &btn, &action, &mod);
+		if (mod >= 0) mods |= DIATOM_BIT(mod);
+	}
+	return buttons & mods;
+}
+
+/* Whether binding i's layer is the active one: its modifier held, or for a
+ * direct one no modifier held at all. */
+static bool hotkey_layer(int mod, uint32_t buttons, uint32_t held_mods)
+{
+	return mod < 0 ? !held_mods : (buttons & DIATOM_BIT(mod)) != 0;
+}
+
 static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_session *sn)
 {
-	const uint32_t mod_bit = DIATOM_BIT(hotkeys_modifier());
-	const bool mod_held = (buttons & mod_bit) != 0;
+	const uint32_t held_mods = hotkey_mods_held(buttons);
 	uint32_t pressed = buttons & ~prev;
-	uint32_t mask = mod_held ? mod_bit : 0;
+	uint32_t mask = held_mods;
 	int i, n = hotkeys_count();
 	bool ff_held = false, rewind_held = false, stylus_held = false, blow_held = false;
 
 	for (i = 0; i < n; i++) {
-		int btn;
+		int btn, mod;
 		hk_action action;
-		bool direct;
 		uint32_t bit;
 
-		hotkeys_at(i, &btn, &action, &direct);
+		hotkeys_at(i, &btn, &action, &mod);
 		bit = DIATOM_BIT(btn);
-		if (direct) mask |= bit;
-		/* One layer at a time: the modifier's while it is held, the direct
+		if (mod < 0) mask |= bit;
+		/* One layer at a time: a modifier's while it is held, the direct
 		 * one otherwise. Switching layers mid-hold therefore lets go of an
 		 * FF/rewind the other layer was holding - ff_held stays false and
 		 * the release below runs - so neither is left stuck on with nothing
 		 * held to notice it should stop. */
-		if (direct == mod_held) continue;
+		if (!hotkey_layer(mod, buttons, held_mods)) continue;
 		mask |= bit;
 		switch (action) {
 		case HK_FF:     if (buttons & bit) ff_held = true;     break;
@@ -1221,22 +1243,21 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
  * hotkey_chord like any other. g_ta is up with g_ff_speed. */
 
 /* The Turbo Assign binding's bit, and whether it is held on the layer that is
- * active this frame - hotkey_chord's rule: the modifier's layer while the
- * modifier is held, the direct one otherwise. 0 / false when unbound. */
+ * active this frame - hotkey_chord's rule (hotkey_layer). 0 / false when
+ * unbound. */
 static uint32_t turbo_binding(uint32_t buttons, bool *held)
 {
-	const bool mod_held = (buttons & DIATOM_BIT(hotkeys_modifier())) != 0;
+	const uint32_t held_mods = hotkey_mods_held(buttons);
 	int i, n = hotkeys_count();
 
 	*held = false;
 	for (i = 0; i < n; i++) {
-		int btn;
+		int btn, mod;
 		hk_action action;
-		bool direct;
 
-		hotkeys_at(i, &btn, &action, &direct);
+		hotkeys_at(i, &btn, &action, &mod);
 		if (action != HK_TURBO) continue;
-		*held = direct != mod_held && (buttons & DIATOM_BIT(btn));
+		*held = hotkey_layer(mod, buttons, held_mods) && (buttons & DIATOM_BIT(btn));
 		return DIATOM_BIT(btn);
 	}
 	return 0;

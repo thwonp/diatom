@@ -227,12 +227,25 @@ def main():
         d.send("SETHOTKEYS\thotkeys=x:ff\tmodifier=home")
         ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=x:ff\tmodifier=home",
            "the GKD's Home is a modifier choice")
-        # The Brick Pro's right stick (plorpos-pky.17, ADR-0044): R3 is a
-        # modifier choice, and its directions bind on either layer.
+        # The right stick (plorpos-pky.17, ADR-0044): its directions bind on
+        # either layer. R3 is no longer a modifier but a trigger of its own
+        # (TortOS plorpos-6ei.6).
         spec = "d.rsup:ff,rsdown:rewind,d.rsleft:savestate,rsright:loadstate"
         d.send("SETHOTKEYS\thotkeys=" + spec + "\tmodifier=r3")
-        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + "\tmodifier=r3",
-           "R3 is a modifier and the right stick binds direct and with the modifier")
+        ck((d.line() or "").startswith("ERROR"), "R3 is not a modifier")
+        d.line("HOTKEYS")
+        d.send("SETHOTKEYS\thotkeys=" + spec + ",d.r3:stylus\tmodifier=menu")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + ",d.r3:stylus\tmodifier=menu",
+           "the right stick binds direct and with the modifier; R3 binds alone")
+        # Each binding its own modifier (TortOS plorpos-6ei.6).
+        spec = "l3+a:ff,menu+a:rewind,select+x:savestate,d.y:loadstate"
+        d.send("SETHOTKEYS\thotkeys=" + spec)
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu",
+           "a binding names its own modifier; one input under two")
+        d.send("SETHOTKEYS\thotkeys=r3+a:ff")
+        ck((d.line() or "").startswith("ERROR"), "an unknown modifier prefix is refused")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu",
+           "and keeps the bindings it had")
 
         d.send("NOSUCHVERB\tdevice=x")
         d.send("AUDIO")

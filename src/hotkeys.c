@@ -21,19 +21,24 @@
 #include "hotkeys.h"
 #include "diatom_port.h"
 
-typedef struct { int btn; hk_action action; bool direct; } hk_binding;
+/* `mod`: the key held for it (DIATOM_BTN_*), HK_DIRECT for none, or
+ * HK_GLOBAL for a spec written before bindings named their own (TortOS
+ * plorpos-6ei.6) - that one follows hotkeys_modifier(). */
+enum { HK_DIRECT = -1, HK_GLOBAL = -2 };
+typedef struct { int btn; hk_action action; int mod; } hk_binding;
 
 static hk_binding g_hotkeys[HK_MAX];
 static int  g_nhotkeys;
-static char g_hotkeys_spec[192];
+static char g_hotkeys_spec[320];
 static int  g_modifier = DIATOM_BTN_MENU;
 
 static const struct { const char *name; int btn; } g_modifiers[] = {
 	{ "menu",   DIATOM_BTN_MENU   },
 	{ "select", DIATOM_BTN_SELECT },
 	{ "l3",     DIATOM_BTN_L3     },
-	{ "r3",     DIATOM_BTN_R3     },   /* the Brick Pro's right stick, ADR-0044 */
 	{ "home",   DIATOM_BTN_HOTKEY },   /* the GKD's Home, ADR-0037 */
+	/* R3 left the set for a trigger of its own, the DS's Stylus Tap by
+	 * default (TortOS plorpos-6ei.6). */
 };
 
 /* `direct` says whether the input may be a direct trigger. Directions may
@@ -52,6 +57,7 @@ static const struct { const char *name; int btn; bool direct; } g_inputs[] = {
 	{ "rsup",   DIATOM_BTN_RSUP,   true  }, { "rsdown", DIATOM_BTN_RSDOWN, true  },
 	{ "rsleft", DIATOM_BTN_RSLEFT, true  }, { "rsright", DIATOM_BTN_RSRIGHT, true },
 	{ "fn1",    DIATOM_BTN_FN1,    true  }, { "fn2",    DIATOM_BTN_FN2,    true  },
+	{ "r3",     DIATOM_BTN_R3,     true  },   /* TortOS plorpos-6ei.6 */
 };
 
 static int hk_btn_from_name(const char *s, bool direct)
@@ -84,7 +90,7 @@ bool hotkeys_set(const char *spec)
 {
 	hk_binding parsed[HK_MAX];
 	int n = 0;
-	char buf[192], *save = NULL, *tok;
+	char buf[320], *save = NULL, *tok;
 
 	if (!spec) return false;
 	if (!*spec) {
@@ -96,9 +102,9 @@ bool hotkeys_set(const char *spec)
 	snprintf(buf, sizeof buf, "%s", spec);
 
 	for (tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
-		char *colon = strchr(tok, ':');
+		char *colon = strchr(tok, ':'), *plus, *in = tok;
 		bool direct = !strncmp(tok, "d.", 2);
-		int btn;
+		int btn, mod = direct ? HK_DIRECT : HK_GLOBAL;
 		hk_action action;
 		int i;
 
@@ -111,21 +117,29 @@ bool hotkeys_set(const char *spec)
 			continue;
 		if (n >= HK_MAX) return false;
 		*colon = '\0';
-		btn = hk_btn_from_name(direct ? tok + 2 : tok, direct);
+		if (direct) in = tok + 2;
+		else if ((plus = strchr(tok, '+'))) {   /* "l3+a": its own modifier */
+			*plus = '\0';
+			mod = hotkeys_modifier_from_name(tok);
+			if (mod < 0) return false;
+			in = plus + 1;
+		}
+		btn = hk_btn_from_name(in, direct);
 		action = hk_action_from_name(colon + 1);
-		if (btn < 0 || action == HK_NONE) return false;
+		if (btn < 0 || action == HK_NONE || btn == mod) return false;
 		/* Each trigger and each action at most once - two rows racing to
 		 * drive the same trigger, or the same action from two triggers, is
 		 * exactly the ambiguity turbo.md's button-budget accounting exists
 		 * to avoid, just one layer up. X and d.X are two triggers: a button
-		 * may hold one binding on each layer. */
+		 * may hold one binding on each layer - and, since l3+X names its
+		 * own (TortOS plorpos-6ei.6), one per modifier. */
 		for (i = 0; i < n; i++)
-			if ((parsed[i].btn == btn && parsed[i].direct == direct)
+			if ((parsed[i].btn == btn && parsed[i].mod == mod)
 			    || parsed[i].action == action)
 				return false;
 		parsed[n].btn = btn;
 		parsed[n].action = action;
-		parsed[n].direct = direct;
+		parsed[n].mod = mod;
 		n++;
 	}
 
@@ -137,15 +151,15 @@ bool hotkeys_set(const char *spec)
 
 int hotkeys_count(void) { return g_nhotkeys; }
 
-void hotkeys_at(int i, int *btn_out, hk_action *action_out, bool *direct_out)
+void hotkeys_at(int i, int *btn_out, hk_action *action_out, int *mod_out)
 {
 	if (i < 0 || i >= g_nhotkeys) {
-		*btn_out = -1; *action_out = HK_NONE; *direct_out = false;
+		*btn_out = -1; *action_out = HK_NONE; *mod_out = -1;
 		return;
 	}
 	*btn_out = g_hotkeys[i].btn;
 	*action_out = g_hotkeys[i].action;
-	*direct_out = g_hotkeys[i].direct;
+	*mod_out = g_hotkeys[i].mod == HK_GLOBAL ? g_modifier : g_hotkeys[i].mod;
 }
 
 const char *hotkeys_spec(void) { return g_hotkeys_spec; }
