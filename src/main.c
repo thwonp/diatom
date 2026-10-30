@@ -531,31 +531,34 @@ static const char *filter_name(diatom_filter f)
 	return f == DIATOM_FILTER_SHARP ? "sharp" : "nearest";
 }
 
-/* Layout ->, Layout <- (TortOS plorpos-reo.21): round the DS's layouts, for
- * this run - the launcher keeps the one chosen in its menu. The Rotate's and
- * GKD's three, or the Brick's and H700's four. */
+/* Screen Layout ->, <- (TortOS plorpos-reo.21): round the DS's layouts, for
+ * this run - the launcher keeps the one chosen in its menu. A port that
+ * draws a split (GKD, Rotate) has its five, the Brick and H700 their six;
+ * both end on the two Overlays (plorpos-6ei.5). */
 static void layout_step(int dir)
 {
-	static const char *const rings[][4] = {
-		{ "ds-a", "ds-a-swap", "ds-b", NULL },
-		{ "ds-top", "ds-bottom", "ds-topfocus", "ds-bottomfocus" },
+	static const char *const rings[][6] = {
+		{ "ds-a", "ds-a-swap", "ds-b", "ds-topoverlay", "ds-bottomoverlay", NULL },
+		{ "ds-top", "ds-bottom", "ds-topfocus", "ds-bottomfocus", "ds-topoverlay", "ds-bottomoverlay" },
 	};
+	const char *const *ring = rings[g_caps.split ? 0 : 1];
+	int n = 0, at = -1, m;
 
-	for (size_t r = 0; r < sizeof rings / sizeof rings[0]; r++) {
-		int n = 0, at = -1, m;
-
-		while (n < 4 && rings[r][n]) {
-			if (!strcmp(diatom_modes[g_mode].name, rings[r][n])) at = n;
-			n++;
-		}
-		if (at < 0) continue;
-		for (m = 0; m < diatom_mode_count; m++)
-			if (!strcmp(diatom_modes[m].name, rings[r][(at + dir + n) % n])) {
-				apply_display(m, g_filter);
-				break;
-			}
-		return;
+	while (n < 6 && ring[n]) {
+		if (!strcmp(diatom_modes[g_mode].name, ring[n])) at = n;
+		n++;
 	}
+	if (at < 0) return;
+	for (m = 0; m < diatom_mode_count; m++)
+		if (!strcmp(diatom_modes[m].name, ring[(at + dir + n) % n])) {
+			apply_display(m, g_filter);
+			break;
+		}
+}
+
+static bool is_overlay(diatom_scale_mode m)
+{
+	return m == DIATOM_SCALE_DS_TOP_OVERLAY || m == DIATOM_SCALE_DS_BOTTOM_OVERLAY;
 }
 
 static bool ds_stacked(void) { return g_base_h == g_base_w * 3 / 2; }
@@ -619,6 +622,72 @@ static void compose_focus(bool top_focus, int bpp)
 	blit_screen(g_canvas, pitch, small, top_focus ? bot : top, g_frame_pitch, g_frame_w, sh, bpp);
 }
 
+/* The Overlays' small screen where the port draws no split: blit_screen's
+ * nearest copy, mixed 13/16 (~80%) over what is under it. */
+static void blend_screen(uint8_t *canvas, size_t cpitch, diatom_rect r,
+                         const uint8_t *src, size_t spitch, int sw, int sh, int bpp)
+{
+	static int xmap[4096];
+	int x, y;
+
+	if (r.w <= 0 || r.h <= 0 || r.w > 4096) return;
+	for (x = 0; x < r.w; x++) xmap[x] = (int)((long)x * sw / r.w);
+	for (y = 0; y < r.h; y++) {
+		const uint8_t *s = src + (size_t)((long)y * sh / r.h) * spitch;
+		uint8_t *d = canvas + (size_t)(r.y + y) * cpitch + (size_t)r.x * bpp;
+
+		if (bpp == 4)
+			for (x = 0; x < r.w; x++) {
+				uint32_t a = ((const uint32_t *)(const void *)s)[xmap[x]];
+				uint32_t *p = (uint32_t *)(void *)d + x, b = *p;
+				*p = ((((a & 0xff00ff) * 13 + (b & 0xff00ff) * 3) >> 4) & 0xff00ff)
+				   | ((((a & 0x00ff00) * 13 + (b & 0x00ff00) * 3) >> 4) & 0x00ff00);
+			}
+		else                                /* 565 spread to 0x07e0f81f */
+			for (x = 0; x < r.w; x++) {
+				uint32_t a = ((const uint16_t *)(const void *)s)[xmap[x]];
+				uint16_t *p = (uint16_t *)(void *)d + x;
+				uint32_t b = *p;
+
+				a = (a | a << 16) & 0x07e0f81f;
+				b = (b | b << 16) & 0x07e0f81f;
+				b = ((a * 26 + b * 6) >> 5) & 0x07e0f81f;
+				*p = (uint16_t)(b | b >> 16);
+			}
+	}
+}
+
+/* The Overlays, composed: the big screen with black bars, the small one
+ * blended over the corner - all of it every frame, so no bars to keep. */
+static void compose_overlay(bool top_big, int bpp)
+{
+	const int W = g_caps.surface_w, H = g_caps.surface_h, sh = g_frame_h / 2;
+	const size_t pitch = (size_t)W * bpp;
+	const uint8_t *top = g_frame, *bot = (const uint8_t *)g_frame + (size_t)sh * g_frame_pitch;
+	diatom_rect big, small;
+
+	if (pitch * H > g_canvas_cap) {
+		void *p = realloc(g_canvas, pitch * H);
+		if (!p) return;
+		g_canvas = p;
+		g_canvas_cap = pitch * H;
+		g_canvas_mode = (diatom_scale_mode)-1;
+	}
+	if (g_canvas_mode != diatom_modes[g_mode].mode) {
+		memset(g_canvas, 0, pitch * H);
+		g_canvas_mode = diatom_modes[g_mode].mode;
+	}
+	diatom_ds_overlay_rects(W, H, &big, &small);
+	if (big.x + big.w < small.x + small.w || big.y + big.h < small.y + small.h) {
+		/* corner outside the picture (a panel not 4:3): bars under it again */
+		diatom_rect l = { small.x, small.y, small.w, small.h };
+		for (int y = 0; y < l.h; y++)
+			memset((uint8_t *)g_canvas + (size_t)(l.y + y) * pitch + (size_t)l.x * bpp, 0, (size_t)l.w * bpp);
+	}
+	blit_screen(g_canvas, pitch, big, top_big ? top : bot, g_frame_pitch, g_frame_w, sh, bpp);
+	blend_screen(g_canvas, pitch, small, top_big ? bot : top, g_frame_pitch, g_frame_w, sh, bpp);
+}
+
 /* Present the core's frame. A DS screen shown alone is the top or bottom half
  * of the stacked frame, cropped here so the port draws an ordinary frame; the
  * bottom one carries Stylus Mode's cursor. */
@@ -630,10 +699,12 @@ static void present_frame(bool fresh)
 	int h = g_frame_h;
 
 	if (g_frame_h == g_frame_w * 3 / 2
-	    && (m == DIATOM_SCALE_DS_TOP_FOCUS || m == DIATOM_SCALE_DS_BOTTOM_FOCUS)) {
+	    && (m == DIATOM_SCALE_DS_TOP_FOCUS || m == DIATOM_SCALE_DS_BOTTOM_FOCUS
+	        || (is_overlay(m) && !g_caps.split))) {
 		if (fresh) {
 			sty_stamp((uint8_t *)g_frame + (size_t)(h / 2) * g_frame_pitch, g_frame_pitch, bpp);
-			compose_focus(m == DIATOM_SCALE_DS_TOP_FOCUS, bpp);
+			if (is_overlay(m)) compose_overlay(m == DIATOM_SCALE_DS_TOP_OVERLAY, bpp);
+			else               compose_focus(m == DIATOM_SCALE_DS_TOP_FOCUS, bpp);
 		}
 		if (g_canvas && g_canvas_mode == m)
 			diatom_port_present(fresh ? g_canvas : NULL, g_caps.surface_w, g_caps.surface_h,
@@ -652,7 +723,6 @@ static void present_frame(bool fresh)
 	}
 	diatom_port_present(src, g_frame_w, h, g_frame_pitch, g_policy.pixfmt, g_dst, g_filter);
 }
-
 static void apply_display(int mode, diatom_filter filter)
 {
 	diatom_rect top, bot;
@@ -665,11 +735,13 @@ static void apply_display(int mode, diatom_filter filter)
 	/* Stylus Mode follows the bottom screen being the one shown alone. */
 	sty_screen((diatom_modes[mode].mode == DIATOM_SCALE_DS_BOTTOM
 	            || diatom_modes[mode].mode == DIATOM_SCALE_DS_TOP_FOCUS
-	            || diatom_modes[mode].mode == DIATOM_SCALE_DS_BOTTOM_FOCUS) && ds_stacked(),
+	            || diatom_modes[mode].mode == DIATOM_SCALE_DS_BOTTOM_FOCUS
+	            || is_overlay(diatom_modes[mode].mode)) && ds_stacked(),
 	           g_base_w, g_base_h / 2);
 	/* A DS layout: two rects for the two screens, the port draws both. */
-	if (diatom_ds_rects(diatom_modes[mode].mode, g_base_w, g_base_h,
-	                    g_caps.surface_w, g_caps.surface_h, &top, &bot)) {
+	if ((g_caps.split || !is_overlay(diatom_modes[mode].mode))
+	    && diatom_ds_rects(diatom_modes[mode].mode, g_base_w, g_base_h,
+	                       g_caps.surface_w, g_caps.surface_h, &top, &bot)) {
 		diatom_port_split(true, top, bot);
 		/* The preview is the raw stacked core frame. Its consumer needs
 		 * both actual destinations, not the single-frame fallback rect. */

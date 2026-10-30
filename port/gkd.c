@@ -512,6 +512,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	out->audio_rate         = AUDIO_RATE;
 	out->audio_buffer_frames = g_audio ? AUDIO_BUFFER_FRAMES : 0;
 	out->present_blocks     = false;
+	out->split              = true;
 #if defined(DIATOM_PORT_ROTATE)
 	out->mic                = true;
 	/* Opened above only to find out whether there is sound at all - the caps
@@ -1010,6 +1011,10 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 	float fx, fy;
 
 	if (!g_split || !g_ptr_down || b.w <= 0 || b.h <= 0) return false;
+	/* Bottom Overlay: the top screen drawn over the bottom one's corner is
+	 * not the bottom screen (plorpos-6ei.5). */
+	if (g_split_top.w < b.w && g_px >= g_split_top.x && g_px < g_split_top.x + g_split_top.w
+	    && g_py >= g_split_top.y && g_py < g_split_top.y + g_split_top.h) return false;
 	fx = (g_px - b.x) / b.w;
 	fy = (g_py - b.y) / b.h;
 	if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return false;   /* the other screen */

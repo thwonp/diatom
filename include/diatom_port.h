@@ -62,6 +62,7 @@ typedef struct {
 	int  audio_buffer_frames;   /* capacity; DRC needs this, not just queued */
 	bool present_blocks;        /* does present() wait for vblank? */
 	bool mic;                   /* has a microphone: diatom_port_mic_* work */
+	bool split;                 /* draws a DS split itself (diatom_port_split) */
 } diatom_port_caps;
 
 /* Canonical Diatom buttons. Digital only - ADR-0003, no analog axes anywhere.

@@ -47,6 +47,10 @@ const diatom_display_mode_info diatom_modes[] = {
 	  "DS: the top screen big (whole multiple), the bottom one small at its right" },
 	{ "ds-bottomfocus", DIATOM_SCALE_DS_BOTTOM_FOCUS,
 	  "DS: the bottom screen big, the top one small at its right" },
+	{ "ds-topoverlay", DIATOM_SCALE_DS_TOP_OVERLAY,
+	  "DS: the top screen fills the panel, the bottom one over its corner" },
+	{ "ds-bottomoverlay", DIATOM_SCALE_DS_BOTTOM_OVERLAY,
+	  "DS: the bottom screen fills the panel, the top one over its corner" },
 };
 const int diatom_mode_count =
 	(int)(sizeof diatom_modes / sizeof diatom_modes[0]);
@@ -119,10 +123,23 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 	case DIATOM_SCALE_STRETCH:
 	case DIATOM_SCALE_DS_TOP_FOCUS:     /* composed to the whole panel */
 	case DIATOM_SCALE_DS_BOTTOM_FOCUS:
+	case DIATOM_SCALE_DS_TOP_OVERLAY:
+	case DIATOM_SCALE_DS_BOTTOM_OVERLAY:
 		return centered(surf_w, surf_h, surf_w, surf_h);
 	}
 
 	return centered(src_w, src_h, surf_w, surf_h);
+}
+
+void diatom_ds_overlay_rects(int surf_w, int surf_h, diatom_rect *big, diatom_rect *small)
+{
+	int bw = surf_w, bh = surf_w * 3 / 4, sw, sh;
+
+	if (bh > surf_h) { bh = surf_h; bw = bh * 4 / 3; }
+	sw = bw * 2 / 5;
+	sh = sw * 3 / 4;
+	*big   = (diatom_rect){ (surf_w - bw) / 2, (surf_h - bh) / 2, bw, bh };
+	*small = (diatom_rect){ surf_w - sw, surf_h - sh, sw, sh };
 }
 
 void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
@@ -157,6 +174,13 @@ bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
 	diatom_rect big, small;
 	bool swapped = mode == DIATOM_SCALE_DS_A_SWAP;
 
+	if (mode == DIATOM_SCALE_DS_TOP_OVERLAY || mode == DIATOM_SCALE_DS_BOTTOM_OVERLAY) {
+		if (src_w <= 0 || src_h != sh * 2 || surf_w <= 0 || surf_h <= 0) return false;
+		diatom_ds_overlay_rects(surf_w, surf_h, &big, &small);
+		if (mode == DIATOM_SCALE_DS_TOP_OVERLAY) { *top = big; *bot = small; }
+		else                                     { *top = small; *bot = big; }
+		return true;
+	}
 	if (swapped) mode = DIATOM_SCALE_DS_A;
 	if (mode != DIATOM_SCALE_DS_A && mode != DIATOM_SCALE_DS_B) return false;
 	if (src_w <= 0 || src_h != sh * 2 || surf_w <= 0 || surf_h <= 0) return false;

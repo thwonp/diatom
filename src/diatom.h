@@ -383,7 +383,13 @@ typedef enum {
 	/* Both screens, one big at the left and the other a third its width
 	 * at its right (see diatom_ds_focus_rects); composed in main.c. */
 	DIATOM_SCALE_DS_TOP_FOCUS,
-	DIATOM_SCALE_DS_BOTTOM_FOCUS
+	DIATOM_SCALE_DS_BOTTOM_FOCUS,
+	/* One screen filling the panel at 4:3, the other 2/5 its width over
+	 * the panel's bottom-right corner, 80% opaque (diatom_ds_overlay_rects,
+	 * TortOS plorpos-6ei.5). A split where the port draws one (GKD,
+	 * Rotate), composed in main.c where it does not. */
+	DIATOM_SCALE_DS_TOP_OVERLAY,
+	DIATOM_SCALE_DS_BOTTOM_OVERLAY
 } diatom_scale_mode;
 
 diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
@@ -397,6 +403,9 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
  * top one (the small one is the bottom screen) and at its top corner when
  * it is the bottom one. 4:3 screens; letterboxed in a panel of another
  * shape. */
+/* The Overlay layouts' two rects: the big screen 4:3 fit and centred, the
+ * small one 2/5 its width, flush with the panel's bottom-right corner. */
+void diatom_ds_overlay_rects(int surf_w, int surf_h, diatom_rect *big, diatom_rect *small);
 void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
                            diatom_rect *focus, diatom_rect *small);
 

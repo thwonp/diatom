@@ -70,6 +70,7 @@
 	X(PFNGLENABLEPROC,                  glEnable) \
 	X(PFNGLDISABLEPROC,                 glDisable) \
 	X(PFNGLBLENDFUNCPROC,               glBlendFunc) \
+	X(PFNGLBLENDCOLORPROC,              glBlendColor) \
 	X(PFNGLCOLORMASKPROC,               glColorMask) \
 	X(PFNGLUNIFORM4FPROC,               glUniform4f) \
 	X(PFNGLREADPIXELSPROC,              glReadPixels) \
@@ -578,14 +579,28 @@ void gkdgl_draw_split(int sw, int sh, diatom_rect top, diatom_rect bot, bool lin
 	p_glClearColor(0, 0, 0, 1);
 	p_glClear(GL_COLOR_BUFFER_BIT);
 	if (!g_src_w) return;
+	/* The Overlays (plorpos-6ei.5): rects that overlap - the big one first,
+	 * the small one over it at 80% (constant alpha, nothing per pixel). */
+	bool over = top.x < bot.x + bot.w && bot.x < top.x + top.w
+	         && top.y < bot.y + bot.h && bot.y < top.y + top.h;
+	bool top_last = over && top.w < bot.w;
 	p_glEnable(GL_SCISSOR_TEST);
-	if (top.w > 0 && top.h > 0) {
-		p_glScissor(top.x, sh - top.y - top.h, top.w, top.h);
-		run(&g_copy, g_src, linear, top.x, sh - top.y - top.h * 2, top.w, top.h * 2, true);
+	for (int pass = 0; pass < 2; pass++) {
+		bool is_top = (pass == 0) != top_last;
+		diatom_rect r = is_top ? top : bot;
+
+		if (r.w <= 0 || r.h <= 0) continue;
+		if (over && pass == 1) {
+			p_glEnable(GL_BLEND);
+			p_glBlendColor(0, 0, 0, 0.8f);
+			p_glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+		}
+		p_glScissor(r.x, sh - r.y - r.h, r.w, r.h);
+		run(&g_copy, g_src, linear, r.x, sh - r.y - r.h * (is_top ? 2 : 1), r.w, r.h * 2, true);
 	}
-	if (bot.w > 0 && bot.h > 0) {
-		p_glScissor(bot.x, sh - bot.y - bot.h, bot.w, bot.h);
-		run(&g_copy, g_src, linear, bot.x, sh - bot.y - bot.h, bot.w, bot.h * 2, true);
+	if (over) {
+		p_glDisable(GL_BLEND);
+		p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	}
 	p_glDisable(GL_SCISSOR_TEST);
 	g_frame++;
