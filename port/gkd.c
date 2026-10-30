@@ -1072,7 +1072,11 @@ static void touch_hold(void)
  * speed, fine enough to aim at a menu item. */
 #define CURSOR_DEAD    80      /* of 900: clear of the stick's 32 flat */
 #define CURSOR_CROSS_S 0.8f
+/* Still this long - stick centred, stylus up - and the cross is not drawn,
+ * as src/stylus.c's HIDE_S on the Brick and H700 (TortOS plorpos-6ei.16). */
+#define CURSOR_HIDE_S  2.0f
 static float    g_cx = -1, g_cy;          /* surface px; -1 = not placed */
+static float    g_cur_idle;
 static bool     g_stylus;
 static uint64_t g_cur_us;
 
@@ -1100,6 +1104,7 @@ static void cursor_tick(void)
 		g_cy = b.y + b.h / 2.0f;
 	}
 	if (dt > 0.05f) dt = 0.05f;             /* back from a pause: no jump */
+	g_cur_idle = stick_speed(g_stick_x) || stick_speed(g_stick_y) || g_stylus ? 0 : g_cur_idle + dt;
 	v = b.w / CURSOR_CROSS_S;
 	g_cx += stick_speed(g_stick_x) * v * dt;
 	g_cy += stick_speed(g_stick_y) * v * dt;
@@ -1128,7 +1133,7 @@ static void draw_cursor(void)
 	int arm = b.w / 36, th = arm / 4 + 1, cx = (int)g_cx, cy = (int)g_cy, e = 2;
 	uint8_t c = g_stylus ? 0 : 255;
 
-	if (!g_split || g_cx < 0 || arm < 4) return;
+	if (!g_split || g_cx < 0 || arm < 4 || g_cur_idle >= CURSOR_HIDE_S) return;
 	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - arm - e, cy - th / 2 - e, 2 * arm + 2 * e, th + 2 * e }, 0, 0, 0, 200);
 	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - th / 2 - e, cy - arm - e, th + 2 * e, 2 * arm + 2 * e }, 0, 0, 0, 200);
 	gkdgl_fill(g_sw, g_sh, (diatom_rect){ cx - arm, cy - th / 2, 2 * arm, th }, 255, 255, c, 255);
