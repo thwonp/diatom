@@ -1066,7 +1066,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 	uint32_t pressed = buttons & ~prev;
 	uint32_t mask = mod_held ? mod_bit : 0;
 	int i, n = hotkeys_count();
-	bool ff_held = false, rewind_held = false, stylus_held = false;
+	bool ff_held = false, rewind_held = false, stylus_held = false, blow_held = false;
 
 	for (i = 0; i < n; i++) {
 		int btn;
@@ -1088,6 +1088,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_FF:     if (buttons & bit) ff_held = true;     break;
 		case HK_REWIND: if (buttons & bit) rewind_held = true; break;
 		case HK_STYLUS: if (buttons & bit) stylus_held = true; break;
+		case HK_BLOW:   if (buttons & bit) blow_held = true;   break;
 		case HK_STYLUSMODE: if (pressed & bit) sty_toggle(); break;
 		case HK_SAVESTATE:
 			if ((pressed & bit) && sn->state_exit)
@@ -1116,6 +1117,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 	if (rewind_held)                      { g_rewind_active = true;  g_hotkey_rewind_active = true; }
 	else if (g_hotkey_rewind_active)      { g_rewind_active = false; g_hotkey_rewind_active = false; }
 	diatom_port_stylus(stylus_held);
+	diatom_env_mic_blow(blow_held);
 	/* Stylus Mode (stylus.h): the d-pad is the cursor's, and the game does
 	 * not see it. */
 	{

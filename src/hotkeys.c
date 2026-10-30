@@ -76,6 +76,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "stylus"))    return HK_STYLUS;
 	if (!strcmp(s, "stylusmode")) return HK_STYLUSMODE;
 	if (!strcmp(s, "swapback"))  return HK_SWAPBACK;
+	if (!strcmp(s, "blow"))      return HK_BLOW;
 	return HK_NONE;
 }
 

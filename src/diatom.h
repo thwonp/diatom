@@ -148,6 +148,8 @@ bool diatom_env_new_geometry(int *w, int *h, double *aspect);   /* consumes the 
  * for keys that are normally the core's but are currently part of a host
  * chord. */
 void diatom_env_suppress(uint32_t mask);
+/* The Blow hotkey held: the mic reads loud noise (env.c, TortOS plorpos-6ei.3). */
+void diatom_env_mic_blow(bool on);
 
 /* Silence a core's DEBUG/INFO chatter once a game is running. See core_log in
  * env.c for the measurement that made this necessary. */

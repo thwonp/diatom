@@ -182,29 +182,38 @@ static void core_log(enum retro_log_level level, const char *fmt, ...)
  * The libretro interface over diatom_port_mic_*: one mic, the port's. The
  * handle is a token - the state is the port's - and it stays valid until the
  * core closes it, across pauses and games, as the interface promises; the port
- * lets the device itself go at each pause and takes it back on the next read. */
+ * lets the device itself go at each pause and takes it back on the next read.
+ *
+ * Every port offers it (TortOS plorpos-6ei.3): where there is no mic, or the
+ * port's will not open, the mic is virtual and reads silence. Either way the
+ * Blow hotkey, while held, replaces what is read with loud noise - what a
+ * game listening for a breath hears. */
 struct retro_microphone { int unused; };
 static struct retro_microphone g_mic;
-static bool     g_mic_open, g_mic_active;
+static bool     g_mic_open, g_mic_active, g_mic_real, g_mic_blow;
 static unsigned g_mic_rate;
+
+void diatom_env_mic_blow(bool on) { g_mic_blow = on; }
 
 static retro_microphone_t *RETRO_CALLCONV mic_open(const retro_microphone_params_t *p)
 {
 	unsigned rate = p && p->rate ? p->rate : (unsigned)g_caps->audio_rate;
 
-	if (g_mic_open || !diatom_port_mic_open(rate)) return NULL;
+	if (g_mic_open) return NULL;
+	g_mic_real   = g_caps->mic && diatom_port_mic_open(rate);
 	g_mic_open   = true;
 	g_mic_active = false;
 	g_mic_rate   = rate;
-	diatom_port_log(DIATOM_LOG_INFO, "core opened the microphone");
+	diatom_port_log(DIATOM_LOG_INFO, g_mic_real ? "core opened the microphone"
+	                                            : "core opened the microphone (virtual: Blow only)");
 	return &g_mic;
 }
 
 static void RETRO_CALLCONV mic_close(retro_microphone_t *m)
 {
 	if (m != &g_mic || !g_mic_open) return;
-	diatom_port_mic_close();
-	g_mic_open = g_mic_active = false;
+	if (g_mic_real) diatom_port_mic_close();
+	g_mic_open = g_mic_active = g_mic_real = false;
 }
 
 static bool RETRO_CALLCONV mic_get_params(const retro_microphone_t *m,
@@ -219,7 +228,7 @@ static bool RETRO_CALLCONV mic_set_state(retro_microphone_t *m, bool on)
 {
 	if (m != &g_mic || !g_mic_open) return false;
 	g_mic_active = on;
-	diatom_port_mic_run(on);
+	if (g_mic_real) diatom_port_mic_run(on);
 	return true;
 }
 
@@ -230,8 +239,22 @@ static bool RETRO_CALLCONV mic_get_state(const retro_microphone_t *m)
 
 static int RETRO_CALLCONV mic_read(retro_microphone_t *m, int16_t *samples, size_t n)
 {
+	static uint32_t seed = 0x6e13u;
+	size_t i, got;
+
 	if (m != &g_mic || !g_mic_open || !g_mic_active) return -1;
-	return (int)diatom_port_mic_read(samples, n);
+	if (g_mic_real) got = diatom_port_mic_read(samples, n);   /* drained either way */
+	else {                                 /* a frame's worth, as a device gives */
+		got = g_mic_rate / 60;
+		if (got > n) got = n;
+		if (!g_mic_blow) memset(samples, 0, got * sizeof *samples);
+	}
+	if (g_mic_blow)
+		for (i = 0; i < got; i++) {    /* xorshift32: white noise near full scale */
+			seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+			samples[i] = (int16_t)((int32_t)(seed >> 16) - 32768);
+		}
+	return (int)got;
 }
 
 static bool env_cb(unsigned cmd, void *data)
@@ -307,11 +330,11 @@ static bool env_cb(unsigned cmd, void *data)
 		*(unsigned *)data = (unsigned)g_caps->audio_rate;
 		return true;
 	case MASK(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE): {
-		/* Only where there is one: refused, a core substitutes silence and
-		 * says so once, rather than failing an open every game. */
+		/* Everywhere: a port without a mic gets the virtual one, so the
+		 * Blow hotkey works on every device (plorpos-6ei.3). */
 		struct retro_microphone_interface *mi = data;
 
-		if (!g_caps->mic || !mi) return false;
+		if (!mi) return false;
 		mi->interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
 		mi->open_mic      = mic_open;
 		mi->close_mic     = mic_close;
