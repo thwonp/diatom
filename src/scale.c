@@ -160,11 +160,16 @@ bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
 	if (swapped) mode = DIATOM_SCALE_DS_A;
 	if (mode != DIATOM_SCALE_DS_A && mode != DIATOM_SCALE_DS_B) return false;
 	if (src_w <= 0 || src_h != sh * 2 || surf_w <= 0 || surf_h <= 0) return false;
-	(void)k;
 	if (mode == DIATOM_SCALE_DS_A) {
 		bw = surf_w;
 		bh = bw * 3 / 4;
 		if (bh > surf_h) { bh = surf_h; bw = bh * 4 / 3; }
+		/* The nearest whole multiple of 256x192 when it fits, the small
+		 * screen then filling the height left over (TortOS plorpos-6ei.4):
+		 * the GKD's 1600x1440 6x + 384x288; the Rotate's 2.81x stays, as
+		 * 3x is wider than its panel (the user's pick). */
+		k = (bw + 128) / 256;
+		if (k >= 1 && k * 256 <= surf_w && k * 192 < surf_h) { bw = k * 256; bh = k * 192; }
 		lh = surf_h - bh;
 		lw = lh * 4 / 3;
 	} else {
