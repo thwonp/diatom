@@ -8,16 +8,22 @@
 #define CROSS_S 0.8f
 #define RAMP_S  0.6f
 #define SLOW    0.10f
+/* A stick's cursor is always on, so it hides once the stick and Tap have been
+ * still this long (plorpos-6ei.1); the next move or tap shows it again. */
+#define HIDE_S  2.0f
 
 static bool     g_mode, g_bottom, g_tap, g_placed;
 static int      g_w, g_h;
-static float    g_x, g_y, g_held;
+/* Not reset with a game: the launcher sends it after every RUN, as it does the
+ * rewind speed, and a launch that sends nothing keeps the d-pad. */
+static int g_source = STY_SRC_DPAD;
+static float    g_x, g_y, g_held, g_idle;
 static uint64_t g_last_us;
 
 void sty_reset(void)
 {
 	g_mode = g_tap = g_placed = false;
-	g_held = 0;
+	g_held = g_idle = 0;
 	g_last_us = 0;
 }
 
@@ -31,7 +37,7 @@ void sty_screen(bool bottom_shown, int w, int h)
 	if (g_placed && (g_x > w - 1 || g_y > h - 1)) g_placed = false;
 }
 
-bool sty_active(void) { return g_mode && g_bottom && g_w > 0 && g_h > 0; }
+bool sty_active(void) { return (g_mode || g_source != STY_SRC_DPAD) && g_bottom && g_w > 0 && g_h > 0; }
 
 static float clampf(float v, float hi) { return v < 0 ? 0 : v > hi ? hi : v; }
 
@@ -43,6 +49,7 @@ void sty_frame(unsigned dirs, bool tap, uint64_t now_us)
 
 	g_last_us = now_us;
 	g_tap = tap;
+	g_idle = dx || dy || tap ? 0 : g_idle + (dt > 0.05f ? 0.05f : dt);
 	if (!sty_active()) { g_held = 0; return; }
 	if (!g_placed) { g_x = g_w / 2.0f; g_y = g_h / 2.0f; g_placed = true; }
 	if (!dx && !dy) { g_held = 0; return; }
@@ -98,6 +105,7 @@ void sty_stamp(void *frame, size_t pitch, int bpp)
 	bool down;
 
 	if (!sty_cursor(&cx, &cy, &down) || (bpp != 2 && bpp != 4)) return;
+	if (g_source != STY_SRC_DPAD && g_idle >= HIDE_S) return;
 	for (e = 1; e >= 0; e--)
 		for (i = -6 - e; i <= 6 + e; i++) {
 			uint8_t r = e ? 0 : 255, g = e ? 0 : 255, b = e ? 0 : (down ? 0 : 255);
@@ -109,9 +117,6 @@ void sty_stamp(void *frame, size_t pitch, int bpp)
 		}
 }
 
-/* Not reset with a game: the launcher sends it after every RUN, as it does the
- * rewind speed, and a launch that sends nothing keeps the d-pad. */
-static int g_source = STY_SRC_DPAD;
 bool sty_set_source(const char *name)
 {
 	if (!name) return false;
