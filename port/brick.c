@@ -50,6 +50,7 @@
 #include "diatom_port.h"
 #include "gkd_gl.h"
 #include "port_clock.h"
+#include "port_signals.h"
 
 #define AUDIO_RATE 48000
 /* Capacity in FRAMES (one frame = two int16 samples). 4096 at 48kHz is ~85ms,
@@ -886,10 +887,15 @@ static bool gl_up(void)
 	SDL_DisplayMode dm = { 0 };
 	uint64_t t0 = diatom_port_now_us();
 	char msg[96];
+	struct sigaction sigs[DIATOM_FATAL_SIGNALS];
+	int vok;
 
 	/* Nothing of ours in flight before the window pans. */
 	flip_drain();
-	if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+	diatom_signals_save(sigs);
+	vok = SDL_InitSubSystem(SDL_INIT_VIDEO);
+	diatom_signals_restore(sigs);   /* plorpos-6ei.10, port_signals.h */
+	if (vok != 0) {
 		snprintf(msg, sizeof msg, "shader: no video: %s", SDL_GetError());
 		diatom_port_log(DIATOM_LOG_WARN, msg);
 		return false;

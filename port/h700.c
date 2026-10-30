@@ -35,6 +35,7 @@
 #include "diatom_port.h"
 #include "gkd_gl.h"
 #include "port_clock.h"
+#include "port_signals.h"
 
 /* SDL numbers a pad's buttons by evdev code: BTN_JOYSTICK up first, then
  * everything below it. The RG SP's pad has the 13 face buttons and the two
@@ -941,10 +942,15 @@ static bool gl_up(void)
 	SDL_DisplayMode dm = { 0 };
 	uint64_t t0 = diatom_port_now_us();
 	char msg[96];
+	struct sigaction sigs[DIATOM_FATAL_SIGNALS];
+	int vok;
 
 	/* Nothing of ours in flight before the window pans. */
 	flip_drain();
-	if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+	diatom_signals_save(sigs);
+	vok = SDL_InitSubSystem(SDL_INIT_VIDEO);
+	diatom_signals_restore(sigs);   /* plorpos-6ei.10, port_signals.h */
+	if (vok != 0) {
 		snprintf(msg, sizeof msg, "shader: no video: %s", SDL_GetError());
 		diatom_port_log(DIATOM_LOG_WARN, msg);
 		return false;
