@@ -59,6 +59,27 @@ int main(void)
 	CHECK(!sty_set_source("up") && sty_source() == STY_SRC_RSTICK, "a bad name changes nothing");
 	sty_reset();
 	CHECK(sty_source() == STY_SRC_RSTICK, "a new game keeps what the launcher chose");
+	/* A stick's cursor (TortOS plorpos-6ei.1): on with no toggle, hidden
+	 * after 2 s still, back on the next move. */
+	{
+		uint64_t t = 1000000;
+		int i;
+
+		CHECK(sty_active(), "a stick's cursor is on without Stylus Mode");
+		sty_frame(STY_RIGHT, false, t);
+		memset(f, 0, sizeof f);
+		sty_cursor(&x, &y, &down);
+		sty_stamp(f, 256 * 2, 2);
+		CHECK(f[y * 256 + x] == 0xFFFF, "drawn while it moves");
+		for (i = 0; i < 42; i++) sty_frame(0, false, t += 50000);   /* 2.1 s */
+		memset(f, 0, sizeof f);
+		sty_stamp(f, 256 * 2, 2);
+		CHECK(f[y * 256 + x] == 0, "hidden after 2 s still");
+		sty_frame(STY_LEFT, false, t += 16000);
+		sty_cursor(&x, &y, &down);
+		sty_stamp(f, 256 * 2, 2);
+		CHECK(f[y * 256 + x] == 0xFFFF, "back on the next move");
+	}
 	sty_set_source("dpad");
 	printf(failures ? "FAILED\n" : "all ok\n");
 	return failures != 0;
