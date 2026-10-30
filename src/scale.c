@@ -44,7 +44,7 @@ const diatom_display_mode_info diatom_modes[] = {
 	{ "ds-bottom", DIATOM_SCALE_DS_BOTTOM,
 	  "DS: the bottom screen alone, fullscreen" },
 	{ "ds-topfocus", DIATOM_SCALE_DS_TOP_FOCUS,
-	  "DS: the top screen big, the bottom one small at its right" },
+	  "DS: the top screen big (whole multiple), the bottom one small at its right" },
 	{ "ds-bottomfocus", DIATOM_SCALE_DS_BOTTOM_FOCUS,
 	  "DS: the bottom screen big, the top one small at its right" },
 };
@@ -128,11 +128,23 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
                            diatom_rect *focus, diatom_rect *small)
 {
-	int fw = surf_w * 3 / 4, fh = fw * 3 / 4, sw, sh, x0;
+	/* The big screen at the whole multiple of 256x192 nearest three quarters
+	 * of the width, never so wide that no small screen fits beside it; the
+	 * small one fills the width left over (TortOS plorpos-6ei.4, the user's
+	 * pick). 1024x768 3x + 256, 720x480 2x + 208, 640x480 2x + 128. */
+	int k = (surf_w * 3 / 4 + 128) / 256, fw, fh, sw, sh, x0;
 
-	if (fh > surf_h) { fh = surf_h; fw = fh * 4 / 3; }
-	sw = fw / 3;
+	while (k > 1 && (k * 256 >= surf_w || k * 192 > surf_h)) k--;
+	fw = k * 256;
+	fh = k * 192;
+	if (fw >= surf_w || fh > surf_h) {      /* under 256x192: the old thirds */
+		fw = surf_w * 3 / 4;
+		fh = fw * 3 / 4;
+		if (fh > surf_h) { fh = surf_h; fw = fh * 4 / 3; }
+	}
+	sw = surf_w - fw;
 	sh = sw * 3 / 4;
+	if (sh > fh) { sh = fh; sw = sh * 4 / 3; }
 	x0 = (surf_w - fw - sw) / 2;
 	*focus = (diatom_rect){ x0, (surf_h - fh) / 2, fw, fh };
 	*small = (diatom_rect){ x0 + fw, top_focus ? focus->y + fh - sh : focus->y, sw, sh };
