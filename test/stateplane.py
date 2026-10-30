@@ -187,6 +187,16 @@ send("DISPLAY"); got = drain()
 check_that("mode did not move either",
            len(got) == 1 and got[0].startswith("DISPLAY\tmode=integer"), got)
 
+# fill= (TortOS plorpos-6ei.12): aspect | stretch, the DS's one-screen and
+# Overlay layouts; anything else refuses the whole message.
+send("SETDISPLAY\tmode=aspect\tfill=bogus"); got = drain()
+check("bad fill refuses the whole message", got,
+      ["ERROR\tcode=bad_display\tmsg=bogus"])
+send("SETDISPLAY\tfill=stretch"); got = drain()
+check_that("fill accepted, mode kept",
+           len(got) == 1 and got[0].startswith("DISPLAY\tmode=integer"), got)
+send("SETDISPLAY\tfill=aspect"); drain()
+
 # Shaders, ADR-0041. The desktop port has no GPU path, so it takes None and
 # refuses any pass; what is checked here is the host's half - the spec, the
 # all-or-nothing, and DISPLAY saying it back. The GKD runs the real chain.

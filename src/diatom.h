@@ -285,6 +285,8 @@ typedef struct {
 	char device[128];
 	char dmode[32];        /* SETDISPLAY: a name from diatom_modes[] */
 	char dfilter[16];      /* SETDISPLAY: nearest | sharp */
+	char dfill[16];        /* RUN, SETDISPLAY: aspect | stretch, the DS's
+	                        * one-screen and Overlay layouts (plorpos-6ei.12) */
 	/* SETDISPLAY, ADR-0041: "none", or passes "path:nearest|linear:scale"
 	 * joined by commas; `final` is nearest | linear. Empty = unchanged. */
 	char shader[1024];
@@ -384,9 +386,9 @@ typedef enum {
 	 * at its right (see diatom_ds_focus_rects); composed in main.c. */
 	DIATOM_SCALE_DS_TOP_FOCUS,
 	DIATOM_SCALE_DS_BOTTOM_FOCUS,
-	/* One screen filling the panel at 4:3, the other 2/5 its width over
-	 * the panel's bottom-right corner, 80% opaque (diatom_ds_overlay_rects,
-	 * TortOS plorpos-6ei.5). A split where the port draws one (GKD,
+	/* One screen filling the panel - at 4:3, or stretched (fill=) - the
+	 * other 2/5 its width over its bottom-right corner, 80% opaque
+	 * (diatom_ds_overlay_rects, TortOS plorpos-6ei.5, .12). A split where the port draws one (GKD,
 	 * Rotate), composed in main.c where it does not. */
 	DIATOM_SCALE_DS_TOP_OVERLAY,
 	DIATOM_SCALE_DS_BOTTOM_OVERLAY
@@ -403,14 +405,17 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
  * top one (the small one is the bottom screen) and at its top corner when
  * it is the bottom one. 4:3 screens; letterboxed in a panel of another
  * shape. */
-/* The Overlay layouts' two rects: the big screen 4:3 fit and centred, the
- * small one 2/5 its width, flush with the panel's bottom-right corner. */
-void diatom_ds_overlay_rects(int surf_w, int surf_h, diatom_rect *big, diatom_rect *small);
+/* The Overlay layouts' two rects: the big screen 4:3 fit and centred, or the
+ * whole panel when `stretch`; the small one 4:3, 2/5 the big one's width, flush
+ * with the big one's bottom-right corner (TortOS plorpos-6ei.12). */
+void diatom_ds_overlay_rects(int surf_w, int surf_h, bool stretch,
+                             diatom_rect *big, diatom_rect *small);
 void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
                            diatom_rect *focus, diatom_rect *small);
 
 bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
-                     int surf_w, int surf_h, diatom_rect *top, diatom_rect *bot);
+                     int surf_w, int surf_h, bool stretch,
+                     diatom_rect *top, diatom_rect *bot);
 
 /* Mode and filter are independent axes, cycled independently on device. They
  * were briefly modeled as a flat list of (mode, filter) presets on the
