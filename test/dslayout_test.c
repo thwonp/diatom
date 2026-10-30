@@ -25,27 +25,42 @@ int main(void)
 	{
 		diatom_rect t, bt;
 
-		diatom_ds_rects(DIATOM_SCALE_DS_A, 256, 384, 1600, 1440, false, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_A, 256, 384, 1600, 1440, DIATOM_FILL_ASPECT, &t, &bt);
 		CHECK(t.w == 1536 && t.h == 1152 && bt.w == 384 && bt.h == 288 && bt.y == 1152, "GKD Focus Top: 6x + the height left over");
-		diatom_ds_rects(DIATOM_SCALE_DS_A, 256, 384, 720, 720, false, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_A, 256, 384, 720, 720, DIATOM_FILL_ASPECT, &t, &bt);
 		CHECK(t.w == 720 && t.h == 540 && bt.w == 240 && bt.h == 180, "Rotate Focus Top: 3x does not fit, unchanged");
-		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 480, false, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 480, DIATOM_FILL_ASPECT, &t, &bt);
 		CHECK(t.w == 640 && t.h == 480 && t.x == 40 && bt.w == 256 && bt.h == 192
 		      && bt.x + bt.w == 680 && bt.y + bt.h == 480, "Top Overlay aspect: 4:3 fit, bottom 2/5 at the picture's corner");
-		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 480, true, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 480, DIATOM_FILL_STRETCH, &t, &bt);
 		CHECK(t.x == 0 && t.y == 0 && t.w == 720 && t.h == 480 && bt.w == 288 && bt.h == 216
 		      && bt.x + bt.w == 720 && bt.y + bt.h == 480, "Top Overlay stretch: panel filled, small 4:3 2/5 at its corner");
-		diatom_ds_rects(DIATOM_SCALE_DS_BOTTOM_OVERLAY, 256, 384, 1024, 768, false, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_BOTTOM_OVERLAY, 256, 384, 1024, 768, DIATOM_FILL_ASPECT, &t, &bt);
 		CHECK(bt.w == 1024 && t.w == 409 && t.x + t.w == 1024 && t.y + t.h == 768, "Bottom Overlay: the top screen small");
-		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 720, false, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 720, DIATOM_FILL_ASPECT, &t, &bt);
 		CHECK(t.w == 720 && t.h == 540 && t.y == 90 && bt.w == 288 && bt.h == 216
 		      && bt.x + bt.w == 720 && bt.y + bt.h == 630, "Rotate Top Overlay aspect: small inside the picture, not below it");
-		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 720, true, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 720, DIATOM_FILL_STRETCH, &t, &bt);
 		CHECK(t.w == 720 && t.h == 720 && t.y == 0 && bt.x + bt.w == 720 && bt.y + bt.h == 720, "Rotate Top Overlay stretch");
-		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 1600, 1440, true, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 1600, 1440, DIATOM_FILL_STRETCH, &t, &bt);
 		CHECK(t.w == 1600 && t.h == 1440 && bt.w == 640 && bt.h == 480 && bt.x == 960 && bt.y == 960, "GKD Top Overlay stretch");
-		diatom_ds_rects(DIATOM_SCALE_DS_A, 256, 384, 1600, 1440, true, &t, &bt);
+		diatom_ds_rects(DIATOM_SCALE_DS_A, 256, 384, 1600, 1440, DIATOM_FILL_STRETCH, &t, &bt);
 		CHECK(t.w == 1536 && t.h == 1152, "Focus Top ignores stretch");
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 720, 480, DIATOM_FILL_INTEGER, &t, &bt);
+		CHECK(t.w == 512 && t.h == 384 && t.x == 104 && t.y == 48 && bt.w == 204 && bt.h == 153
+		      && bt.x + bt.w == 616 && bt.y + bt.h == 432, "RG SP Top Overlay integer: 2x centred, small at its corner");
+		diatom_ds_rects(DIATOM_SCALE_DS_TOP_OVERLAY, 256, 384, 1600, 1440, DIATOM_FILL_INTEGER, &t, &bt);
+		CHECK(t.w == 1536 && t.h == 1152 && t.x == 32 && t.y == 144, "GKD Top Overlay integer: 6x");
+	}
+	{
+		diatom_rect r = diatom_ds_big_rect(1024, 768, DIATOM_FILL_INTEGER);
+		CHECK(r.w == 1024 && r.h == 768, "Brick integer: 4x, the whole panel");
+		r = diatom_ds_big_rect(720, 720, DIATOM_FILL_INTEGER);
+		CHECK(r.w == 512 && r.h == 384 && r.x == 104 && r.y == 168, "Rotate integer: 2x (3x is wider than 720)");
+		r = diatom_ds_big_rect(640, 480, DIATOM_FILL_INTEGER);
+		CHECK(r.w == 512 && r.h == 384, "RG35XX H integer: 2x");
+		r = diatom_ds_big_rect(200, 150, DIATOM_FILL_INTEGER);
+		CHECK(r.w == 200 && r.h == 150, "under 1x: falls back to 4:3 fit");
 	}
 	printf(failures ? "FAILED\n" : "all ok\n");
 	return failures != 0;

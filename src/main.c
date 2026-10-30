@@ -598,9 +598,10 @@ static void blit_screen(uint8_t *canvas, size_t cpitch, diatom_rect r,
 static void *g_canvas;
 static size_t g_canvas_cap;
 static diatom_scale_mode g_canvas_mode;
-/* The DS's one-screen and Overlay layouts: the big screen at 4:3 or filling
- * the panel (fill=, TortOS plorpos-6ei.12). Kept across games, as the mode. */
-static bool g_ds_stretch;
+/* The DS's one-screen and Overlay layouts: the big screen at 4:3, filling the
+ * panel, or at a whole multiple (fill=, TortOS plorpos-6ei.12, .17). Kept
+ * across games, as the mode. */
+static diatom_fill g_ds_fill;
 
 static void compose_focus(bool top_focus, int bpp)
 {
@@ -680,7 +681,7 @@ static void compose_overlay(bool top_big, int bpp)
 		memset(g_canvas, 0, pitch * H);
 		g_canvas_mode = diatom_modes[g_mode].mode;
 	}
-	diatom_ds_overlay_rects(W, H, g_ds_stretch, &big, &small);
+	diatom_ds_overlay_rects(W, H, g_ds_fill, &big, &small);
 	blit_screen(g_canvas, pitch, big, top_big ? top : bot, g_frame_pitch, g_frame_w, sh, bpp);
 	blend_screen(g_canvas, pitch, small, top_big ? bot : top, g_frame_pitch, g_frame_w, sh, bpp);
 }
@@ -729,10 +730,10 @@ static void apply_display(int mode, diatom_filter filter)
 	g_filter = filter;
 	g_dst = diatom_scale_rect(diatom_modes[mode].mode, g_base_w, g_base_h,
 	                          g_base_aspect, g_caps.surface_w, g_caps.surface_h);
-	if (g_ds_stretch && ds_stacked()
+	if (g_ds_fill != DIATOM_FILL_ASPECT && ds_stacked()
 	    && (diatom_modes[mode].mode == DIATOM_SCALE_DS_TOP
 	        || diatom_modes[mode].mode == DIATOM_SCALE_DS_BOTTOM))
-		g_dst = (diatom_rect){ 0, 0, g_caps.surface_w, g_caps.surface_h };
+		g_dst = diatom_ds_big_rect(g_caps.surface_w, g_caps.surface_h, g_ds_fill);
 	/* Stylus Mode follows the bottom screen being the one shown alone. */
 	sty_screen((diatom_modes[mode].mode == DIATOM_SCALE_DS_BOTTOM
 	            || diatom_modes[mode].mode == DIATOM_SCALE_DS_TOP_FOCUS
@@ -742,7 +743,7 @@ static void apply_display(int mode, diatom_filter filter)
 	/* A DS layout: two rects for the two screens, the port draws both. */
 	if ((g_caps.split || !is_overlay(diatom_modes[mode].mode))
 	    && diatom_ds_rects(diatom_modes[mode].mode, g_base_w, g_base_h,
-	                       g_caps.surface_w, g_caps.surface_h, g_ds_stretch, &top, &bot)) {
+	                       g_caps.surface_w, g_caps.surface_h, g_ds_fill, &top, &bot)) {
 		diatom_port_split(true, top, bot);
 		/* The preview is the raw stacked core frame. Its consumer needs
 		 * both actual destinations, not the single-frame fallback rect. */
@@ -757,7 +758,8 @@ static void apply_display(int mode, diatom_filter filter)
 	printf("diatom: display %-10s %-7s %4dx%-4d at %4d,%-4d  %s%s\n",
 	       diatom_modes[mode].name, filter_name(filter),
 	       g_dst.w, g_dst.h, g_dst.x, g_dst.y, diatom_modes[mode].note,
-	       g_ds_stretch ? " (fill stretch)" : "");
+	       g_ds_fill == DIATOM_FILL_STRETCH ? " (fill stretch)"
+	       : g_ds_fill == DIATOM_FILL_INTEGER ? " (fill integer)" : "");
 	fflush(stdout);
 
 	/* Reported from the ONE place the mode ever changes, so a launcher hears
@@ -1524,17 +1526,28 @@ static bool shader_apply(const char *spec, const char *fin, char *err, size_t ca
 	return true;
 }
 
-/* A fill change redraws the canvas from black: its bars are the old fill's. */
-static void set_fill(bool stretch)
+/* fill= by name; false for a name that is not one. */
+static bool fill_parse(const char *s, diatom_fill *out)
 {
-	if (stretch != g_ds_stretch) g_canvas_mode = (diatom_scale_mode)-1;
-	g_ds_stretch = stretch;
+	if      (!strcmp(s, "aspect"))  *out = DIATOM_FILL_ASPECT;
+	else if (!strcmp(s, "stretch")) *out = DIATOM_FILL_STRETCH;
+	else if (!strcmp(s, "integer")) *out = DIATOM_FILL_INTEGER;
+	else return false;
+	return true;
+}
+
+/* A fill change redraws the canvas from black: its bars are the old fill's. */
+static void set_fill(diatom_fill f)
+{
+	if (f != g_ds_fill) g_canvas_mode = (diatom_scale_mode)-1;
+	g_ds_fill = f;
 }
 
 static void display_set(const diatom_msg *m)
 {
 	int mode = g_mode, i;
 	diatom_filter filter = g_filter;
+	diatom_fill fill = g_ds_fill;
 
 	if (m->dmode[0]) {
 		for (i = 0; i < diatom_mode_count; i++)
@@ -1553,7 +1566,7 @@ static void display_set(const diatom_msg *m)
 			return;
 		}
 	}
-	if (m->dfill[0] && strcmp(m->dfill, "aspect") && strcmp(m->dfill, "stretch")) {
+	if (m->dfill[0] && !fill_parse(m->dfill, &fill)) {
 		diatom_proto_send("ERROR\tcode=bad_display\tmsg=%s", m->dfill);
 		return;
 	}
@@ -1572,7 +1585,7 @@ static void display_set(const diatom_msg *m)
 	/* Every field validated before any is applied, for the same reason
 	 * SETMAP is all-or-nothing: a half-applied setting is one nobody asked
 	 * for and neither side believes in. */
-	if (m->dfill[0]) set_fill(!strcmp(m->dfill, "stretch"));
+	set_fill(fill);
 	apply_display(mode, filter);
 }
 
@@ -2882,8 +2895,11 @@ int main(int argc, char **argv)
 				if (!strcmp(diatom_modes[k].name, m.dmode)) { sn.mode = k; break; }
 			/* Its fill the same way, for the same first frames; unknown or
 			 * absent keeps the last. */
-			if (!strcmp(m.dfill, "aspect") || !strcmp(m.dfill, "stretch"))
-				set_fill(!strcmp(m.dfill, "stretch"));
+			{
+				diatom_fill f;
+
+				if (fill_parse(m.dfill, &f)) set_fill(f);
+			}
 			run_session(&sn);   /* its own ERROR/EXIT is the report */
 
 			/* The options the launcher sent were for THAT game. Cores are

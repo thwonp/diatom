@@ -131,16 +131,28 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 	return centered(src_w, src_h, surf_w, surf_h);
 }
 
-void diatom_ds_overlay_rects(int surf_w, int surf_h, bool stretch,
+diatom_rect diatom_ds_big_rect(int surf_w, int surf_h, diatom_fill fill)
+{
+	int bw = surf_w, bh = surf_w * 3 / 4,
+	    k = surf_w / 256 < surf_h / 192 ? surf_w / 256 : surf_h / 192;
+
+	if (fill == DIATOM_FILL_STRETCH) bh = surf_h;
+	else if (fill == DIATOM_FILL_INTEGER && k >= 1) { bw = k * 256; bh = k * 192; }
+	if (bh > surf_h) { bh = surf_h; bw = bh * 4 / 3; }
+	return (diatom_rect){ (surf_w - bw) / 2, (surf_h - bh) / 2, bw, bh };
+}
+
+void diatom_ds_overlay_rects(int surf_w, int surf_h, diatom_fill fill,
                              diatom_rect *big, diatom_rect *small)
 {
-	int bw = surf_w, bh = stretch ? surf_h : surf_w * 3 / 4, sw, sh;
+	int bw, bh, sw, sh;
 
-	if (bh > surf_h) { bh = surf_h; bw = bh * 4 / 3; }
+	*big = diatom_ds_big_rect(surf_w, surf_h, fill);
+	bw = big->w;
+	bh = big->h;
 	sw = bw * 2 / 5;
 	sh = sw * 3 / 4;
 	if (sh > bh) { sh = bh; sw = sh * 4 / 3; }
-	*big   = (diatom_rect){ (surf_w - bw) / 2, (surf_h - bh) / 2, bw, bh };
 	/* In the picture's corner, not the panel's (the user's pick, .12): on a
 	 * panel not 4:3 the panel's corner is in the bars. */
 	*small = (diatom_rect){ big->x + bw - sw, big->y + bh - sh, sw, sh };
@@ -172,7 +184,7 @@ void diatom_ds_focus_rects(int surf_w, int surf_h, bool top_focus,
 }
 
 bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
-                     int surf_w, int surf_h, bool stretch,
+                     int surf_w, int surf_h, diatom_fill fill,
                      diatom_rect *top, diatom_rect *bot)
 {
 	int sh = src_w * 3 / 4, bw, bh, lw, lh, k;
@@ -181,7 +193,7 @@ bool diatom_ds_rects(diatom_scale_mode mode, int src_w, int src_h,
 
 	if (mode == DIATOM_SCALE_DS_TOP_OVERLAY || mode == DIATOM_SCALE_DS_BOTTOM_OVERLAY) {
 		if (src_w <= 0 || src_h != sh * 2 || surf_w <= 0 || surf_h <= 0) return false;
-		diatom_ds_overlay_rects(surf_w, surf_h, stretch, &big, &small);
+		diatom_ds_overlay_rects(surf_w, surf_h, fill, &big, &small);
 		if (mode == DIATOM_SCALE_DS_TOP_OVERLAY) { *top = big; *bot = small; }
 		else                                     { *top = small; *bot = big; }
 		return true;

@@ -195,6 +195,9 @@ check("bad fill refuses the whole message", got,
 send("SETDISPLAY\tfill=stretch"); got = drain()
 check_that("fill accepted, mode kept",
            len(got) == 1 and got[0].startswith("DISPLAY\tmode=integer"), got)
+send("SETDISPLAY\tfill=integer"); got = drain()
+check_that("fill=integer accepted",
+           len(got) == 1 and got[0].startswith("DISPLAY\tmode=integer"), got)
 send("SETDISPLAY\tfill=aspect"); drain()
 
 # Shaders, ADR-0041. The desktop port has no GPU path, so it takes None and
