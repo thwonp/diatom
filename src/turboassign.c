@@ -33,11 +33,11 @@ const char *ta_name(int btn)
 
 void ta_reset(turbo_assign *t)
 {
-	*t = (turbo_assign){ 0 };
+	*t = (turbo_assign){ .turbo = -1 };
 }
 
 uint32_t ta_choose(turbo_assign *t, uint32_t buttons, uint32_t pressed,
-                   uint32_t trigger_bit, ta_event *ev, int *btn_out)
+                   uint32_t trigger_bit, ta_event *ev, int *btn_out, int *on_out)
 {
 	*ev = TA_NONE;
 	t->hide &= buttons;
@@ -50,10 +50,18 @@ uint32_t ta_choose(turbo_assign *t, uint32_t buttons, uint32_t pressed,
 		for (i = 0; cand && i < N_ASSIGNABLE; i++) {
 			uint32_t bit = DIATOM_BIT(assignable[i].btn);
 			if (!(cand & bit)) continue;
-			t->armed = false;
 			t->hide |= bit;
-			*ev = TA_TOGGLE;
-			*btn_out = assignable[i].btn;
+			if (t->turbo < 0) {
+				t->turbo = assignable[i].btn;
+				*ev = TA_PICKED;
+				*btn_out = t->turbo;
+			} else {
+				*ev = TA_TOGGLE;
+				*btn_out = t->turbo;
+				*on_out = assignable[i].btn;
+				t->armed = false;
+				t->turbo = -1;
+			}
 			break;
 		}
 	}
@@ -68,11 +76,13 @@ ta_event ta_trigger(turbo_assign *t, bool held, uint64_t now_us)
 		t->down_us = now_us;
 		t->cleared = false;
 		t->armed = !t->armed;
+		t->turbo = -1;
 		ev = t->armed ? TA_ARMED : TA_CANCEL;
 	} else if (held && !t->cleared && now_us - t->down_us >= TA_CLEAR_US) {
 		/* The hold armed it on the way down; clearing ends that too. */
 		t->cleared = true;
 		t->armed = false;
+		t->turbo = -1;
 		ev = TA_CLEAR;
 	}
 	t->down = held;

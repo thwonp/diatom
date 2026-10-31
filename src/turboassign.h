@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: MIT */
-/* Turbo Assign (plorpos-tkh, ADR-0045): the hotkey that makes a button turbo
- * for the rest of the game. Press the hotkey, then a button: that button's
- * turbo flips. The hotkey again before a button cancels; held for
- * TA_CLEAR_US (2 s) it clears every turbo button.
+/* Turbo Assign (plorpos-tkh, plorpos-c4l, ADR-0045): the hotkey that puts a
+ * turbo button on a button for the rest of the game. Press the hotkey, then
+ * the button to turbo, then the button it lives on: hotkey + A + X makes X a
+ * turbo A, hotkey + A + A makes A its own turbo. The same pair again takes it
+ * off. The hotkey again before the last button cancels; held for TA_CLEAR_US
+ * (2 s) it clears every turbo button.
  *
  * This decides only WHAT was asked. The pulse is ADR-0028's, in env.c, and the
  * launcher owns the map that drives it: Diatom reports the request (TURBO)
@@ -18,10 +20,11 @@
 
 #define TA_CLEAR_US (2u * 1000000u)
 
-typedef enum { TA_NONE, TA_ARMED, TA_CANCEL, TA_TOGGLE, TA_CLEAR } ta_event;
+typedef enum { TA_NONE, TA_ARMED, TA_PICKED, TA_CANCEL, TA_TOGGLE, TA_CLEAR } ta_event;
 
 typedef struct {
-	bool     armed;       /* waiting for the button to toggle */
+	bool     armed;       /* waiting for a button: the turbo one, then its host */
+	int      turbo;       /* the turbo button chosen, or -1 while waiting for it */
 	bool     down;        /* the hotkey was held at the last step */
 	bool     cleared;     /* this hold already cleared; nothing more from it */
 	uint64_t down_us;     /* when the hotkey went down */
@@ -39,11 +42,12 @@ void ta_reset(turbo_assign *t);
 
 /* Once a frame, before the hotkey dispatch: if armed, the first assignable
  * button pressed this frame (other than the hotkey's own, `trigger_bit`) is
- * the choice - TA_TOGGLE with *btn_out set. Returns the bits the hotkey
- * dispatch and the game must not see this frame: the choice, for as long as
- * it stays held. */
+ * the choice. The first choice is the turbo button - TA_PICKED with *btn_out
+ * set; the second is its host - TA_TOGGLE with *btn_out the turbo button and
+ * *on_out the host. Returns the bits the hotkey dispatch and the game must
+ * not see this frame: each choice, for as long as it stays held. */
 uint32_t ta_choose(turbo_assign *t, uint32_t buttons, uint32_t pressed,
-                   uint32_t trigger_bit, ta_event *ev, int *btn_out);
+                   uint32_t trigger_bit, ta_event *ev, int *btn_out, int *on_out);
 
 /* Once a frame, after the hotkey dispatch: whether the Turbo Assign binding
  * is held on its active layer this frame. */

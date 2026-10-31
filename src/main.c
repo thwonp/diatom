@@ -1267,12 +1267,14 @@ static uint32_t turbo_binding(uint32_t buttons, bool *held)
 	return 0;
 }
 
-static void turbo_tell(ta_event ev, int btn)
+static void turbo_tell(ta_event ev, int btn, int on)
 {
 	switch (ev) {
 	case TA_ARMED:  diatom_proto_send("TURBO\tarm=1");                 break;
+	case TA_PICKED: diatom_proto_send("TURBO\tpick=%s", ta_name(btn)); break;
 	case TA_CANCEL: diatom_proto_send("TURBO\tarm=0");                 break;
-	case TA_TOGGLE: diatom_proto_send("TURBO\tbtn=%s", ta_name(btn));  break;
+	case TA_TOGGLE: diatom_proto_send("TURBO\tbtn=%s\ton=%s",
+	                                  ta_name(btn), ta_name(on));       break;
 	case TA_CLEAR:  diatom_proto_send("TURBO\tclear=1");               break;
 	default: break;
 	}
@@ -1284,10 +1286,10 @@ static uint32_t turbo_assign_choose(uint32_t buttons, uint32_t prev)
 	bool held;
 	uint32_t bit = turbo_binding(buttons, &held), hide;
 	ta_event ev;
-	int btn = -1;
+	int btn = -1, on = -1;
 
-	hide = ta_choose(&g_ta, buttons, buttons & ~prev, bit, &ev, &btn);
-	turbo_tell(ev, btn);
+	hide = ta_choose(&g_ta, buttons, buttons & ~prev, bit, &ev, &btn, &on);
+	turbo_tell(ev, btn, on);
 	return hide;
 }
 
@@ -1297,7 +1299,7 @@ static void turbo_assign_trigger(uint32_t buttons)
 	bool held;
 
 	turbo_binding(buttons, &held);
-	turbo_tell(ta_trigger(&g_ta, held, diatom_port_now_us()), -1);
+	turbo_tell(ta_trigger(&g_ta, held, diatom_port_now_us()), -1, -1);
 }
 
 /* One game, start to finish. Extracted so the protocol loop (ADR-0009) can run

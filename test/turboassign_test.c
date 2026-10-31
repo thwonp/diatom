@@ -6,6 +6,7 @@
 #include "turboassign.h"
 
 static int failures;
+static int on = -1;   /* the host of the last TA_TOGGLE */
 
 #define CHECK(cond, what) do { \
 	if (cond) printf("  ok   %s\n", what); \
@@ -21,7 +22,7 @@ static ta_event frame(turbo_assign *t, uint32_t now, uint32_t prev, bool hk,
 {
 	ta_event ev, ev2;
 
-	*hide = ta_choose(t, now, now & ~prev, trig, &ev, btn);
+	*hide = ta_choose(t, now, now & ~prev, trig, &ev, btn, &on);
 	ev2 = ta_trigger(t, hk, us);
 	return ev != TA_NONE ? ev : ev2;
 }
@@ -36,15 +37,45 @@ int main(void)
 	ta_reset(&t);
 	CHECK(frame(&t, B(L3), 0, true, 0, trig, &btn, &hide) == TA_ARMED, "hotkey press arms");
 	CHECK(frame(&t, 0, B(L3), false, 10, trig, &btn, &hide) == TA_NONE, "release does nothing");
-	CHECK(frame(&t, B(A), 0, false, 20, trig, &btn, &hide) == TA_TOGGLE && btn == DIATOM_BTN_A,
-	      "next button press toggles it");
+	CHECK(frame(&t, B(A), 0, false, 20, trig, &btn, &hide) == TA_PICKED && btn == DIATOM_BTN_A,
+	      "next button press picks the turbo button");
 	CHECK(hide == B(A), "the choosing press is hidden");
 	CHECK(frame(&t, B(A), B(A), false, 30, trig, &btn, &hide) == TA_NONE && hide == B(A),
 	      "hidden for as long as it is held");
 	frame(&t, 0, B(A), false, 40, trig, &btn, &hide);
 	CHECK(hide == 0, "let go, the game has it back");
+	CHECK(frame(&t, B(X), 0, false, 45, trig, &btn, &hide) == TA_TOGGLE
+	      && btn == DIATOM_BTN_A && on == DIATOM_BTN_X, "the press after puts turbo A on X");
+	CHECK(hide == B(X), "the host press is hidden too");
+	frame(&t, 0, B(X), false, 48, trig, &btn, &hide);
 	CHECK(frame(&t, B(A), 0, false, 50, trig, &btn, &hide) == TA_NONE && hide == 0,
 	      "not armed: a press is the game's");
+
+	/* A then A: its own turbo, as before */
+	frame(&t, B(L3), 0, true, 60, trig, &btn, &hide);
+	frame(&t, 0, B(L3), false, 61, trig, &btn, &hide);
+	CHECK(frame(&t, B(A), 0, false, 62, trig, &btn, &hide) == TA_PICKED, "A picked");
+	CHECK(frame(&t, B(A), B(A), false, 63, trig, &btn, &hide) == TA_NONE,
+	      "holding the pick is not also the host");
+	frame(&t, 0, B(A), false, 64, trig, &btn, &hide);
+	CHECK(frame(&t, B(A), 0, false, 65, trig, &btn, &hide) == TA_TOGGLE
+	      && btn == DIATOM_BTN_A && on == DIATOM_BTN_A, "A again: turbo A on A");
+	frame(&t, 0, B(A), false, 66, trig, &btn, &hide);
+
+	/* cancel after the pick */
+	frame(&t, B(L3), 0, true, 70, trig, &btn, &hide);
+	frame(&t, 0, B(L3), false, 71, trig, &btn, &hide);
+	frame(&t, B(B), 0, false, 72, trig, &btn, &hide);
+	frame(&t, 0, B(B), false, 73, trig, &btn, &hide);
+	CHECK(frame(&t, B(L3), 0, true, 74, trig, &btn, &hide) == TA_CANCEL, "hotkey after the pick cancels");
+	frame(&t, 0, B(L3), false, 75, trig, &btn, &hide);
+	CHECK(frame(&t, B(X), 0, false, 76, trig, &btn, &hide) == TA_NONE && hide == 0,
+	      "after that cancel, a press is the game's");
+	CHECK(frame(&t, B(L3), 0, true, 77, trig, &btn, &hide) == TA_ARMED, "re-arm after cancel");
+	frame(&t, 0, B(L3) | B(X), false, 78, trig, &btn, &hide);
+	CHECK(frame(&t, B(Y), 0, false, 79, trig, &btn, &hide) == TA_PICKED && btn == DIATOM_BTN_Y,
+	      "re-armed starts from the turbo button, not the old pick");
+	ta_reset(&t);
 
 	/* cancel */
 	frame(&t, B(L3), 0, true, 100, trig, &btn, &hide);
@@ -59,8 +90,11 @@ int main(void)
 	frame(&t, 0, B(L3), false, 1, trig, &btn, &hide);
 	CHECK(frame(&t, B(UP) | B(START) | B(SELECT), 0, false, 2, trig, &btn, &hide) == TA_NONE && hide == 0,
 	      "d-pad, START, SELECT are not assignable");
-	CHECK(frame(&t, B(UP) | B(R2), B(UP) | B(START) | B(SELECT), false, 3, trig, &btn, &hide) == TA_TOGGLE
+	CHECK(frame(&t, B(UP) | B(R2), B(UP) | B(START) | B(SELECT), false, 3, trig, &btn, &hide) == TA_PICKED
 	      && btn == DIATOM_BTN_R2, "still armed after them: R2");
+	frame(&t, 0, B(R2), false, 4, trig, &btn, &hide);
+	CHECK(frame(&t, B(START), 0, false, 5, trig, &btn, &hide) == TA_NONE && hide == 0,
+	      "START is never a host either");
 
 	/* the hotkey's own button is never the choice */
 	ta_reset(&t);
@@ -71,7 +105,7 @@ int main(void)
 	ta_reset(&t);
 	frame(&t, B(L3), 0, true, 0, trig, &btn, &hide);
 	frame(&t, 0, B(L3), false, 1, trig, &btn, &hide);
-	CHECK(frame(&t, B(Y) | B(B), 0, false, 2, trig, &btn, &hide) == TA_TOGGLE && btn == DIATOM_BTN_B,
+	CHECK(frame(&t, B(Y) | B(B), 0, false, 2, trig, &btn, &hide) == TA_PICKED && btn == DIATOM_BTN_B,
 	      "two in one frame: B before Y");
 
 	/* hold to clear */

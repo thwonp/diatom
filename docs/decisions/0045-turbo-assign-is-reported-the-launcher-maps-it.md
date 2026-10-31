@@ -48,3 +48,26 @@
 - A launcher that predates this ignores `TURBO` (ADR-0009): the hotkey arms
   and nothing more happens. No version bump.
 - A turbo button that maps to nothing in a game (X on NES) pulses nothing.
+
+## Amendment 2026-10-30: a turbo button can live on any button (plorpos-c4l)
+
+A player wanted dedicated turbo buttons: turbo B on North, turbo A on East.
+Turbo Assign gains a third press, so the hotkey says which turbo goes where:
+
+- Hotkey, then the turbo button, then the button it lives on. Hotkey + A + X
+  makes X a turbo A; hotkey + A + A is today's turbo A on A.
+- Both choices are assignable buttons and both are hidden until let go. The
+  hotkey again before the last press cancels; the 2 s hold still clears all.
+- The message grows a stage and a key:
+
+  ```
+  Diatom -> TURBO pick=<name>           the turbo button: waiting for its host
+  Diatom -> TURBO btn=<name> on=<name>  flip turbo <btn> on button <on>
+  ```
+
+- The launcher keeps one turbo target per host and answers with the same
+  whole `SETMAP` (`x:a~3`). The same pair again takes it off; another turbo
+  on the same host replaces it.
+- A launcher that predates the amendment reads `btn=` alone and flips that
+  button's own turbo - the old behaviour, never a wrong map. Diatom and the
+  launcher ship together, so no version bump.

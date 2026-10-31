@@ -998,8 +998,9 @@ Two levers the spike discovered:
       are never folded and never mapped (plorpos-pky.17).
 - [x] **[OPEN]** Turbo chosen in the game, per button →
       **[ADR-0045](decisions/0045-turbo-assign-is-reported-the-launcher-maps-it.md)**
-      *(Accepted)*. A `turbo` hotkey, then a button, flips that button's
-      turbo; held 2 s it clears all. Diatom sends TURBO and keeps nothing;
+      *(Accepted)*. A `turbo` hotkey, then a button, then the button it
+      lives on, flips that turbo there (2026-10-30, plorpos-c4l); held 2 s
+      it clears all. Diatom sends TURBO and keeps nothing;
       the launcher owns the session's map and answers with SETMAP
       (plorpos-tkh).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
