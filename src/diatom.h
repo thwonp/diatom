@@ -160,6 +160,11 @@ void diatom_env_core_log_flush(void);
 /* Once per frame, each consuming its flag: whether the core polled the pad
  * during that frame's run(), and whether it sent RETRO_ENVIRONMENT_SHUTDOWN. */
 bool diatom_env_polled(void);
+/* Rate control's reach: wide while the loop is locked to the panel's rate. */
+void diatom_audio_set_reach(bool wide);
+void diatom_audio_set_feedforward(double rel);
+/* Tell GET_THROTTLE_STATE what the loop is doing; called every frame before the core runs. */
+void diatom_env_set_throttle(bool fast_forward, bool rewinding);
 bool diatom_env_shutdown(void);
 
 /* options.c - what a core can be configured with, and what it currently is.

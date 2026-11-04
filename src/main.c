@@ -436,6 +436,7 @@ static void install_crash_handlers(void)
  * "never recompute from a mid-run SET_GEOMETRY", which a deliberate user-driven
  * mode change does not violate as long as it recomputes from the base. */
 static int           g_base_w, g_base_h;
+static bool          g_geom_follow;   /* the core's SET_GEOMETRY always re-derives the rect (PokeDaisy) */
 static double        g_base_aspect;
 static int           g_mode;
 static diatom_filter g_filter;
@@ -871,6 +872,13 @@ static bool g_pause_requested;
  * NextUI's ff_frame_time = 1e6/(fps*(max_ff_speed+1)) - it runs the loop
  * faster, it does not ask the core for more frames per retro_run call. */
 #define DIATOM_MAX_FF_SPEED 8
+/* Optional port hook: true when this port's present will wait for the panel this frame (so the loop needs no clock of
+ * its own). A port without one never waits. */
+__attribute__((weak)) bool diatom_port_vsync_lock(bool want) { (void)want; return false; }
+/* Optional port hook: the panel's measured refresh in Hz, 0 when unknown. */
+__attribute__((weak)) double diatom_port_panel_hz(void) { return 0.0; }
+/* Optional port hook: block until the frame just presented has latched at a vsync (only after a lock said yes). */
+__attribute__((weak)) void diatom_port_vsync_wait(void) {}
 static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
 static turbo_assign g_ta;      /* Turbo Assign, ADR-0045; reset at RUN and RESUME */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
@@ -1756,6 +1764,7 @@ static int run_session_inner(const diatom_session *sn)
 	struct retro_system_av_info av;
 	struct retro_system_info si;
 	double   frame_us, next_us;
+	bool     vlock = false;   /* the port waits for the panel in present (diatom_port_vsync_lock) */
 	uint64_t t_start, paused_us = 0;   /* menu time, excluded from the rate */
 	diatom_rewind_stat rw_stat = { 0 };   /* taken before the ring is freed */
 	uint32_t buttons = 0, prev_buttons = 0, held_at_entry = 0;
@@ -1826,6 +1835,9 @@ static int run_session_inner(const diatom_session *sn)
 	printf("diatom: %s %s\n",
 	       si.library_name ? si.library_name : "?",
 	       si.library_version ? si.library_version : "?");
+	/* PokeDaisy's canvas is its aspect (EXPAND 4x, ZOOM OUT 3x on the Brick): its SET_GEOMETRY is a deliberate change
+	 * that re-derives the integer factor from the new size, at any time, not a boot artifact or a hires excursion. */
+	g_geom_follow = si.library_name && !strcmp(si.library_name, "PokeDaisy");
 
 	/* Most cores declare their options during core open, but not all: some
 	 * wait until content is loaded, because what they offer depends on the
@@ -2101,6 +2113,9 @@ static int run_session_inner(const diatom_session *sn)
 		uint64_t now;
 
 		g_frame_fresh = false;
+		vlock = diatom_port_vsync_lock(g_ff_speed == 1 && !g_rewind_active);
+		diatom_audio_set_reach(vlock);
+		diatom_env_set_throttle(g_ff_speed > 1, g_rewind_active);
 		/* Rewind steps the ring backward and then runs the core once to
 		 * render the frame the restore corresponds to - see rewind.c's
 		 * header comment on the one-frame forward nudge this costs, judged
@@ -2141,7 +2156,7 @@ static int run_session_inner(const diatom_session *sn)
 			}
 #endif
 			g_core->run();   /* renders forward play */
-			diatom_rewind_capture(g_core);
+			if (!vlock) diatom_rewind_capture(g_core);   /* locked: after present, in the panel's slack (below) */
 			diatom_disk_tick(g_core);   /* a swapped disc's tray closes */
 		}
 		/* During play the pad is read from the core's input callback, inside
@@ -2188,9 +2203,10 @@ static int run_session_inner(const diatom_session *sn)
 			double na;
 
 			geom_changes++;
-			if (frames - locked_at < SETTLE_FRAMES &&
+			if ((g_geom_follow || frames - locked_at < SETTLE_FRAMES) &&
 			    diatom_env_new_geometry(&nw, &nh, &na) &&
 			    (nw != g_base_w || nh != g_base_h)) {
+				if (!g_geom_follow)   /* a following core changes it with its aspect: no line per change */
 				printf("diatom: geometry settled %dx%d -> %dx%d "
 				       "at frame %ld\n",
 				       g_base_w, g_base_h, nw, nh, frames);
@@ -2201,6 +2217,7 @@ static int run_session_inner(const diatom_session *sn)
 				 * recorded Genesis as 256x192 at 1.5238 - twenty-
 				 * nine frames of boot - which ADR-0018's display
 				 * table was then computed from. */
+				if (!g_geom_follow)
 				printf("diatom: %dx%d (max %ux%u) aspect %.4f, "
 				       "%.4f fps, %.0f Hz -> %d Hz\n",
 				       nw, nh, av.geometry.max_width,
@@ -2271,6 +2288,9 @@ static int run_session_inner(const diatom_session *sn)
 
 		/* Display switching lives after present, so the timing above covers
 		 * exactly one combination's work. */
+		/* The capture's serialize (3 ms on the Brick, every few frames) belongs in the slack after the frame is published,
+		 * not in front of it: there it costs the next frame a fraction of a ms instead of this one a vsync. */
+		if (vlock && g_frame_fresh && !g_rewind_active) diatom_rewind_capture(g_core);
 		diatom_save_tick();
 
 		if (diatom_proto_active()) {
@@ -2487,6 +2507,14 @@ static int run_session_inner(const diatom_session *sn)
 			if (q_live && q < q_min) q_min = q;
 			if (q > q_max) q_max = q;
 		}
+		/* Locked to the panel: the loop runs at the panel's rate, which the port measures; rate control is told its ratio
+		 * to the core's, instead of learning it over a minute. (Not the loop's own rate over a short window: one repeated
+		 * frame moves that by 1%.) */
+		{
+			double hz = vlock ? diatom_port_panel_hz() : 0.0;
+
+			diatom_audio_set_feedforward(hz > 30.0 ? (1e6 / frame_us > 0 ? hz / (1e6 / frame_us) - 1.0 : 0.0) : 0.0);
+		}
 		diatom_audio_sync();
 
 		/* BEGIN PolyForm-Noncommercial-1.0.0 - NextUI-derived: the fast-forward deadline, NextUI's setFastForward/limitFF. See NOTICE. */
@@ -2500,6 +2528,7 @@ static int run_session_inner(const diatom_session *sn)
 			double target_us = frame_us / g_ff_speed;
 		/* END PolyForm-Noncommercial-1.0.0 */
 
+			if (vlock && g_frame_fresh) diatom_port_vsync_wait();
 			next_us += target_us;
 			now = diatom_port_now_us();
 #ifdef DIATOM_PORT_PACED
@@ -2509,6 +2538,8 @@ static int run_session_inner(const diatom_session *sn)
 			 * Rate control follows the panel's rate instead. */
 			if (paced) next_us = (double)now;
 #endif
+			/* A port that waits for the panel in present (the Brick's vsync lock): that wait is the clock, as above. */
+			if (vlock && g_frame_fresh) next_us = (double)now;
 
 			if (next_us > (double)now) {
 				struct timespec ts;
@@ -2529,6 +2560,8 @@ static int run_session_inner(const diatom_session *sn)
 			/* Otherwise keep the debt and let the next short sleep repay it. */
 		}
 	}
+
+	(void)diatom_port_vsync_lock(false);   /* the resident outlives the game: hand the CPU governor back */
 
 	/* Read the clock before the capture: converting and writing a full-screen
 	 * BMP costs hundreds of milliseconds, and it happens after the last frame.

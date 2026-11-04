@@ -58,6 +58,13 @@ void diatom_audio_tap_close(void)
 #else
 #define ADJ_CLAMP 1.0
 #endif
+/* The reach in use: widened while the loop runs at the panel's rate (a port's vsync lock), as for a paced port. */
+static double g_adj_clamp = ADJ_CLAMP;
+void diatom_audio_set_reach(bool wide) { g_adj_clamp = wide ? 3.0 : ADJ_CLAMP; }
+/* Feed-forward: where the loop's rate is known (locked to the panel), its ratio error against the core's own rate, as a
+ * fraction (+0.005 = the loop runs 0.5% fast), goes straight in instead of being learned by the integral over a minute. */
+static double g_ff;
+void diatom_audio_set_feedforward(double rel) { g_ff = rel / MAX_DEVIATION; }
 #define P_GAIN 1.0
 #define I_GAIN 0.002     /* per frame; deliberately slow, ~8s to full authority */
 
@@ -304,12 +311,12 @@ void diatom_audio_sync(void)
 	 * The integral is clamped rather than left to wind up: without that, a long
 	 * stall banks correction that then overshoots for just as long. */
 	g_integral += delta * I_GAIN;
-	if (g_integral < -ADJ_CLAMP) g_integral = -ADJ_CLAMP;
-	if (g_integral >  ADJ_CLAMP) g_integral =  ADJ_CLAMP;
+	if (g_integral < -g_adj_clamp) g_integral = -g_adj_clamp;
+	if (g_integral >  g_adj_clamp) g_integral =  g_adj_clamp;
 
-	adjust = delta * P_GAIN + g_integral;
-	if (adjust < -ADJ_CLAMP) adjust = -ADJ_CLAMP;
-	if (adjust >  ADJ_CLAMP) adjust =  ADJ_CLAMP;
+	adjust = delta * P_GAIN + g_integral + g_ff;
+	if (adjust < -g_adj_clamp) adjust = -g_adj_clamp;
+	if (adjust >  g_adj_clamp) adjust =  g_adj_clamp;
 
 	/* Buffer filling up means we are producing too fast, so consume more source
 	 * per output frame - a larger ratio yields fewer output frames. */
