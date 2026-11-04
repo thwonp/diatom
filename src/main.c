@@ -879,6 +879,9 @@ __attribute__((weak)) bool diatom_port_vsync_lock(bool want) { (void)want; retur
 __attribute__((weak)) void diatom_port_vsync_default(bool on) { (void)on; }
 /* Optional port hook: the panel's measured refresh in Hz, 0 when unknown. */
 __attribute__((weak)) double diatom_port_panel_hz(void) { return 0.0; }
+/* Optional port hook: what the glass actually did over the run (panel latches, repeated and long gaps), as one line for the
+ * exit summary; false when the port cannot tell. */
+__attribute__((weak)) bool diatom_port_glass_stats(char *buf, size_t n) { (void)buf; (void)n; return false; }
 /* Optional port hook: block until the frame just presented has latched at a vsync (only after a lock said yes). */
 __attribute__((weak)) void diatom_port_vsync_wait(void) {}
 static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
@@ -2666,6 +2669,11 @@ static int run_session_inner(const diatom_session *sn)
 		for (i = 0; i < diatom_mode_count; i++) {
 			report_slot(i, DIATOM_FILTER_NEAREST);
 			report_slot(i, DIATOM_FILTER_SHARP);
+		}
+		{
+			char gl[160];
+
+			if (diatom_port_glass_stats(gl, sizeof gl)) printf("diatom: glass: %s\n", gl);
 		}
 		printf("diatom: audio dropped %llu frame(s)\n",
 		       (unsigned long long)diatom_audio_dropped());

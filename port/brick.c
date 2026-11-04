@@ -1097,6 +1097,14 @@ void diatom_port_present_stop(diatom_park park_mode)
 static volatile double g_panel_us;   /* 0 until measured */
 double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
 static uint64_t g_flast;
+/* Glass cadence for the exit summary: every latch, the gaps of two panel periods (a frame shown twice) and of three or more. */
+static unsigned long g_gl_n, g_gl_rep, g_gl_long;
+bool diatom_port_glass_stats(char *buf, size_t n)
+{
+	if (g_gl_n < 2) return false;
+	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, panel %.2f Hz", g_gl_n, g_gl_rep, g_gl_long, diatom_port_panel_hz());
+	return true;
+}
 /* VSYNC LOCK (on by default for PokeDaisy; opt-in elsewhere): present waits until its page has latched, so the frame loop runs in step with the panel instead
  * of beating against it (a free-running 59.73 Hz clock against a 59.57 Hz panel slips a vsync every ~6 s, and the frames
  * near each slip land on either side of it: a repeat and a skip, in bursts). On with DIATOM_VSYNC=1 or the marker file. */
@@ -1236,6 +1244,9 @@ static void *flip_worker(void *arg)
 				double g = (double)(t - g_flast) / 1000.0;
 				/* The panel's own period: the gaps of one vsync each (a repeated frame is a gap of two, not the panel
 				 * slowing), averaged over a few hundred of them. */
+				g_gl_n++;
+				if (g_panel_us > 0 && g * 1000.0 > g_panel_us * 2.5) g_gl_long++;
+				else if (g_panel_us > 0 && g * 1000.0 > g_panel_us * 1.5) g_gl_rep++;
 				if (g > 15.0 && g < 18.5) g_panel_us = g_panel_us > 0 ? g_panel_us + (g * 1000.0 - g_panel_us) / 256.0 : g * 1000.0;
 			}
 			g_flast = t;

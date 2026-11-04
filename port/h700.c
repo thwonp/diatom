@@ -1199,6 +1199,7 @@ void diatom_port_present_stop(diatom_park park_mode)
 }
 
 
+static void glass_note(uint64_t t);
 static void *flip_worker(void *arg)
 {
 	struct fb_var_screeninfo v = g_vinfo;
@@ -1231,6 +1232,7 @@ static void *flip_worker(void *arg)
 		if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &v) != 0)
 			diatom_port_log(DIATOM_LOG_WARN, "pan failed in flip thread");
 		returned = diatom_port_now_us();
+		glass_note(returned);
 
 		pthread_mutex_lock(&g_flip_mx);
 		g_front    = page;
@@ -1239,6 +1241,30 @@ static void *flip_worker(void *arg)
 	}
 	pthread_mutex_unlock(&g_flip_mx);
 	return arg;
+}
+
+/* Glass cadence for the exit summary (see brick.c): gaps of two panel periods are a frame shown twice, three or more a long stall. */
+static unsigned long g_gl_n, g_gl_rep, g_gl_long;
+static double        g_gl_pu;   /* the panel's period in us, learned from the one-vsync gaps */
+bool diatom_port_glass_stats(char *buf, size_t n)
+{
+	if (g_gl_n < 2) return false;
+	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, panel %.2f Hz", g_gl_n, g_gl_rep, g_gl_long, g_gl_pu > 0 ? 1e6 / g_gl_pu : 0.0);
+	return true;
+}
+static void glass_note(uint64_t t)
+{
+	static uint64_t last;
+
+	if (last) {
+		double g = (double)(t - last);
+
+		g_gl_n++;
+		if (g > 15000.0 && g < 18500.0) g_gl_pu = g_gl_pu > 0 ? g_gl_pu + (g - g_gl_pu) / 256.0 : g;
+		else if (g_gl_pu > 0 && g > g_gl_pu * 2.5) g_gl_long++;
+		else if (g_gl_pu > 0 && g > g_gl_pu * 1.5) g_gl_rep++;
+	}
+	last = t;
 }
 
 /* ---------- the audio sink (ADR-0029) ------------------------------------- */
