@@ -2106,6 +2106,8 @@ static int run_session_inner(const diatom_session *sn)
 
 	t_start = diatom_port_now_us();
 	next_us = (double)t_start;
+	uint64_t lk_prev = 0;     /* when the previous locked iteration's page latched */
+	bool     catch_up = false; /* that iteration slipped a vsync: its audio is owed */
 	log_guard_begin();
 
 	while (!diatom_port_should_quit() && !g_terminate && !stop &&
@@ -2135,6 +2137,16 @@ static int run_session_inner(const diatom_session *sn)
 			if (diatom_rewind_step_back(g_core))
 				g_core->run();   /* renders the frame the restore left us at */
 		} else {
+			/* Locked, an iteration that slipped a vsync took two panel periods and made one frame of audio against two of
+			 * consumption; nothing else puts it back, and the queue empties while the player scrolls. Run the core one
+			 * extra time (told it is late, so it leaves the picture out: the cheap run) so frames per second stay at the panel's rate. */
+			if (catch_up && vlock && !g_rewind_active && g_ff_speed == 1 &&
+			    diatom_port_audio_queued() < (size_t)(g_caps.audio_buffer_frames / 2 + 1024))
+			{
+				if (g_core->audio_status) g_core->audio_status(true, 50, true);
+				g_core->run();
+			}
+			catch_up = false;
 #ifdef DIATOM_PORT_FRAMESKIP
 			/* Behind by more than the tolerance: tell the core, which then
 			 * leaves the next frame's rendering out - the work the blit skip
@@ -2528,7 +2540,14 @@ static int run_session_inner(const diatom_session *sn)
 			double target_us = frame_us / g_ff_speed;
 		/* END PolyForm-Noncommercial-1.0.0 */
 
-			if (vlock && g_frame_fresh) diatom_port_vsync_wait();
+			if (vlock && g_frame_fresh) {
+				double pu = diatom_port_panel_hz() > 0 ? 1e6 / diatom_port_panel_hz() : 0;
+
+				diatom_port_vsync_wait();
+				now = diatom_port_now_us();
+				catch_up = lk_prev && pu > 0 && (double)(now - lk_prev) > pu * 1.5;
+				lk_prev = now;
+			}
 			next_us += target_us;
 			now = diatom_port_now_us();
 #ifdef DIATOM_PORT_PACED
