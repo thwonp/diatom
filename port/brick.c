@@ -1131,34 +1131,58 @@ static void gov_recover(void)
 	unlink(GOV_KEEP);
 	if (g[0] && strcmp(g, "performance") && (f = fopen(GOV_PATH, "w"))) { fputs(g, f); fclose(f); }
 }
+#define MGBA_FLOOR_KHZ 816000   /* confirmed or raised by the mGBA floor runs */
 #define MINF_PATH "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq"
 /* Experiment (plorpos-rk0.14): TortOS/diatom.lockfloor holding a frequency in kHz raises only the CPU's minimum frequency
  * while locked, instead of pinning the governor to `performance`. */
 static char g_minf_saved[16];
+static unsigned g_core_floor;   /* kHz the default-locked core needs, 0 = pin the governor */
 static bool minf_set(bool on)
 {
 	FILE *f = fopen("/mnt/SDCARD/TortOS/diatom.lockfloor", "r");
 	char v[16] = "";
 
-	if (!f) {   /* marker gone while a floor is held: give it back */
+	if (f) {
+		if (!fgets(v, sizeof v, f)) v[0] = '\0';
+		fclose(f);
+		v[strcspn(v, "\n")] = '\0';
+		if (!v[0]) snprintf(v, sizeof v, "1200000");
+	} else if (g_core_floor) {
+		snprintf(v, sizeof v, "%u", g_core_floor);
+	} else {   /* no floor wanted; give one back that is still held */
 		if (!on && g_minf_saved[0] && (f = fopen(MINF_PATH, "w"))) { fputs(g_minf_saved, f); fclose(f); g_minf_saved[0] = '\0'; }
 		return false;
 	}
-	if (!fgets(v, sizeof v, f)) v[0] = '\0';
-	fclose(f);
-	v[strcspn(v, "\n")] = '\0';
 	if (on && !g_minf_saved[0]) {
 		f = fopen(MINF_PATH, "r");
 		if (!f) return true;
 		if (!fgets(g_minf_saved, sizeof g_minf_saved, f)) g_minf_saved[0] = '\0';
 		fclose(f);
 		g_minf_saved[strcspn(g_minf_saved, "\n")] = '\0';
-		if ((f = fopen(MINF_PATH, "w"))) { fputs(v[0] ? v : "1200000", f); fclose(f); }
+		if ((f = fopen(MINF_PATH, "w"))) { fputs(v, f); fclose(f); }
 	} else if (!on && g_minf_saved[0]) {
 		if ((f = fopen(MINF_PATH, "w"))) { fputs(g_minf_saved, f); fclose(f); }
 		g_minf_saved[0] = '\0';
 	}
 	return true;
+}
+/* Cores that run locked by default on the Brick, and the CPU they need while locked (plorpos-rk0.14, 20 s runs, 2 each):
+ * the repeated frames fall to 0-1 per 1200 from 3-13; a floor of 816 MHz holds the lock for the light cores (CPU about
+ * 870-940 MHz against 2000 under the governor pin), SNES needs the pin (at a 816 or 1200 MHz floor it missed vsyncs and
+ * the lock stood down). Not listed: PCSX-ReARMed (audio drops under the lock), DSperate (slower than the panel, small gain). */
+static const struct { const char *lib; unsigned floor_khz; } k_lock_cores[] = {
+	{ "mGBA", MGBA_FLOOR_KHZ }, { "PicoDrive", 816000 }, { "FCEUmm", 816000 }, { "Beetle PCE Fast", 816000 },
+	{ "Snes9x 2010", 0 },
+};
+bool diatom_port_vsync_core(const char *library)
+{
+	size_t i;
+
+	g_core_floor = 0;
+	if (!library) return false;
+	for (i = 0; i < sizeof k_lock_cores / sizeof k_lock_cores[0]; i++)
+		if (!strcmp(library, k_lock_cores[i].lib)) { g_core_floor = k_lock_cores[i].floor_khz; return true; }
+	return false;
 }
 static void gov_set(bool perf)
 {
