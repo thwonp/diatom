@@ -2144,9 +2144,13 @@ static int run_session_inner(const diatom_session *sn)
 			/* Locked, an iteration that slipped a vsync took two panel periods and made one frame of audio against two of
 			 * consumption; nothing else puts it back, and the queue empties while the player scrolls. Run the core one
 			 * extra time (told it is late, so it leaves the picture out: the cheap run) so frames per second stay at the panel's rate. */
+			/* Both runs push before the sink drains anything, so a queue above half would overflow on the pair. */
+			diatom_audio_set_state((vlock ? DIATOM_AUDIO_ST_LOCK : 0) | (g_rewind_active ? DIATOM_AUDIO_ST_REWIND : 0) |
+			                       (g_ff_speed > 1 ? DIATOM_AUDIO_ST_FF : 0));
 			if (catch_up && vlock && !g_rewind_active && g_ff_speed == 1 &&
-			    diatom_port_audio_queued() < (size_t)(g_caps.audio_buffer_frames / 2 + 1024))
+			    diatom_port_audio_queued() < (size_t)(g_caps.audio_buffer_frames / 2))
 			{
+				diatom_audio_set_state(DIATOM_AUDIO_ST_LOCK | DIATOM_AUDIO_ST_CATCHUP);
 				if (g_core->audio_status) g_core->audio_status(true, 50, true);
 				g_core->run();
 			}
@@ -2665,6 +2669,17 @@ static int run_session_inner(const diatom_session *sn)
 		}
 		printf("diatom: audio dropped %llu frame(s)\n",
 		       (unsigned long long)diatom_audio_dropped());
+		if (diatom_audio_dropped() || diatom_audio_ff_discarded()) {   /* by what the loop was doing (lock/rewind/ff/catch-up bits) */
+			unsigned m;
+
+			printf("diatom: audio dropped by state:");
+			for (m = 0; m < 16; m++)
+				if (diatom_audio_dropped_in(m))
+					printf(" %s%s%s%s%s=%llu", m & DIATOM_AUDIO_ST_LOCK ? "lock" : "free", m & DIATOM_AUDIO_ST_REWIND ? "+rewind" : "",
+					       m & DIATOM_AUDIO_ST_FF ? "+ff" : "", m & DIATOM_AUDIO_ST_CATCHUP ? "+catchup" : "",
+					       "", (unsigned long long)diatom_audio_dropped_in(m));
+			printf("; fast-forward audio not queued %llu\n", (unsigned long long)diatom_audio_ff_discarded());
+		}
 		printf("diatom: audio IN  peak %d rms %.0f, %llu of %llu non-zero\n",
 		       diatom_audio_in_peak(), diatom_audio_in_rms(),
 		       (unsigned long long)diatom_audio_in_nonzero(),

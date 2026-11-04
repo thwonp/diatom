@@ -446,6 +446,14 @@ extern const int                      diatom_mode_count;
  * overflows. */
 void   diatom_audio_configure(double src_rate, int dst_rate, int capacity_frames);
 size_t diatom_audio_push(const int16_t *in, size_t frames);
+/* The loop's state for the drop breakdown: OR of these, set once per iteration before the core runs. */
+#define DIATOM_AUDIO_ST_LOCK    1u
+#define DIATOM_AUDIO_ST_REWIND  2u
+#define DIATOM_AUDIO_ST_FF      4u
+#define DIATOM_AUDIO_ST_CATCHUP 8u
+void     diatom_audio_set_state(unsigned s);
+uint64_t diatom_audio_dropped_in(unsigned s);
+uint64_t diatom_audio_ff_discarded(void);
 void   diatom_audio_prime(void);           /* fill to target before frame one */
 void   diatom_audio_sync(void);            /* once per frame, after pushing */
 double diatom_audio_ratio_drift(void);     /* current DRC correction, for reporting */
