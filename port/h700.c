@@ -1244,12 +1244,13 @@ static void *flip_worker(void *arg)
 }
 
 /* Glass cadence for the exit summary (see brick.c): gaps of two panel periods are a frame shown twice, three or more a long stall. */
-static unsigned long g_gl_n, g_gl_rep, g_gl_long;
+static unsigned long g_gl_n, g_gl_rep, g_gl_long, g_gl_sup;   /* sup: a published page replaced before it was taken (never shown) */
 static double        g_gl_pu;   /* the panel's period in us, learned from the one-vsync gaps */
 bool diatom_port_glass_stats(char *buf, size_t n)
 {
 	if (g_gl_n < 2) return false;
-	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, panel %.2f Hz", g_gl_n, g_gl_rep, g_gl_long, g_gl_pu > 0 ? 1e6 / g_gl_pu : 0.0);
+	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, %lu superseded, panel %.2f Hz", g_gl_n, g_gl_rep, g_gl_long, g_gl_sup, g_gl_pu > 0 ? 1e6 / g_gl_pu : 0.0);
+	g_gl_n = g_gl_rep = g_gl_long = g_gl_sup = 0;   /* the resident outlives the game: each summary covers one session */
 	return true;
 }
 static void glass_note(uint64_t t)
@@ -2257,6 +2258,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 
 	pthread_mutex_lock(&g_flip_mx);
 	g_presented = true;
+	if (g_pending >= 0) g_gl_sup++;
 	g_pending = page;
 	pthread_cond_signal(&g_flip_cv);
 	pthread_mutex_unlock(&g_flip_mx);

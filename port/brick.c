@@ -1098,11 +1098,12 @@ static volatile double g_panel_us;   /* 0 until measured */
 double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
 static uint64_t g_flast;
 /* Glass cadence for the exit summary: every latch, the gaps of two panel periods (a frame shown twice) and of three or more. */
-static unsigned long g_gl_n, g_gl_rep, g_gl_long;
+static unsigned long g_gl_n, g_gl_rep, g_gl_long, g_gl_sup;   /* sup: a published page replaced before it was taken (never shown) */
 bool diatom_port_glass_stats(char *buf, size_t n)
 {
 	if (g_gl_n < 2) return false;
-	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, panel %.2f Hz", g_gl_n, g_gl_rep, g_gl_long, diatom_port_panel_hz());
+	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, %lu superseded, panel %.2f Hz", g_gl_n, g_gl_rep, g_gl_long, g_gl_sup, diatom_port_panel_hz());
+	g_gl_n = g_gl_rep = g_gl_long = g_gl_sup = 0;   /* the resident outlives the game: each summary covers one session */
 	return true;
 }
 /* VSYNC LOCK (on by default for PokeDaisy; opt-in elsewhere): present waits until its page has latched, so the frame loop runs in step with the panel instead
@@ -2001,6 +2002,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 
 	pthread_mutex_lock(&g_flip_mx);
 	g_presented = true;
+	if (g_pending >= 0) g_gl_sup++;
 	g_pending = page;
 	pthread_cond_signal(&g_flip_cv);
 	pthread_mutex_unlock(&g_flip_mx);
