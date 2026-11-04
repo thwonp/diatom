@@ -1097,7 +1097,7 @@ void diatom_port_present_stop(diatom_park park_mode)
 static volatile double g_panel_us;   /* 0 until measured */
 double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
 static uint64_t g_flast;
-/* VSYNC LOCK (opt-in): present waits until its page has latched, so the frame loop runs in step with the panel instead
+/* VSYNC LOCK (on by default for PokeDaisy; opt-in elsewhere): present waits until its page has latched, so the frame loop runs in step with the panel instead
  * of beating against it (a free-running 59.73 Hz clock against a 59.57 Hz panel slips a vsync every ~6 s, and the frames
  * near each slip land on either side of it: a repeat and a skip, in bursts). On with DIATOM_VSYNC=1 or the marker file. */
 static bool g_vlock;
@@ -1108,6 +1108,20 @@ static uint64_t g_lk_last;
  * locked, put back after. */
 #define GOV_PATH "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
 static char g_gov_saved[32];
+/* The governor to give back is also kept in a file (tmpfs), so a presenter that dies while locked (killed, crashed)
+ * cannot strand the CPU on `performance`: the next one to start puts it back. */
+#define GOV_KEEP "/tmp/diatom.governor"
+static void gov_recover(void)
+{
+	char g[32] = "";
+	FILE *f = fopen(GOV_KEEP, "r");
+
+	if (!f) return;
+	if (fgets(g, sizeof g, f)) g[strcspn(g, "\n")] = '\0';
+	fclose(f);
+	unlink(GOV_KEEP);
+	if (g[0] && strcmp(g, "performance") && (f = fopen(GOV_PATH, "w"))) { fputs(g, f); fclose(f); }
+}
 static void gov_set(bool perf)
 {
 	FILE *f;
@@ -1119,14 +1133,18 @@ static void gov_set(bool perf)
 		fclose(f);
 		g_gov_saved[strcspn(g_gov_saved, "\n")] = '\0';
 		if (!g_gov_saved[0] || !strcmp(g_gov_saved, "performance")) { g_gov_saved[0] = '\0'; return; }
+		if ((f = fopen(GOV_KEEP, "w"))) { fputs(g_gov_saved, f); fclose(f); }
 		f = fopen(GOV_PATH, "w");
 		if (f) { fputs("performance", f); fclose(f); }
 	} else if (!perf && g_gov_saved[0]) {
 		f = fopen(GOV_PATH, "w");
 		if (f) { fputs(g_gov_saved, f); fclose(f); }
 		g_gov_saved[0] = '\0';
+		unlink(GOV_KEEP);
 	}
 }
+static bool g_vlock_default;   /* the core in this session locks unless opted out (diatom_port_vsync_default) */
+void diatom_port_vsync_default(bool on) { g_vlock_default = on; }
 bool diatom_port_vsync_lock(bool want)
 {
 	static int on = -1;
@@ -1135,8 +1153,12 @@ bool diatom_port_vsync_lock(bool want)
 	if (!(calls++ & 63) || on < 0) {
 		const char *e = getenv("DIATOM_VSYNC");
 
-		on = (e && *e == '1') || access("/mnt/SDCARD/TortOS/diatom.vsync", F_OK) == 0;
+		/* Forced on for every core: DIATOM_VSYNC=1 or TortOS/diatom.vsync. Forced off: DIATOM_VSYNC=0 or
+		 * TortOS/diatom.novsync. Otherwise the core's default. */
+		if ((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.novsync", F_OK) == 0) on = 0;
+		else on = (e && *e == '1') || access("/mnt/SDCARD/TortOS/diatom.vsync", F_OK) == 0 || g_vlock_default;
 	}
+	if ((calls & 63) == 1 && !g_gov_saved[0] && !(on > 0 && want)) gov_recover();   /* a dead presenter's pin, if one is left */
 	if (g_lk_off) { g_lk_off--; want = false; g_lk_last = 0; g_lk_frames = g_lk_miss = 0; }
 	g_vlock = on > 0 && want && g_flip_running && !g_win;
 	gov_set(g_vlock);
@@ -1328,6 +1350,7 @@ void diatom_port_audio_get(char *out, size_t cap)
 
 bool diatom_port_init(diatom_port_caps *out)
 {
+	gov_recover();
 
 	g_mixer_fd = open("/dev/snd/controlC0", O_RDWR);
 	g_disp_fd  = open("/dev/disp", O_RDWR);
