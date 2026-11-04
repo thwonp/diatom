@@ -1340,8 +1340,20 @@ bool diatom_port_init(diatom_port_caps *out)
 	return true;
 }
 
+/* The vibration motor: GPIO 227, high is on (the launcher parks it low at
+ * boot). It is not variable in strength here; any strength above 0 is on. */
+#define MOTOR_PATH "/sys/class/gpio/gpio227/value"
+static int g_motor_fd = -1;
+bool diatom_port_has_rumble(void) { return access(MOTOR_PATH, W_OK) == 0; }
+void diatom_port_rumble(uint16_t strength)
+{
+	if (g_motor_fd < 0 && (g_motor_fd = open(MOTOR_PATH, O_WRONLY | O_CLOEXEC)) < 0) return;
+	if (write(g_motor_fd, strength ? "1" : "0", 1) < 0) { /* a motor that will not move is not worth a message */ }
+}
+
 void diatom_port_shutdown(void)
 {
+	if (g_motor_fd >= 0) diatom_port_rumble(0);
 	gl_down();
 	if (g_flip_running) {
 		pthread_mutex_lock(&g_flip_mx);
