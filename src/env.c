@@ -21,6 +21,7 @@
 #define MASK(x) ((x) & 0xffff)   /* experimental commands carry 0x10000 */
 
 static void capture_descriptors(const struct retro_input_descriptor *d);
+static bool cb_set_rumble(unsigned port, enum retro_rumble_effect effect, uint16_t strength);
 
 static diatom_policy    *g_policy;
 static diatom_core      *g_bound;   /* the core this callback is answering */
@@ -303,7 +304,13 @@ static bool env_cb(unsigned cmd, void *data)
 		 * (diatom_port_pointer; the DS's bottom screen, TortOS
 		 * plorpos-3yv.47). Answered everywhere: the pointer just never
 		 * presses where there is no panel. */
-		*(uint64_t *)data = (1ull << RETRO_DEVICE_JOYPAD) | (1ull << RETRO_DEVICE_POINTER);
+		*(uint64_t *)data = (1ull << RETRO_DEVICE_JOYPAD) | (1ull << RETRO_DEVICE_POINTER) | (1ull << RETRO_DEVICE_ANALOG);
+		return true;
+	case MASK(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE):
+		/* Only where the device has a motor: a core that adds a rumble
+		 * accessory (DSperate's Rumble Pak) does so on this answer. */
+		if (!diatom_port_has_rumble()) return false;
+		((struct retro_rumble_interface *)data)->set_rumble_state = cb_set_rumble;
 		return true;
 	case MASK(RETRO_ENVIRONMENT_SHUTDOWN):
 		/* The core is done. Ends the session as Quit would.
@@ -792,6 +799,23 @@ void diatom_input_emit_labels(void)
 			                  button_names[b], g_label[b]);
 }
 
+/* Ports without sticks or a motor leave these as they are. */
+__attribute__((weak)) bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
+{
+	(void)lx; (void)ly; (void)rx; (void)ry;
+	return false;
+}
+__attribute__((weak)) bool diatom_port_has_rumble(void) { return false; }
+__attribute__((weak)) void diatom_port_rumble(uint16_t strength) { (void)strength; }
+
+static bool cb_set_rumble(unsigned port, enum retro_rumble_effect effect, uint16_t strength)
+{
+	(void)effect;
+	if (port != 0 || !diatom_port_has_rumble()) return false;
+	diatom_port_rumble(strength);
+	return true;
+}
+
 static int16_t cb_input_state(unsigned port, unsigned device,
                               unsigned index, unsigned id)
 {
@@ -809,6 +833,15 @@ static int16_t cb_input_state(unsigned port, unsigned device,
 		if (id == RETRO_DEVICE_ID_POINTER_X) return x;
 		if (id == RETRO_DEVICE_ID_POINTER_Y) return y;
 		if (id == RETRO_DEVICE_ID_POINTER_COUNT) return down ? 1 : 0;
+		return 0;
+	}
+	/* The raw sticks, for a core that reads them (DSperate's CPAD patches). */
+	if (port == 0 && device == RETRO_DEVICE_ANALOG && index <= RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+		int16_t v[4] = { 0, 0, 0, 0 };
+
+		if (!diatom_port_sticks(&v[0], &v[1], &v[2], &v[3])) return 0;
+		if (id == RETRO_DEVICE_ID_ANALOG_X) return v[index * 2];
+		if (id == RETRO_DEVICE_ID_ANALOG_Y) return v[index * 2 + 1];
 		return 0;
 	}
 	if (port != 0 || device != RETRO_DEVICE_JOYPAD) return 0;

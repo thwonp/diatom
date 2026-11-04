@@ -1992,6 +1992,16 @@ static bool is_brick_pro(void)
                   | DIATOM_BIT(DIATOM_BTN_RSUP) | DIATOM_BIT(DIATOM_BTN_RSDOWN) \
                   | DIATOM_BIT(DIATOM_BTN_RSLEFT) | DIATOM_BIT(DIATOM_BTN_RSRIGHT))
 static uint32_t g_stick_bits;
+/* The sticks' raw positions, for a core that reads them (diatom_port_sticks).
+ * Only the Brick Pro has sticks: they count as present once an axis has moved. */
+static int16_t g_raw_stick[4];
+static bool    g_stick_seen;
+bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
+{
+	if (!g_stick_seen) return false;
+	*lx = g_raw_stick[0]; *ly = g_raw_stick[1]; *rx = g_raw_stick[2]; *ry = g_raw_stick[3];
+	return true;
+}
 
 static void stick_axis(int value, int neg_btn, int pos_btn)
 {
@@ -2160,10 +2170,10 @@ void diatom_port_input_poll(void)
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_R2);
 			} else {
 				switch (ev.jaxis.axis) {
-				case AXIS_LX: stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);  break;
-				case AXIS_LY: stick_axis(ev.jaxis.value, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);   break;
-				case AXIS_RX: stick_axis(ev.jaxis.value, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); break;
-				case AXIS_RY: stick_axis(ev.jaxis.value, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);  break;
+				case AXIS_LX: g_raw_stick[0] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);  break;
+				case AXIS_LY: g_raw_stick[1] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);   break;
+				case AXIS_RX: g_raw_stick[2] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); break;
+				case AXIS_RY: g_raw_stick[3] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);  break;
 				default: break;
 				}
 				g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
