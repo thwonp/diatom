@@ -595,6 +595,60 @@ void diatom_port_split(bool on, diatom_rect top, diatom_rect bot)
 	g_split_bot = bot;
 }
 
+
+/* VSYNC LOCK (opt-in, plorpos-rk0.14): with the swap interval at 1 the swap waits for the compositor's frame callback, so
+ * the frame loop runs in step with the panel instead of beating against it (a core at 59.73 Hz on a 60.00 Hz panel repeats
+ * a frame every ~3.7 s). Forced on with DIATOM_VSYNC=1 or a `diatom.vsync` file in the working directory, off with
+ * DIATOM_VSYNC=0 / `diatom.novsync`, otherwise the core's default. The glass cadence is learned from the swap returns, which
+ * are one panel period apart only while locked. */
+static bool g_vlock, g_vsync_on;
+static bool g_vlock_default;
+static uint64_t g_gl_last;
+static double g_panel_us;
+static unsigned long g_gl_n, g_gl_rep, g_gl_long;
+void diatom_port_vsync_default(bool on) { g_vlock_default = on; }
+double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
+bool diatom_port_glass_stats(char *buf, size_t n)
+{
+	if (g_gl_n < 2) return false;
+	snprintf(buf, n, "%lu latches, %lu repeated, %lu long, 0 superseded, panel %.2f Hz (locked swaps only)", g_gl_n, g_gl_rep, g_gl_long, diatom_port_panel_hz());
+	g_gl_n = g_gl_rep = g_gl_long = 0;
+	return true;
+}
+bool diatom_port_vsync_lock(bool want)
+{
+	static int on = -1;
+	static unsigned calls;
+
+	if (!(calls++ & 63) || on < 0) {
+		const char *e = getenv("DIATOM_VSYNC");
+
+		if ((e && *e == '0') || access("diatom.novsync", F_OK) == 0) on = 0;
+		else on = (e && *e == '1') || access("diatom.vsync", F_OK) == 0 || g_vlock_default;
+	}
+	g_vlock = on > 0 && want;
+	if (g_vlock != g_vsync_on) {
+		if (SDL_GL_SetSwapInterval(g_vlock ? 1 : 0) == 0) g_vsync_on = g_vlock;
+		g_gl_last = 0;
+	}
+	return g_vlock && g_vsync_on;
+}
+void diatom_port_vsync_wait(void) {}   /* the swap in present already waited */
+static void glass_note(void)
+{
+	uint64_t t = diatom_port_now_us();
+
+	if (g_vsync_on && g_gl_last) {
+		double g = (double)(t - g_gl_last);
+
+		g_gl_n++;
+		if (g > 14000.0 && g < 19000.0) g_panel_us = g_panel_us > 0 ? g_panel_us + (g - g_panel_us) / 256.0 : g;
+		else if (g_panel_us > 0 && g > g_panel_us * 2.5) g_gl_long++;
+		else if (g_panel_us > 0 && g > g_panel_us * 1.5) g_gl_rep++;
+	}
+	g_gl_last = g_vsync_on ? t : 0;
+}
+
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst,
                          diatom_filter filter)
@@ -624,6 +678,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	draw_overlay();
 	draw_osd();
 	SDL_GL_SwapWindow(g_window);
+	glass_note();
 }
 
 size_t diatom_port_audio_write(const int16_t *frames, size_t n)
