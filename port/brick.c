@@ -1167,12 +1167,12 @@ static bool minf_set(bool on)
 	return true;
 }
 /* Cores that run locked by default on the Brick, and the CPU they need while locked (plorpos-rk0.14, 20 s runs, 2 each):
- * the repeated frames fall to 0-1 per 20 s from 3-13, and a floor of 816 MHz holds the lock (CPU about 820-940 MHz
- * against 2000 under the governor pin). Not listed: Snes9x 2010 (only 2-3 repeats per 20 s unlocked, and it needs the
- * full pin: at an 816 or 1200 MHz floor it missed vsyncs and the lock stood down; opt in with TortOS/diatom.vsync),
- * PCSX-ReARMed (audio drops under the lock), DSperate (slower than the panel, small gain). */
+ * the repeated frames fall to 0-1 per 1200 from 3-13; a floor of 816 MHz holds the lock for the light cores (CPU about
+ * 870-940 MHz against 2000 under the governor pin), SNES needs the pin (at a 816 or 1200 MHz floor it missed vsyncs and
+ * the lock stood down). Not listed: PCSX-ReARMed (audio drops under the lock), DSperate (slower than the panel, small gain). */
 static const struct { const char *lib; unsigned floor_khz; } k_lock_cores[] = {
 	{ "mGBA", MGBA_FLOOR_KHZ }, { "PicoDrive", 816000 }, { "FCEUmm", 816000 }, { "Beetle PCE Fast", 816000 },
+	{ "Snes9x 2010", 0 },
 };
 bool diatom_port_vsync_core(const char *library)
 {
