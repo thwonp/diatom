@@ -483,7 +483,11 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * and costs a whole 16.67ms. That measured as a consistent 1.4% deficit.
 	 *
 	 * The host paces against a monotonic clock instead, and audio drift is
-	 * absorbed by rate control rather than by hoping the panel agrees. */
+	 * absorbed by rate control rather than by hoping the panel agrees.
+	 *
+	 * Measured 2026-11-04 (ADR-0048): this panel's real rate is 59.111 Hz (DRM_IOCTL_WAIT_VBLANK), not the 60.000 of its
+	 * DRM mode, so every core runs faster than the glass and drops 37-59 frames a minute; a locked swap would avoid that
+	 * at the price of a game about 1 % slow. Left as is. */
 	if (SDL_GL_SetSwapInterval(0) != 0)
 		fprintf(stderr, "note: could not disable vsync: %s\n", SDL_GetError());
 
