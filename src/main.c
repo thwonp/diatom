@@ -877,9 +877,6 @@ static bool g_pause_requested;
 __attribute__((weak)) bool diatom_port_vsync_lock(bool want) { (void)want; return false; }
 /* Optional port hook: whether this core runs locked unless the player opts out (set per session, before the loop). */
 __attribute__((weak)) void diatom_port_vsync_default(bool on) { (void)on; }
-/* Optional port hook: whether this core (by its library name) runs locked by default on this port, with the port's own CPU
- * strategy for it. The measurements behind a port's list are in plorpos-rk0.14. */
-__attribute__((weak)) bool diatom_port_vsync_core(const char *library) { (void)library; return false; }
 /* Optional port hook: the panel's measured refresh in Hz, 0 when unknown. */
 __attribute__((weak)) double diatom_port_panel_hz(void) { return 0.0; }
 /* Optional port hook: what the glass actually did over the run (panel latches, repeated and long gaps), as one line for the
@@ -1847,7 +1844,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * that re-derives the integer factor from the new size, at any time, not a boot artifact or a hires excursion. */
 	g_geom_follow = si.library_name && !strcmp(si.library_name, "PokeDaisy");
 	/* The vsync lock is on by default for PokeDaisy (its frames beat against the panel worst; plorpos-rk0.9). */
-	diatom_port_vsync_default(g_geom_follow || diatom_port_vsync_core(si.library_name));
+	diatom_port_vsync_default(g_geom_follow);
 
 	/* Most cores declare their options during core open, but not all: some
 	 * wait until content is loaded, because what they offer depends on the
