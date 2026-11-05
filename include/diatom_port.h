@@ -331,6 +331,19 @@ void diatom_port_audio_get(char *out, size_t cap);
 void     diatom_port_input_poll(void);
 uint32_t diatom_port_input_state(void);
 
+/* Raw stick positions, -32768..32767 (up and left negative), for a core that
+ * reads analog sticks itself (DSperate's CPAD patches, TortOS plorpos-l07.3):
+ * the left stick, then the right. A port with sticks fills them in and returns
+ * true; the default (weak) says there are none, and the core sees zeroes. */
+bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry);
+
+/* The device's vibration motor, for a core that rumbles (DSperate's Rumble Pak).
+ * has_rumble says whether there is one at all - a core may add accessories only
+ * where it is - and rumble sets the strength, 0 (off) to 65535. The default
+ * (weak) has neither. A port turns the motor off itself when a game ends. */
+bool diatom_port_has_rumble(void);
+void diatom_port_rumble(uint16_t strength);
+
 /* Levels the user can change with the device's own keys while a game runs -
  * volume and brightness on the Brick, nothing at all on the desktop.
  *

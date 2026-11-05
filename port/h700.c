@@ -2335,6 +2335,16 @@ size_t diatom_port_audio_queued(void)
                   | DIATOM_BIT(DIATOM_BTN_RSLEFT) | DIATOM_BIT(DIATOM_BTN_RSRIGHT))
 static uint32_t g_stick_bits;
 
+/* Raw stick positions for a core that reads them (diatom_port_sticks): present
+ * where the SDL axes were found at start (the RG35XX H). */
+static int16_t g_raw_stick[4];
+bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
+{
+	if (g_axis_lx < 0) return false;
+	*lx = g_raw_stick[0]; *ly = g_raw_stick[1]; *rx = g_raw_stick[2]; *ry = g_raw_stick[3];
+	return true;
+}
+
 static void stick_axis(int value, int neg_btn, int pos_btn)
 {
 	uint32_t neg = DIATOM_BIT(neg_btn), pos = DIATOM_BIT(pos_btn);
@@ -2483,10 +2493,10 @@ void diatom_port_input_poll(void)
 
 			debug_event("joy axis", a, v);
 			if (a < 0) break;
-			if (a == g_axis_lx)      stick_axis(v, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);
-			else if (a == g_axis_ly) stick_axis(v, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);
-			else if (a == g_axis_rx) stick_axis(v, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT);
-			else if (a == g_axis_ry) stick_axis(v, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);
+			if (a == g_axis_lx)      { g_raw_stick[0] = v; stick_axis(v, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT); }
+			else if (a == g_axis_ly) { g_raw_stick[1] = v; stick_axis(v, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN); }
+			else if (a == g_axis_rx) { g_raw_stick[2] = v; stick_axis(v, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); }
+			else if (a == g_axis_ry) { g_raw_stick[3] = v; stick_axis(v, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN); }
 			else break;
 			g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
 			/* A direction pushed with Menu held is a chord, like a button. */

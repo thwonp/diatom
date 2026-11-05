@@ -742,6 +742,23 @@ static const struct { int code; int btn; } padmap[] = {
 static uint32_t g_pad_buttons;
 static int g_stick_x, g_stick_y;
 
+/* The GKD's one stick, scaled from its +-900 to the libretro range, for a core
+ * that reads it (diatom_port_sticks). The Rotate has none to offer. */
+bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
+{
+#if defined(DIATOM_PORT_ROTATE)
+	(void)lx; (void)ly; (void)rx; (void)ry;
+	return false;
+#else
+	int x = g_stick_x * 32767 / 900, y = g_stick_y * 32767 / 900;
+
+	*lx = (int16_t)(x < -32768 ? -32768 : x > 32767 ? 32767 : x);
+	*ly = (int16_t)(y < -32768 ? -32768 : y > 32767 ? 32767 : y);
+	*rx = *ry = 0;
+	return true;
+#endif
+}
+
 /* Found by name, not by event number: the numbering is probe order, and a
  * Bluetooth pad connecting first would shift it. */
 static int evdev_open(const char *want)

@@ -1463,8 +1463,20 @@ bool diatom_port_init(diatom_port_caps *out)
 	return true;
 }
 
+/* The vibration motor: GPIO 227, high is on (the launcher parks it low at
+ * boot). It is not variable in strength here; any strength above 0 is on. */
+#define MOTOR_PATH "/sys/class/gpio/gpio227/value"
+static int g_motor_fd = -1;
+bool diatom_port_has_rumble(void) { return access(MOTOR_PATH, W_OK) == 0; }
+void diatom_port_rumble(uint16_t strength)
+{
+	if (g_motor_fd < 0 && (g_motor_fd = open(MOTOR_PATH, O_WRONLY | O_CLOEXEC)) < 0) return;
+	if (write(g_motor_fd, strength ? "1" : "0", 1) < 0) { /* a motor that will not move is not worth a message */ }
+}
+
 void diatom_port_shutdown(void)
 {
+	if (g_motor_fd >= 0) diatom_port_rumble(0);
 	gov_set(false);
 	gl_down();
 	if (g_flip_running) {
@@ -2137,6 +2149,16 @@ static bool is_brick_pro(void)
                   | DIATOM_BIT(DIATOM_BTN_RSUP) | DIATOM_BIT(DIATOM_BTN_RSDOWN) \
                   | DIATOM_BIT(DIATOM_BTN_RSLEFT) | DIATOM_BIT(DIATOM_BTN_RSRIGHT))
 static uint32_t g_stick_bits;
+/* The sticks' raw positions, for a core that reads them (diatom_port_sticks).
+ * Only the Brick Pro has sticks: they count as present once an axis has moved. */
+static int16_t g_raw_stick[4];
+static bool    g_stick_seen;
+bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
+{
+	if (!g_stick_seen) return false;
+	*lx = g_raw_stick[0]; *ly = g_raw_stick[1]; *rx = g_raw_stick[2]; *ry = g_raw_stick[3];
+	return true;
+}
 
 static void stick_axis(int value, int neg_btn, int pos_btn)
 {
@@ -2305,10 +2327,10 @@ void diatom_port_input_poll(void)
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_R2);
 			} else {
 				switch (ev.jaxis.axis) {
-				case AXIS_LX: stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);  break;
-				case AXIS_LY: stick_axis(ev.jaxis.value, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);   break;
-				case AXIS_RX: stick_axis(ev.jaxis.value, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); break;
-				case AXIS_RY: stick_axis(ev.jaxis.value, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);  break;
+				case AXIS_LX: g_raw_stick[0] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_SLEFT,  DIATOM_BTN_SRIGHT);  break;
+				case AXIS_LY: g_raw_stick[1] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_SUP,    DIATOM_BTN_SDOWN);   break;
+				case AXIS_RX: g_raw_stick[2] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_RSLEFT, DIATOM_BTN_RSRIGHT); break;
+				case AXIS_RY: g_raw_stick[3] = ev.jaxis.value; g_stick_seen = true; stick_axis(ev.jaxis.value, DIATOM_BTN_RSUP,   DIATOM_BTN_RSDOWN);  break;
 				default: break;
 				}
 				g_buttons = (g_buttons & ~STICK_BITS) | g_stick_bits;
