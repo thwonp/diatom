@@ -114,8 +114,11 @@ static void *writer(void *arg)
 			g_rd += AUDIO_CHUNK;
 		}
 		pthread_mutex_unlock(&g_lock);
-		if (have < AUDIO_CHUNK) { usleep(2000); continue; }
-		if (g_muted) memset(chunk, 0, sizeof chunk);
+		/* Nothing to play: play silence. A starved MI_AO lets the amplifier
+		 * pick up the Wi-Fi radio - three pops every couple of seconds, heard
+		 * on the Flip (2026-11-04) - which is why Allium runs an audioserver
+		 * that does exactly this. MI_AO's own queue paces the loop. */
+		if (have < AUDIO_CHUNK || g_muted) memset(chunk, 0, sizeof chunk);
 
 		mi_audio_frame f;
 		memset(&f, 0, sizeof f);
@@ -134,7 +137,10 @@ static bool audio_open(void)
 {
 	mi_audio_attr a;
 
-	if (!mi_load() || mi.sys_init() != 0) return false;
+	static int loaded = -1;
+
+	if (loaded < 0) loaded = mi_load() && mi.sys_init() == 0;
+	if (!loaded) return false;
 	memset(&a, 0, sizeof a);
 	a.eSamplerate = AUDIO_RATE;
 	a.eBitwidth = 0;                /* E_MI_AUDIO_BIT_WIDTH_16 */
@@ -173,6 +179,8 @@ bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 
 void diatom_port_audio_get(char *out, size_t cap) { if (out && cap) out[0] = '\0'; }
 
+/* MI_AO stays open for diatom's whole life, fed silence between games (see
+ * writer). Handing it to Muse is TortOS plorpos-f1p.9's design. */
 size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 {
 	size_t room;
@@ -246,19 +254,24 @@ static void scale(const void *src, int w, int h, size_t pitch, diatom_pixfmt fmt
 	for (int x = 0; x < d.w; x++) g_xmap[x] = (uint32_t)((long)x * w / d.w);
 	for (int y = 0; y < d.h; y++) {
 		int sy = (int)((long)y * h / d.h);
-		uint32_t *out = dst + (size_t)(d.y + y) * dpitch_px + d.x;
+		/* The panel is mounted upside down: logical (x, y) is glass
+		 * (W-1-x, H-1-y). `out` is the logical row's first pixel, and the row
+		 * runs DOWN in memory from there. */
+		uint32_t *out = dst + (size_t)(g_var.yres - 1 - (unsigned)(d.y + y)) * dpitch_px +
+		                (g_var.xres - 1 - (unsigned)d.x);
+		uint32_t *lo = out - (d.w - 1);
 
-		if (sy == last_sy) {            /* the row above, again */
-			memcpy(out, out - dpitch_px, (size_t)d.w * 4);
+		if (sy == last_sy) {            /* the row above, again (below in memory) */
+			memcpy(lo, lo + dpitch_px, (size_t)d.w * 4);
 			continue;
 		}
 		last_sy = sy;
 		if (fmt == DIATOM_PIX_RGB565) {
 			const uint16_t *in = (const uint16_t *)((const uint8_t *)src + (size_t)sy * pitch);
-			for (int x = 0; x < d.w; x++) out[x] = rgb565(in[g_xmap[x]]);
+			for (int x = 0; x < d.w; x++) out[-x] = rgb565(in[g_xmap[x]]);
 		} else {
 			const uint32_t *in = (const uint32_t *)((const uint8_t *)src + (size_t)sy * pitch);
-			for (int x = 0; x < d.w; x++) out[x] = in[g_xmap[x]] | 0xFF000000u;
+			for (int x = 0; x < d.w; x++) out[-x] = in[g_xmap[x]] | 0xFF000000u;
 		}
 	}
 }
@@ -289,13 +302,15 @@ static void draw_overlay(uint32_t *px, size_t pitch_px)
 	y0 = (int)g_var.yres - g_ov_h - (int)g_var.yres / 24;
 	for (int y = 0; y < g_ov_h; y++) {
 		const uint8_t *s = g_ov + (size_t)y * (size_t)g_ov_w * 4;
-		uint32_t *d = px + (size_t)(y0 + y) * pitch_px + x0;
+		/* Turned 180 degrees, as scale() draws (the panel is upside down). */
+		uint32_t *d = px + (size_t)(g_var.yres - 1 - (unsigned)(y0 + y)) * pitch_px +
+		              (g_var.xres - 1 - (unsigned)x0);
 		for (int x = 0; x < g_ov_w; x++, s += 4) {
-			unsigned a = s[3], na = 255 - a, dp = d[x];
+			unsigned a = s[3], na = 255 - a, dp = d[-x];
 			unsigned r = (s[2] * a + ((dp >> 16) & 255) * na) / 255;
 			unsigned g = (s[1] * a + ((dp >> 8) & 255) * na) / 255;
 			unsigned b = (s[0] * a + (dp & 255) * na) / 255;
-			d[x] = 0xFF000000u | r << 16 | g << 8 | b;
+			d[-x] = 0xFF000000u | r << 16 | g << 8 | b;
 		}
 	}
 }
@@ -328,6 +343,9 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 
 void diatom_port_present_stop(diatom_park park)
 {
+	pthread_mutex_lock(&g_lock);
+	g_rd = g_wr = 0;
+	pthread_mutex_unlock(&g_lock);
 	if (!g_fbmem) return;
 	if (park == DIATOM_PARK_BLANK) clear_page(g_page);
 	memset(g_last_dst, 0, sizeof g_last_dst);
@@ -354,7 +372,7 @@ bool diatom_port_grab(uint8_t **rgb, int *w_out, int *h_out)
 	px = page_px(g_page);
 	for (int y = 0; y < h; y++)
 		for (int x = 0; x < w; x++) {
-			uint32_t p = px[(size_t)y * (g_fix.line_length / 4) + x];
+			uint32_t p = px[(size_t)(h - 1 - y) * (g_fix.line_length / 4) + (size_t)(w - 1 - x)];
 			uint8_t *o = out + ((size_t)y * w + x) * 3;
 			o[0] = p >> 16; o[1] = p >> 8; o[2] = p;
 		}
