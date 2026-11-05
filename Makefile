@@ -121,6 +121,18 @@ ifeq ($(PORT),h700)
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
 endif
+ifeq ($(PORT),miyoo)
+  # Miyoo Mini Flip (TortOS plorpos-f1p): 32-bit ARM, glibc 2.28, 128 MB, no
+  # GPU. Built in TortOS's miyoo-toolchain image (Debian buster armhf). No SDL:
+  # fb0 and MI_AO directly (port/miyoo.c). Resident cores and rewind are cut to
+  # what 101 MB shared with the launcher and Muse allows - G2 measures it.
+  CROSS   ?= arm-linux-gnueabihf-
+  CC       = $(CROSS)gcc
+  CFLAGS  += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=2
+  CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(8u * 1024 * 1024)'
+  LDFLAGS += -lm -ldl -lpthread
+endif
 ifeq ($(PORT),brick)
   # TrimUI Brick (TG3040) - ADR-0012. Stock Debian cross-compiler; SDL2 is the
   # device's own library plus version-matched upstream headers, assembled into
