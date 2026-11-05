@@ -56,18 +56,55 @@ typedef struct {
 	unsigned u32SrcPcmLen;
 } mi_audio_frame;
 
+/* MI_GFX, ABI-compatible with the vendor's mi_gfx_datatype.h. */
+typedef struct { int x, y; unsigned w, h; } mi_gfx_rect;
+typedef struct {
+	unsigned long long phy;
+	int fmt;                        /* 6 RGB565, 11 ARGB8888 */
+	unsigned w, h, stride;
+} mi_gfx_surface;
+typedef struct {
+	unsigned char enable; int op, fmt; unsigned start, end;
+} mi_gfx_ckey;
+typedef struct {
+	mi_gfx_rect clip;
+	mi_gfx_ckey src_key, dst_key;
+	int src_bld, dst_bld;           /* 1 ONE, 0 ZERO */
+	int mirror, rotate;             /* rotate 2 = 180 degrees */
+	int blend_flags;
+	unsigned src_const, dst_const;
+} mi_gfx_opt;
+#define MI_GFX_RGB565   6
+#define MI_GFX_ARGB8888 11
+#define MI_GFX_ROT180   2
+
 static struct {
 	int (*sys_init)(void);
+	int (*mma_alloc)(unsigned char *heap, unsigned size, unsigned long long *phy);
+	int (*mma_free)(unsigned long long phy);
+	int (*mmap)(unsigned long long phy, unsigned size, void **virt, unsigned char cache);
+	int (*munmap)(void *virt, unsigned size);
+	int (*flush)(void *virt, unsigned len);
+	int (*gfx_open)(void);
+	int (*gfx_blit)(mi_gfx_surface *s, mi_gfx_rect *sr, mi_gfx_surface *d, mi_gfx_rect *dr,
+	                mi_gfx_opt *o, unsigned short *fence);
+	int (*gfx_wait)(unsigned char all, unsigned short fence);
 	int (*set_attr)(int dev, mi_audio_attr *a);
 	int (*enable)(int dev);
 	int (*disable)(int dev);
 	int (*enable_chn)(int dev, int chn);
 	int (*disable_chn)(int dev, int chn);
 	int (*send)(int dev, int chn, mi_audio_frame *f, int ms);
+	int (*set_volume)(int dev, int db);
 } mi;
 
 static bool mi_load(void)
 {
+	/* The vendor's libraries declare none of what they need (no DT_NEEDED):
+	 * the CamOs* helpers come first, globally, or libmi_ao.so fails to load
+	 * on CamOsGetTimeOfDay (seen on the Flip, 2026-11-04). */
+	dlopen("libcam_os_wrapper.so", RTLD_NOW | RTLD_GLOBAL);
+	dlopen("libmi_common.so", RTLD_NOW | RTLD_GLOBAL);
 	void *sys = dlopen("libmi_sys.so", RTLD_NOW | RTLD_GLOBAL);
 	void *ao = sys ? dlopen("libmi_ao.so", RTLD_NOW | RTLD_GLOBAL) : NULL;
 
@@ -82,6 +119,22 @@ static bool mi_load(void)
 	mi.enable_chn  = (int (*)(int, int))dlsym(ao, "MI_AO_EnableChn");
 	mi.disable_chn = (int (*)(int, int))dlsym(ao, "MI_AO_DisableChn");
 	mi.send        = (int (*)(int, int, mi_audio_frame *, int))dlsym(ao, "MI_AO_SendFrame");
+	mi.set_volume  = (int (*)(int, int))dlsym(ao, "MI_AO_SetVolume");
+	mi.mma_alloc = (int (*)(unsigned char *, unsigned, unsigned long long *))dlsym(sys, "MI_SYS_MMA_Alloc");
+	mi.mma_free  = (int (*)(unsigned long long))dlsym(sys, "MI_SYS_MMA_Free");
+	mi.mmap      = (int (*)(unsigned long long, unsigned, void **, unsigned char))dlsym(sys, "MI_SYS_Mmap");
+	mi.munmap    = (int (*)(void *, unsigned))dlsym(sys, "MI_SYS_Munmap");
+	mi.flush     = (int (*)(void *, unsigned))dlsym(sys, "MI_SYS_FlushInvCache");
+	{
+		void *gfx = dlopen("libmi_gfx.so", RTLD_NOW | RTLD_GLOBAL);
+		if (!gfx) fprintf(stderr, "[warn] video: libmi_gfx.so: %s\n", dlerror());
+		if (gfx) {
+			mi.gfx_open = (int (*)(void))dlsym(gfx, "MI_GFX_Open");
+			mi.gfx_blit = (int (*)(mi_gfx_surface *, mi_gfx_rect *, mi_gfx_surface *,
+			                       mi_gfx_rect *, mi_gfx_opt *, unsigned short *))dlsym(gfx, "MI_GFX_BitBlit");
+			mi.gfx_wait = (int (*)(unsigned char, unsigned short))dlsym(gfx, "MI_GFX_WaitAllDone");
+		}
+	}
 	return mi.sys_init && mi.set_attr && mi.enable && mi.disable &&
 	       mi.enable_chn && mi.disable_chn && mi.send;
 }
@@ -133,14 +186,34 @@ static void *writer(void *arg)
 	return NULL;
 }
 
+static bool mi_ready(void)
+{
+	static int loaded = -1;
+
+	if (loaded < 0) loaded = mi_load() && mi.sys_init() == 0;
+	return loaded;
+}
+
+/* Volume: MI_AO's own gain, in dB, set here because this process owns
+ * MI_AO. 0 dB is the hardware's full level - far too loud on the Flip's
+ * speaker (heard 2026-11-04) - so the ladder runs -40 dB..0 dB with the
+ * bottom rung a mute, and starts quiet until the launcher says otherwise. */
+static int g_vol_idx = 8, g_vol_cnt = 21;
+
+static void volume_apply(void)
+{
+	int db;
+
+	if (!g_audio_on || !mi.set_volume) return;
+	db = g_vol_idx <= 0 ? -60 : -40 + 40 * g_vol_idx / (g_vol_cnt - 1);
+	mi.set_volume(0, db);
+}
+
 static bool audio_open(void)
 {
 	mi_audio_attr a;
 
-	static int loaded = -1;
-
-	if (loaded < 0) loaded = mi_load() && mi.sys_init() == 0;
-	if (!loaded) return false;
+	if (!mi_ready()) return false;
 	memset(&a, 0, sizeof a);
 	a.eSamplerate = AUDIO_RATE;
 	a.eBitwidth = 0;                /* E_MI_AUDIO_BIT_WIDTH_16 */
@@ -156,6 +229,7 @@ static bool audio_open(void)
 	g_stop = false;
 	if (pthread_create(&g_writer, NULL, writer, NULL) != 0) return false;
 	g_audio_on = true;
+	volume_apply();
 	diatom_port_log(DIATOM_LOG_INFO, "audio: MI_AO 48000 Hz stereo, 512-frame chunks");
 	return true;
 }
@@ -216,7 +290,7 @@ static uint8_t *g_fbmem;
 static struct fb_var_screeninfo g_var;
 static struct fb_fix_screeninfo g_fix;
 static int      g_page;             /* the page on glass */
-static diatom_rect g_last_dst[2];
+static diatom_rect g_last_dst[3];
 static uint32_t g_xmap[2048];
 
 static uint32_t *page_px(int page)
@@ -315,12 +389,149 @@ static void draw_overlay(uint32_t *px, size_t pitch_px)
 	}
 }
 
-static diatom_rect g_ov_drawn[2];
+static diatom_rect g_ov_drawn[3];
+
+/* The flip thread: FBIOPAN_DISPLAY waits for vblank here (12.7 ms a frame
+ * measured, TortOS plorpos-f1p.14), and waiting in present halved every
+ * game to 30 fps. So present hands its page over and returns; this thread
+ * pans to it. Three pages: one on glass, one waiting, one being drawn - a
+ * newer frame replaces a waiting one that has not flipped yet. */
+static pthread_t       g_flip_thr;
+static pthread_mutex_t g_flip_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_flip_cond = PTHREAD_COND_INITIALIZER;
+static int             g_pending = -1;  /* page waiting for the pan, or -1 */
+static int             g_inflight = -1; /* page being panned to, or -1 */
+static bool            g_flipping, g_flip_stop;
+static int             g_npages;
+
+static void *flipper(void *arg)
+{
+	uint64_t t0 = diatom_port_now_us();
+	unsigned pans = 0;
+	(void)arg;
+
+	pthread_mutex_lock(&g_flip_lock);
+	while (!g_flip_stop) {
+		int page;
+
+		if (g_pending < 0) { pthread_cond_wait(&g_flip_cond, &g_flip_lock); continue; }
+		page = g_pending;
+		g_pending = -1;
+		g_inflight = page;
+		g_flipping = true;
+		pthread_mutex_unlock(&g_flip_lock);
+		pan_to(page);
+		pthread_mutex_lock(&g_flip_lock);
+		g_flipping = false;
+		g_inflight = -1;
+		pthread_cond_broadcast(&g_flip_cond);
+		if (++pans == 600) {
+			uint64_t now = diatom_port_now_us();
+			fprintf(stderr, "flip: %.2f pans/s\n", 600 * 1e6 / (double)(now - t0));
+			t0 = now; pans = 0;
+		}
+	}
+	pthread_mutex_unlock(&g_flip_lock);
+	return NULL;
+}
+
+/* A page that is neither on glass nor waiting to go there. */
+static int free_page(void)
+{
+	int p;
+
+	pthread_mutex_lock(&g_flip_lock);
+	for (p = 0; p < g_npages; p++)
+		if (p != g_page && p != g_pending && p != g_inflight) break;
+	pthread_mutex_unlock(&g_flip_lock);
+	return p < g_npages ? p : (g_page == 0 ? 1 : 0);
+}
+
+static void flip_to(int page)
+{
+	pthread_mutex_lock(&g_flip_lock);
+	g_pending = page;
+	pthread_cond_signal(&g_flip_cond);
+	pthread_mutex_unlock(&g_flip_lock);
+}
+
+/* Until nothing is waiting or panning: the display is about to change hands. */
+static void flip_drain(void)
+{
+	pthread_mutex_lock(&g_flip_lock);
+	while (g_pending >= 0 || g_flipping) pthread_cond_wait(&g_flip_cond, &g_flip_lock);
+	pthread_mutex_unlock(&g_flip_lock);
+}
+
+/* The hardware path: the core's frame copied into MMA memory (physically
+ * contiguous, which the 2D engine needs), then one MI_GFX blit scales it,
+ * converts it to xRGB and turns it 180 degrees into fb0's back page. G2
+ * measured the CPU path at 29.6 ms a frame (TortOS plorpos-f1p.6). */
+static bool g_gfx;
+static unsigned long long g_src_phy;
+static void *g_src_virt;
+static unsigned g_src_size;
+
+static bool gfx_init(void)
+{
+	int rc = -1;
+
+	if (!mi_ready() || !mi.gfx_open || !mi.gfx_blit || !mi.gfx_wait || !mi.mma_alloc ||
+	    !mi.mmap || !mi.flush || (rc = mi.gfx_open()) != 0) {
+		fprintf(stderr, "[warn] video: no MI_GFX (ready %d, open %p, rc %#x); scaling on the CPU\n",
+		        mi_ready(), (void *)mi.gfx_open, (unsigned)rc);
+		return false;
+	}
+	diatom_port_log(DIATOM_LOG_INFO, "video: MI_GFX blit (scale + 180-degree turn)");
+	return true;
+}
+
+static bool gfx_src(unsigned size)
+{
+	if (size <= g_src_size) return true;
+	if (g_src_virt) { mi.munmap(g_src_virt, g_src_size); mi.mma_free(g_src_phy); g_src_virt = NULL; g_src_size = 0; }
+	size = (size + 65535) & ~65535u;
+	if (mi.mma_alloc(NULL, size, &g_src_phy) != 0) return false;
+	if (mi.mmap(g_src_phy, size, &g_src_virt, 1) != 0) { mi.mma_free(g_src_phy); return false; }
+	g_src_size = size;
+	return true;
+}
+
+static bool gfx_present(const void *src, int w, int h, size_t pitch, diatom_pixfmt fmt,
+                        diatom_rect d, int page)
+{
+	unsigned bpp = fmt == DIATOM_PIX_RGB565 ? 2 : 4, row = (unsigned)w * bpp;
+	mi_gfx_surface ss, ds;
+	mi_gfx_rect sr, dr;
+	mi_gfx_opt o;
+	unsigned short fence = 0;
+
+	if (!gfx_src(row * (unsigned)h)) return false;
+	for (int y = 0; y < h; y++)
+		memcpy((uint8_t *)g_src_virt + (size_t)y * row, (const uint8_t *)src + (size_t)y * pitch, row);
+	mi.flush(g_src_virt, row * (unsigned)h);
+	ss = (mi_gfx_surface){ g_src_phy, bpp == 2 ? MI_GFX_RGB565 : MI_GFX_ARGB8888,
+	                       (unsigned)w, (unsigned)h, row };
+	ds = (mi_gfx_surface){ g_fix.smem_start + (unsigned long long)page * g_var.yres * g_fix.line_length,
+	                       MI_GFX_ARGB8888, g_var.xres, g_var.yres, g_fix.line_length };
+	sr = (mi_gfx_rect){ 0, 0, (unsigned)w, (unsigned)h };
+	/* Where the logical rect lands once turned. */
+	dr = (mi_gfx_rect){ (int)g_var.xres - d.x - d.w, (int)g_var.yres - d.y - d.h,
+	                    (unsigned)d.w, (unsigned)d.h };
+	memset(&o, 0, sizeof o);
+	o.clip = (mi_gfx_rect){ 0, 0, g_var.xres, g_var.yres };
+	o.src_bld = 1;                  /* ONE */
+	o.dst_bld = 0;                  /* ZERO: a copy, no blending */
+	o.rotate = MI_GFX_ROT180;
+	if (mi.gfx_blit(&ss, &sr, &ds, &dr, &o, &fence) != 0) return false;
+	mi.gfx_wait(0, fence);
+	return true;
+}
 
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
                          diatom_pixfmt fmt, diatom_rect dst, diatom_filter filter)
 {
-	int back = g_page == 0 ? 1 : 0;
+	int back = free_page();
 	uint32_t *px;
 	size_t pitch_px = g_fix.line_length / 4;
 	(void)filter;
@@ -333,16 +544,35 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		g_last_dst[back] = dst;
 		g_ov_drawn[back].w = 0;
 	}
-	scale(src, w, h, pitch, fmt, dst, px, pitch_px);
+	uint64_t t0 = diatom_port_now_us(), t1, t2;
+
+	if (!g_gfx || !gfx_present(src, w, h, pitch, fmt, dst, back))
+		scale(src, w, h, pitch, fmt, dst, px, pitch_px);
+	t1 = diatom_port_now_us();
 	if (g_ov && diatom_port_now_us() < g_ov_until) {
 		draw_overlay(px, pitch_px);
 		g_ov_drawn[back].w = 1;
 	}
-	pan_to(back);
+	flip_to(back);
+	t2 = diatom_port_now_us();
+	/* Where present's time goes (TortOS plorpos-f1p.14): the blit, and the
+	 * pan, which may wait for vblank. */
+	{
+		static uint64_t blit, pan;
+		static unsigned n;
+
+		blit += t1 - t0; pan += t2 - t1;
+		if (++n == 300) {
+			fprintf(stderr, "present: blit avg %.2f ms, hand-over avg %.2f ms (%s)\n",
+			        blit / 300 / 1000.0, pan / 300 / 1000.0, g_gfx ? "MI_GFX" : "CPU");
+			blit = pan = 0; n = 0;
+		}
+	}
 }
 
 void diatom_port_present_stop(diatom_park park)
 {
+	flip_drain();
 	pthread_mutex_lock(&g_lock);
 	g_rd = g_wr = 0;
 	pthread_mutex_unlock(&g_lock);
@@ -398,9 +628,13 @@ bool diatom_port_init(diatom_port_caps *out)
 	}
 	g_fbmem = mmap(NULL, g_fix.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, g_fb, 0);
 	if (g_fbmem == MAP_FAILED) { g_fbmem = NULL; return false; }
+	g_npages = (int)(g_var.yres_virtual / g_var.yres);
+	if (g_npages > 3) g_npages = 3;
 	g_page = (int)(g_var.yoffset / g_var.yres);
-	if (g_page > 1) g_page = 0;
+	if (g_page >= g_npages) g_page = 0;
+	if (pthread_create(&g_flip_thr, NULL, flipper, NULL) != 0) return false;
 
+	g_gfx = gfx_init();
 	g_pad = open("/dev/input/event0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 	if (g_pad < 0) fprintf(stderr, "[warn] input: event0: %s\n", strerror(errno));
 
@@ -417,6 +651,12 @@ bool diatom_port_init(diatom_port_caps *out)
 
 void diatom_port_shutdown(void)
 {
+	flip_drain();
+	pthread_mutex_lock(&g_flip_lock);
+	g_flip_stop = true;
+	pthread_cond_signal(&g_flip_cond);
+	pthread_mutex_unlock(&g_flip_lock);
+	pthread_join(g_flip_thr, NULL);
 	audio_close();
 	if (g_pad >= 0) { close(g_pad); g_pad = -1; }
 	if (g_fbmem) { munmap(g_fbmem, g_fix.smem_len); g_fbmem = NULL; }
@@ -437,17 +677,42 @@ static const struct { int code; int btn; } keymap[] = {
 };
 static uint32_t g_buttons;
 
+/* The keys as the kernel holds them now, not as events said: while the
+ * launcher's in-game menu is up it grabs the pad, so a release made then
+ * never reaches this process - and a Menu still "held" paused the game again
+ * the moment it resumed, so Quit could never leave it (2026-11-04). The
+ * events are drained only so the queue does not fill. */
 void diatom_port_input_poll(void)
 {
 	struct input_event ev;
+	unsigned char bits[KEY_MAX / 8 + 1];
+	uint32_t s = 0;
 
-	while (g_pad >= 0 && read(g_pad, &ev, sizeof ev) == (ssize_t)sizeof ev) {
-		if (ev.type != EV_KEY || ev.value == 2) continue;
-		for (size_t i = 0; i < sizeof keymap / sizeof keymap[0]; i++)
-			if (keymap[i].code == ev.code) {
-				if (ev.value) g_buttons |= DIATOM_BIT(keymap[i].btn);
-				else g_buttons &= ~DIATOM_BIT(keymap[i].btn);
+	while (g_pad >= 0 && read(g_pad, &ev, sizeof ev) == (ssize_t)sizeof ev) { }
+	memset(bits, 0, sizeof bits);
+	if (g_pad < 0 || ioctl(g_pad, EVIOCGKEY(sizeof bits), bits) < 0) { g_buttons = 0; return; }
+	for (size_t i = 0; i < sizeof keymap / sizeof keymap[0]; i++)
+		if (bits[keymap[i].code / 8] >> (keymap[i].code % 8) & 1) s |= DIATOM_BIT(keymap[i].btn);
+	g_buttons = s;
+	/* The volume keys, here in a game: this process owns MI_AO, and the
+	 * launcher does not see them while a game runs (2026-11-04). */
+	{
+		static bool up_was, dn_was;
+		bool up = bits[KEY_VOLUMEUP / 8] >> (KEY_VOLUMEUP % 8) & 1;
+		bool dn = bits[KEY_VOLUMEDOWN / 8] >> (KEY_VOLUMEDOWN % 8) & 1;
+		int step = (up && !up_was) - (dn && !dn_was);
+
+		up_was = up; dn_was = dn;
+		if (step) {
+			int to = g_vol_idx + step;
+			if (to < 0) to = 0;
+			if (to > g_vol_cnt - 1) to = g_vol_cnt - 1;
+			if (to != g_vol_idx) {
+				g_vol_idx = to;
+				volume_apply();
+				fprintf(stderr, "audio: volume %d/%d\n", g_vol_idx, g_vol_cnt - 1);
 			}
+		}
 	}
 }
 
@@ -468,16 +733,21 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
 	fprintf(stderr, "[%s] %s\n", tag[lvl], msg);
 }
 
-/* Levels and the mute handover arrive with plorpos-f1p.8/.9. */
+/* Volume only; brightness is the launcher's (pwm0). */
 bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 {
-	(void)kind; (void)index; (void)count;
-	return false;
+	if (kind != DIATOM_LEVEL_VOLUME) return false;
+	*index = g_vol_idx;
+	*count = g_vol_cnt;
+	return true;
 }
 bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 {
-	(void)kind; (void)index; (void)count;
-	return false;
+	if (kind != DIATOM_LEVEL_VOLUME || count < 2 || index < 0 || index >= count) return false;
+	g_vol_idx = index;
+	g_vol_cnt = count;
+	volume_apply();
+	return true;
 }
 void diatom_port_level_invalidate(void) { }
 

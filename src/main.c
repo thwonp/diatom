@@ -240,6 +240,7 @@ static void on_terminate(int sig)
 	}
 }
 
+#if !defined(DIATOM_NO_PREMAP)
 /* Socket mode's premap, on its own thread. A signal may land on this thread
  * too, which the wake pipe above already allows for. */
 static void *premap_cores(void *dir)
@@ -249,6 +250,7 @@ static void *premap_cores(void *dir)
 	fprintf(stderr, "diatom: premapped %d core(s) from %s\n", n, (const char *)dir);
 	return NULL;
 }
+#endif
 
 /* Called once, before anything can be signaled.
  *
@@ -2831,6 +2833,7 @@ int main(int argc, char **argv)
 		 * went out once every core was mapped. Measured on the GKD Pixel 2
 		 * 2026-10-02: the launcher's first frame waited about 280 ms on it,
 		 * hidden until then behind a 350 ms input grace of its own. */
+#if !defined(DIATOM_NO_PREMAP)
 		if (cores_dir) {
 			pthread_t premap;
 
@@ -2839,6 +2842,12 @@ int main(int argc, char **argv)
 			else
 				premap_cores((void *)cores_dir);
 		}
+#else
+		(void)cores_dir;
+#endif
+		/* DIATOM_NO_PREMAP (the Miyoo Flip, 101 MB): cores map on their first
+		 * RUN instead - the first launch of each pays its dlopen, and memory
+		 * holds only the cores actually played (TortOS plorpos-f1p.14). */
 		terminate_init();
 
 		while (!g_quit_requested && !g_terminate) {

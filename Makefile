@@ -129,7 +129,7 @@ ifeq ($(PORT),miyoo)
   CROSS   ?= arm-linux-gnueabihf-
   CC       = $(CROSS)gcc
   CFLAGS  += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
-  CFLAGS  += -DDIATOM_MAX_RESIDENT=2
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=16 -DDIATOM_NO_PREMAP
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(8u * 1024 * 1024)'
   LDFLAGS += -lm -ldl -lpthread
 endif
