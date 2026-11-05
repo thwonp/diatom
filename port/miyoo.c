@@ -442,8 +442,10 @@ static int free_page(void)
 
 	pthread_mutex_lock(&g_flip_lock);
 	for (p = 0; p < g_npages; p++)
-		if (p != g_page && p != g_pending && p != g_inflight) break;
+		if (p != g_page && p != g_inflight) break;
 	pthread_mutex_unlock(&g_flip_lock);
+	/* With two pages the waiting one is drawn over: it is not on glass yet,
+	 * and the newer frame replaces it anyway (flip_to). */
 	return p < g_npages ? p : (g_page == 0 ? 1 : 0);
 }
 
@@ -628,8 +630,9 @@ bool diatom_port_init(diatom_port_caps *out)
 	}
 	g_fbmem = mmap(NULL, g_fix.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, g_fb, 0);
 	if (g_fbmem == MAP_FAILED) { g_fbmem = NULL; return false; }
-	g_npages = (int)(g_var.yres_virtual / g_var.yres);
-	if (g_npages > 3) g_npages = 3;
+	/* Two pages, though fb0 reports room for three: panned to the third, the
+	 * Flip's panel showed black while fb0 said it was on glass (2026-11-04). */
+	g_npages = 2;
 	g_page = (int)(g_var.yoffset / g_var.yres);
 	if (g_page >= g_npages) g_page = 0;
 	if (pthread_create(&g_flip_thr, NULL, flipper, NULL) != 0) return false;
