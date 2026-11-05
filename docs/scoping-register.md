@@ -939,6 +939,12 @@ Two levers the spike discovered:
       `caps.mic`. The Rotate captures on a thread (PipeWire's ALSA plugin), so
       the frame never waits on an open; stub core: 0 dropped, 59.73 fps.
 
+- [x] **[OPEN]** **Should the vsync lock be the default beyond PokeDaisy?** →
+      **[ADR-0048](decisions/0048-the-vsync-lock-is-not-on-by-default-beyond-pokedaisy.md)**
+      *(Accepted)*. No: opt-in. It removed 3-13 repeats per 20 s on four Brick
+      cores and the owner could not tell; the H700 needs none; the GKD panel is
+      59.111 Hz (measured), so a lock there slows the game 1 %.
+
 ---
 
 ## 8. Input

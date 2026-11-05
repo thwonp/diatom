@@ -96,3 +96,4 @@ never started.
 | [0045](0045-turbo-assign-is-reported-the-launcher-maps-it.md) | Turbo Assign: Diatom reports the request, the launcher maps it | Accepted |
 | [0046](0046-picodrive-is-the-sega-core.md) | PicoDrive is the Sega core, and 32X is in | Accepted |
 | [0047](0047-the-microphone-is-the-ports.md) | The microphone is the port's, and the core opens it | Accepted |
+| [0048](0048-the-vsync-lock-is-not-on-by-default-beyond-pokedaisy.md) | The vsync lock is not on by default for cores other than PokeDaisy | Accepted |
