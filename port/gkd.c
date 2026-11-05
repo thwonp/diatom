@@ -976,6 +976,7 @@ static float    g_px, g_py, g_py0;
 static int      g_ptr_edge;             /* +1 top band, -1 bottom, 0 none */
 static bool     g_ptr_on, g_ptr_down, g_ptr_pending, g_ptr_tap, g_ptr_release;
 static uint64_t g_ptr_t0_us;
+static bool     g_touch_core;           /* PokeDaisy: the finger over the whole picture (diatom_port_touch_core) */
 
 static void pointer_event(const SDL_Event *e)
 {
@@ -1027,6 +1028,16 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 	const diatom_rect b = g_split_bot;
 	float fx, fy;
 
+	if (!g_split && g_touch_core) {     /* the whole picture is the pointer's -1..1 both ways */
+		const diatom_rect d = g_last_dst;
+		if (!g_ptr_down || d.w <= 0 || d.h <= 0) return false;
+		fx = (g_px - d.x) / d.w;
+		fy = (g_py - d.y) / d.h;
+		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return false;
+		*x = (int16_t)((fx * 2 - 1) * 0x7fff);
+		*y = (int16_t)((fy * 2 - 1) * 0x7fff);
+		return true;
+	}
 	if (!g_split || !g_ptr_down || b.w <= 0 || b.h <= 0) return false;
 	/* Bottom Overlay: the top screen drawn over the bottom one's corner is
 	 * not the bottom screen (plorpos-6ei.5). */
@@ -1046,9 +1057,14 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 void diatom_port_stylus(bool down) { (void)down; }
 static void draw_cursor(void) {}
 
+/* PokeDaisy reads the finger over its whole picture (its companion, HUD and quick menu: TortOS plorpos-oe0.41): as a DS's
+ * bottom screen, the first finger is the pointer, the launcher's edge swipes are held back the same way, and there is no
+ * hold-for-Menu. */
+void diatom_port_touch_core(bool on) { g_touch_core = on; }
+
 static void touch_event(const SDL_Event *e)
 {
-	if (g_split) { pointer_event(e); return; }
+	if (g_split || g_touch_core) { pointer_event(e); return; }
 	if (e->type == SDL_FINGERDOWN) {
 		if (g_fingers++ == 0) {
 			g_tx0 = g_tx = e->tfinger.x;
@@ -1068,7 +1084,7 @@ static void touch_hold(void)
 {
 	float dx = g_tx - g_tx0, dy = g_ty - g_ty0;
 
-	if (g_split) { pointer_tick(); return; }
+	if (g_split || g_touch_core) { pointer_tick(); return; }
 	if (g_fingers != 1 || g_touch_spent) return;
 	if (dx * dx + dy * dy > TOUCH_STILL * TOUCH_STILL) { g_touch_spent = true; return; }
 	if (diatom_port_now_us() - g_t0_us < TOUCH_HOLD_MS * 1000ull) return;

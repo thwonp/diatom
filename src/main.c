@@ -877,6 +877,9 @@ static bool g_pause_requested;
 __attribute__((weak)) bool diatom_port_vsync_lock(bool want) { (void)want; return false; }
 /* Optional port hook: whether this core runs locked unless the player opts out (set per session, before the loop). */
 __attribute__((weak)) void diatom_port_vsync_default(bool on) { (void)on; }
+/* The core reads a touch panel's finger over its whole picture (PokeDaisy's companion, HUD and quick menu: a port with a
+ * panel passes it as the libretro pointer, TortOS plorpos-oe0.41). */
+__attribute__((weak)) void diatom_port_touch_core(bool on) { (void)on; }
 /* Optional port hook: the panel's measured refresh in Hz, 0 when unknown. */
 __attribute__((weak)) double diatom_port_panel_hz(void) { return 0.0; }
 /* Optional port hook: block until the frame just presented has latched at a vsync (only after a lock said yes). */
@@ -1842,6 +1845,7 @@ static int run_session_inner(const diatom_session *sn)
 	g_geom_follow = si.library_name && !strcmp(si.library_name, "PokeDaisy");
 	/* The vsync lock is on by default for PokeDaisy (its frames beat against the panel worst; plorpos-rk0.9). */
 	diatom_port_vsync_default(g_geom_follow);
+	diatom_port_touch_core(g_geom_follow);
 
 	/* Most cores declare their options during core open, but not all: some
 	 * wait until content is loaded, because what they offer depends on the
