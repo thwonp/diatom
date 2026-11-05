@@ -1131,40 +1131,9 @@ static void gov_recover(void)
 	unlink(GOV_KEEP);
 	if (g[0] && strcmp(g, "performance") && (f = fopen(GOV_PATH, "w"))) { fputs(g, f); fclose(f); }
 }
-#define MINF_PATH "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq"
-/* Experiment (plorpos-rk0.14): TortOS/diatom.lockfloor holding a frequency in kHz raises only the CPU's minimum frequency
- * while locked, instead of pinning the governor to `performance`. */
-static char g_minf_saved[16];
-static bool minf_set(bool on)
-{
-	FILE *f = fopen("/mnt/SDCARD/TortOS/diatom.lockfloor", "r");
-	char v[16] = "";
-
-	if (!f) {   /* marker gone while a floor is held: give it back */
-		if (!on && g_minf_saved[0] && (f = fopen(MINF_PATH, "w"))) { fputs(g_minf_saved, f); fclose(f); g_minf_saved[0] = '\0'; }
-		return false;
-	}
-	if (!fgets(v, sizeof v, f)) v[0] = '\0';
-	fclose(f);
-	v[strcspn(v, "\n")] = '\0';
-	if (on && !g_minf_saved[0]) {
-		f = fopen(MINF_PATH, "r");
-		if (!f) return true;
-		if (!fgets(g_minf_saved, sizeof g_minf_saved, f)) g_minf_saved[0] = '\0';
-		fclose(f);
-		g_minf_saved[strcspn(g_minf_saved, "\n")] = '\0';
-		if ((f = fopen(MINF_PATH, "w"))) { fputs(v[0] ? v : "1200000", f); fclose(f); }
-	} else if (!on && g_minf_saved[0]) {
-		if ((f = fopen(MINF_PATH, "w"))) { fputs(g_minf_saved, f); fclose(f); }
-		g_minf_saved[0] = '\0';
-	}
-	return true;
-}
 static void gov_set(bool perf)
 {
 	FILE *f;
-
-	if (minf_set(perf)) return;
 
 	if (perf && !g_gov_saved[0]) {
 		f = fopen(GOV_PATH, "r");
