@@ -412,6 +412,9 @@ bool diatom_port_take_switcher(void);
  * that step back when the hold turns out to be a skip. A game that is not quiet
  * keeps the repeating volume key, and a port without the hold returns 0. */
 #define DIATOM_SKIP_HOLD_US 500000ull
+/* Both volume keys together are the launcher's Muse pause/play, quiet or not
+ * (plorpos-7wu.5): DIATOM_SKIP_TOGGLE, with the first key's step taken back. */
+#define DIATOM_SKIP_TOGGLE 2
 int  diatom_port_take_skip(void);
 bool diatom_audio_quiet_get(void);
 

@@ -2082,6 +2082,14 @@ static bool level_button(int button, bool down)
 	for (k = 0; k < LEVEL_BUTTONS; k++) {
 		if (level_buttons[k].idx != button) continue;
 		if (down) g_level_bright[k] = (g_buttons & DIATOM_BIT(DIATOM_BTN_MENU)) != 0;
+		if (down && !g_level_bright[k] && g_level_next_us[1 - k] && !g_level_bright[1 - k]) {
+			/* The other key is held: both are Muse's pause/play. */
+			if (g_level_moved[1 - k]) gain_nudge(-level_buttons[1 - k].dir);
+			g_level_next_us[0] = g_level_next_us[1] = 0;
+			g_level_skip[0] = g_level_skip[1] = false;
+			g_skip_pending = DIATOM_SKIP_TOGGLE;
+			return true;
+		}
 		g_level_skip[k]    = down && !g_level_bright[k] && diatom_audio_quiet_get();
 		g_level_next_us[k] = down ? diatom_port_now_us() +
 		                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US) : 0;

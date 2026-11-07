@@ -960,6 +960,14 @@ static void keys_read(void)
 			else if (ev[i].code == KEY_VOLUMEDOWN) k = 1;
 			else continue;
 			if (!ev[i].value) { g_level_next_us[k] = 0; continue; }
+			if (!g_home && g_level_next_us[1 - k] && !g_level_bright[1 - k]) {
+				/* The other key is held: both are Muse's pause/play. */
+				if (g_level_moved[1 - k]) gain_nudge(k == 0 ? +1 : -1);
+				g_level_next_us[0] = g_level_next_us[1] = 0;
+				g_level_skip[0] = g_level_skip[1] = false;
+				g_skip_pending = DIATOM_SKIP_TOGGLE;
+				continue;
+			}
 			g_level_bright[k]  = g_home;
 			g_level_skip[k]    = !g_home && diatom_audio_quiet_get();
 			g_level_next_us[k] = diatom_port_now_us() +

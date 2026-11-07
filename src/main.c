@@ -1342,7 +1342,8 @@ static void levels_tick(void)
 	if (!diatom_proto_connected()) return;
 	/* A volume key held while Muse plays: the launcher's next/previous track. */
 	if ((k = diatom_port_take_skip()) != 0)
-		diatom_proto_send("SKIP\tdir=%s", k > 0 ? "next" : "prev");
+		diatom_proto_send("SKIP\tdir=%s", k == DIATOM_SKIP_TOGGLE ? "toggle" :
+		                  k > 0 ? "next" : "prev");
 	for (k = 0; k < DIATOM_LEVEL_COUNT; k++) {
 		if (!diatom_port_level_get((diatom_level_kind)k, &idx, &cnt)) continue;
 		if (idx == g_last_index[k] && cnt == g_last_count[k]) continue;
