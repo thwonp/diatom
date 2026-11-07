@@ -79,7 +79,7 @@ static diatom_rect centered(int w, int h, int surf_w, int surf_h)
 	return r;
 }
 
-#define OVER_MAX_PCT 8   /* integer-over: the most it may crop on either axis */
+#define OVER_MAX_PCT 12  /* integer-over: the most it may crop on either axis */
 
 diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
                               double aspect, int surf_w, int surf_h)
@@ -107,7 +107,9 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 		/* The smallest whole factor that covers the panel on one axis, kept
 		 * only when it crops at most OVER_MAX_PCT of either axis: 256x224 on
 		 * a 720x720 panel is 3x, 768x672, 24 columns off each side, where
-		 * integer is 2x and 70% of the width. A bigger crop is not "a few
+		 * integer is 2x and 70% of the width; on the GKD's 1600x1440 it is 7x
+		 * (10.7% of the columns, 8.2% of the rows) over integer's 6x. A bigger
+		 * crop is not "a few
 		 * garbage pixels" - it falls back to integer (the Brick's 4x SNES
 		 * would lose 14% of the rows). Uniform pixels either way. */
 		fx = surf_w / src_w;

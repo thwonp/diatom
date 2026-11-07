@@ -18,8 +18,10 @@ int main(void)
 		CHECK(o.w == 768 && o.h == 672, "integer-over SNES on the Brick: 4x would crop 14% rows, stays 3x");
 		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 240, 160, 0, 720, 720);
 		CHECK(o.w == 720 && o.h == 480 && o.x == 0, "integer-over GBA on 720x720: exact 3x, nothing cropped");
-		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 160, 144, 0, 720, 720);
-		CHECK(o.w == 640 && o.h == 576, "integer-over GB on 720x720: 5x would crop 11%, stays 4x");
+		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 256, 224, 0, 1600, 1440);
+		CHECK(o.w == 1792 && o.h == 1568 && o.x == -96 && o.y == -64, "integer-over SNES on the GKD 1600x1440: 7x (10.7%/8.2% crop) over integer's 6x");
+		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 256, 240, 0, 1600, 1440);
+		CHECK(o.w == 1536 && o.h == 1440, "integer-over NES on the GKD: 7x would crop 14% of the rows, stays 6x");
 		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 512, 448, 0, 720, 720);
 		CHECK(o.w == 512 && o.h == 448, "integer-over hires on 720x720: 1x, 2x crops far too much");
 	}
