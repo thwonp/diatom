@@ -238,6 +238,9 @@ void diatom_port_split(bool on, diatom_rect top, diatom_rect bot);
  * bottom screen, in the whole frame's -0x7fff..0x7fff (top half is screen 1,
  * bottom half screen 2). True while pressed. A port with no panel: false. */
 bool diatom_port_pointer(int16_t *x, int16_t *y);
+/* The core reads the finger over its whole picture (PokeDaisy, TortOS plorpos-oe0.41): a port with a panel passes its
+ * first finger as the pointer (-1..1 over the game's picture both ways), without its own touch gestures. */
+void diatom_port_touch_core(bool on);
 
 /* The stylus hotkey (HK_STYLUS), every frame: held or not. A port with no
  * panel but a stick (the GKD, TortOS plorpos-46o.4) moves a cursor over the

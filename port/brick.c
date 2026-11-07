@@ -1094,6 +1094,110 @@ void diatom_port_present_stop(diatom_park park_mode)
 }
 
 
+static volatile double g_panel_us;   /* 0 until measured */
+double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
+static uint64_t g_flast;
+/* VSYNC LOCK (on by default for PokeDaisy; opt-in elsewhere): present waits until its page has latched, so the frame loop runs in step with the panel instead
+ * of beating against it (a free-running 59.73 Hz clock against a 59.57 Hz panel slips a vsync every ~6 s, and the frames
+ * near each slip land on either side of it: a repeat and a skip, in bursts). On with DIATOM_VSYNC=1 or the marker file. */
+static bool g_vlock;
+static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600, g_lk_off;
+static uint64_t g_lk_last;
+/* While the lock waits for the panel the CPU idles a couple of ms per frame, which lets the `interactive` governor ramp
+ * down and the next frame run 15-25% slower (measured: frames of 13-20 ms against 11). Held at `performance` while
+ * locked, put back after. */
+#define GOV_PATH "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
+static char g_gov_saved[32];
+/* The governor to give back is also kept in a file (tmpfs), so a presenter that dies while locked (killed, crashed)
+ * cannot strand the CPU on `performance`: the next one to start puts it back. */
+#define GOV_KEEP "/tmp/diatom.governor"
+static void gov_recover(void)
+{
+	char g[32] = "";
+	FILE *f = fopen(GOV_KEEP, "r");
+
+	if (!f) return;
+	if (fgets(g, sizeof g, f)) g[strcspn(g, "\n")] = '\0';
+	fclose(f);
+	unlink(GOV_KEEP);
+	if (g[0] && strcmp(g, "performance") && (f = fopen(GOV_PATH, "w"))) { fputs(g, f); fclose(f); }
+}
+static void gov_set(bool perf)
+{
+	FILE *f;
+
+	if (perf && !g_gov_saved[0]) {
+		f = fopen(GOV_PATH, "r");
+		if (!f) return;
+		if (!fgets(g_gov_saved, sizeof g_gov_saved, f)) g_gov_saved[0] = '\0';
+		fclose(f);
+		g_gov_saved[strcspn(g_gov_saved, "\n")] = '\0';
+		if (!g_gov_saved[0] || !strcmp(g_gov_saved, "performance")) { g_gov_saved[0] = '\0'; return; }
+		if ((f = fopen(GOV_KEEP, "w"))) { fputs(g_gov_saved, f); fclose(f); }
+		f = fopen(GOV_PATH, "w");
+		if (f) { fputs("performance", f); fclose(f); }
+	} else if (!perf && g_gov_saved[0]) {
+		f = fopen(GOV_PATH, "w");
+		if (f) { fputs(g_gov_saved, f); fclose(f); }
+		g_gov_saved[0] = '\0';
+		unlink(GOV_KEEP);
+	}
+}
+static bool g_vlock_default;   /* the core in this session locks unless opted out (diatom_port_vsync_default) */
+void diatom_port_vsync_default(bool on) { g_vlock_default = on; }
+bool diatom_port_vsync_lock(bool want)
+{
+	static int on = -1;
+	static unsigned calls;
+
+	if (!(calls++ & 63) || on < 0) {
+		const char *e = getenv("DIATOM_VSYNC");
+
+		/* Forced on for every core: DIATOM_VSYNC=1 or TortOS/diatom.vsync. Forced off: DIATOM_VSYNC=0 or
+		 * TortOS/diatom.novsync. Otherwise the core's default. */
+		if ((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.novsync", F_OK) == 0) on = 0;
+		else on = (e && *e == '1') || access("/mnt/SDCARD/TortOS/diatom.vsync", F_OK) == 0 || g_vlock_default;
+	}
+	if ((calls & 63) == 1 && !g_gov_saved[0] && !(on > 0 && want)) gov_recover();   /* a dead presenter's pin, if one is left */
+	if (g_lk_off) { g_lk_off--; want = false; g_lk_last = 0; g_lk_frames = g_lk_miss = 0; }
+	g_vlock = on > 0 && want && g_flip_running && !g_win;
+	gov_set(g_vlock);
+	return g_vlock;
+}
+
+/* Called at the end of each locked iteration: wait (50 ms at most) for the page just published to latch. The time
+ * between two returns is one panel period when the frame made it and two when it just missed the vsync: if more than
+ * 1 frame in 12 misses over 120, the lock cannot hold at this load and stands down (the clock paces instead) - slower
+ * than the panel is worse than beating against it - then tries again, waiting twice as long each time (10 s .. 5 min). */
+void diatom_port_vsync_wait(void)
+{
+	struct timespec to;
+	uint64_t t;
+
+	if (!g_vlock) return;
+	pthread_mutex_lock(&g_flip_mx);
+	clock_gettime(CLOCK_REALTIME, &to);
+	to.tv_nsec += 50 * 1000000L;
+	if (to.tv_nsec >= 1000000000L) { to.tv_sec++; to.tv_nsec -= 1000000000L; }
+	while (g_flip_running && (g_pending >= 0 || g_inflight >= 0))
+		if (pthread_cond_timedwait(&g_flip_idle, &g_flip_mx, &to) != 0) break;
+	pthread_mutex_unlock(&g_flip_mx);
+	t = diatom_port_now_us();
+	if (g_lk_last && g_panel_us > 0) {
+		if ((double)(t - g_lk_last) > g_panel_us * 1.5) g_lk_miss++;
+		if (++g_lk_frames >= 120) {
+			if (g_lk_miss > 10) {
+				g_lk_off = g_lk_backoff;
+				g_lk_backoff = g_lk_backoff < 18000 ? g_lk_backoff * 2 : g_lk_backoff;
+			} else {
+				g_lk_backoff = 600;
+			}
+			g_lk_frames = g_lk_miss = 0;
+		}
+	}
+	g_lk_last = t;
+}
+
 static void *flip_worker(void *arg)
 {
 	struct fb_var_screeninfo v = g_vinfo;
@@ -1115,9 +1219,27 @@ static void *flip_worker(void *arg)
 		 * this thread exists. */
 		v.yoffset  = (uint32_t)page * v.yres;
 		v.activate = FB_ACTIVATE_VBL;
+		/* Locked: hold the pan until 78% of a panel period after the previous latch (13 ms of 16.6). Measured on the
+		 * Brick (45 s runs, rewind on): a pan issued at once (about 10.5 ms after the latch) slips a whole vsync on 1.5% of
+		 * frames; at 13-15 ms 0.5%; from ~15.8 ms it starts missing the vsync it was aimed at (50% at 16.3). The picture
+		 * still goes out at the same vsync, so this costs no latency. */
+		if (g_vlock && g_panel_us > 0 && g_flast) {
+			int64_t w = (int64_t)(g_flast + (uint64_t)(g_panel_us * 0.78)) - (int64_t)diatom_port_now_us();
+			if (w > 0 && w < 20000) { struct timespec ts = {0, (long)w * 1000}; nanosleep(&ts, NULL); }
+		}
 		if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &v) != 0)
 			diatom_port_log(DIATOM_LOG_WARN, "pan failed in flip thread");
 
+		{
+			uint64_t t = diatom_port_now_us();
+			if (g_flast) {
+				double g = (double)(t - g_flast) / 1000.0;
+				/* The panel's own period: the gaps of one vsync each (a repeated frame is a gap of two, not the panel
+				 * slowing), averaged over a few hundred of them. */
+				if (g > 15.0 && g < 18.5) g_panel_us = g_panel_us > 0 ? g_panel_us + (g * 1000.0 - g_panel_us) / 256.0 : g * 1000.0;
+			}
+			g_flast = t;
+		}
 		pthread_mutex_lock(&g_flip_mx);
 		g_front    = page;
 		g_inflight = -1;
@@ -1228,6 +1350,7 @@ void diatom_port_audio_get(char *out, size_t cap)
 
 bool diatom_port_init(diatom_port_caps *out)
 {
+	gov_recover();
 
 	g_mixer_fd = open("/dev/snd/controlC0", O_RDWR);
 	g_disp_fd  = open("/dev/disp", O_RDWR);
@@ -1354,6 +1477,7 @@ void diatom_port_rumble(uint16_t strength)
 void diatom_port_shutdown(void)
 {
 	if (g_motor_fd >= 0) diatom_port_rumble(0);
+	gov_set(false);
 	gl_down();
 	if (g_flip_running) {
 		pthread_mutex_lock(&g_flip_mx);
@@ -1673,10 +1797,30 @@ static void blit(uint8_t *page, const void *src, int w, int h, size_t pitch,
 		for (i = 0; i < n; i++) g_ov_under[i] = opaque;
 	}
 
+	/* A whole-factor upscale maps several output rows to one source row. That row is built once in ordinary memory
+	 * (the page is not: a write per pixel into it is slow) and written to the page as a burst per output row. */
+	static uint32_t nrow[UNDER_ROW_MAX];
+	int nrow_idx = -1;
+	const bool nrow_ok = (int)g_vinfo.xres <= UNDER_ROW_MAX && w != dst.w;
+
 	for (y = y0; y < y1; y++) {
 		diatom_tap ty = g_rowmap[y - dst.y];
 		uint32_t *row = (uint32_t *)(page + (size_t)y * g_finfo.line_length);
 		bool band = under && y >= uy0 && y < uy0 + g_ov_h;
+
+		if (nrow_ok && !band && !ty.w) {
+			if (ty.idx != nrow_idx) {
+				uint32_t *out = nrow;
+				const uint32_t *c0 = cache_row(src, pitch, fmt, ty.idx, w);
+
+				BLIT_ROW_NEAREST();
+				nrow_idx = ty.idx;
+			}
+			memcpy(row + x0, nrow + x0, (size_t)(x1 - x0) * sizeof *row);
+			continue;
+		}
+		nrow_idx = -1;
+		{
 		uint32_t *out = band ? g_under_row : row;
 		const uint32_t *c0 = cache_row(src, pitch, fmt, ty.idx, w);
 		const uint32_t *c1 = ty.w ? cache_row(src, pitch, fmt, ty.idx + 1, w) : NULL;
@@ -1696,6 +1840,7 @@ static void blit(uint8_t *page, const void *src, int w, int h, size_t pitch,
 			if (b > a)
 				memcpy(g_ov_under + (size_t)(y - uy0) * (size_t)g_ov_w + (a - ux0),
 				       g_under_row + a, (size_t)(b - a) * sizeof *row);
+		}
 		}
 	}
 

@@ -58,6 +58,13 @@ void diatom_audio_tap_close(void)
 #else
 #define ADJ_CLAMP 1.0
 #endif
+/* The reach in use: widened while the loop runs at the panel's rate (a port's vsync lock), as for a paced port. */
+static double g_adj_clamp = ADJ_CLAMP;
+void diatom_audio_set_reach(bool wide) { g_adj_clamp = wide ? 3.0 : ADJ_CLAMP; }
+/* Feed-forward: where the loop's rate is known (locked to the panel), its ratio error against the core's own rate, as a
+ * fraction (+0.005 = the loop runs 0.5% fast), goes straight in instead of being learned by the integral over a minute. */
+static double g_ff;
+void diatom_audio_set_feedforward(double rel) { g_ff = rel / MAX_DEVIATION; }
 #define P_GAIN 1.0
 #define I_GAIN 0.002     /* per frame; deliberately slow, ~8s to full authority */
 
@@ -87,6 +94,8 @@ static double   g_ratio      = 1.0; /* nominal, adjusted by rate control */
 static int      g_capacity;
 static double   g_integral;
 static uint64_t g_dropped;      /* frames the port would not take */
+static unsigned g_state;     /* the loop's state (DIATOM_AUDIO_ST_*), for the drop breakdown */
+static uint64_t g_dropped_by[16], g_ff_discarded;
 
 /* Every write goes through here so a refusal is counted exactly once. Silent
  * drops are how the overshoot went unnoticed: the queue depth was the only
@@ -168,7 +177,7 @@ static void push(const int16_t *f, size_t n)
 
 	if (g_tap_out) fwrite(f, sizeof(int16_t) * 2, n, g_tap_out);
 	took = diatom_port_audio_write(f, n);
-	if (took < n) g_dropped += (uint64_t)(n - took);
+	if (took < n) { g_dropped += (uint64_t)(n - took); g_dropped_by[g_state] += (uint64_t)(n - took); }
 }
 
 /* The same measurement on the INPUT side, before any resampling, so a silent
@@ -204,6 +213,11 @@ uint64_t diatom_audio_samples(void) { return g_total; }
 
 uint64_t diatom_audio_dropped(void) { return g_dropped; }
 
+/* What the frame loop is doing, so the frames the port refuses can be told apart by cause (the summary prints them by state). */
+void     diatom_audio_set_state(unsigned s) { g_state = s & 15; }
+uint64_t diatom_audio_dropped_in(unsigned s) { return s < 16 ? g_dropped_by[s] : 0; }
+uint64_t diatom_audio_ff_discarded(void) { return g_ff_discarded; }
+
 void diatom_audio_configure(double src_rate, int dst_rate, int capacity_frames)
 {
 	/* A session starts where quiet already is, with no fade: the launcher
@@ -235,6 +249,8 @@ void diatom_audio_configure(double src_rate, int dst_rate, int capacity_frames)
 	g_pos  = HALF;
 	g_integral   = 0.0;
 	g_dropped    = 0;
+	memset(g_dropped_by, 0, sizeof g_dropped_by);
+	g_ff_discarded = 0;
 	g_peak       = 0;
 	g_nonzero    = 0;
 	g_total      = 0;
@@ -304,12 +320,12 @@ void diatom_audio_sync(void)
 	 * The integral is clamped rather than left to wind up: without that, a long
 	 * stall banks correction that then overshoots for just as long. */
 	g_integral += delta * I_GAIN;
-	if (g_integral < -ADJ_CLAMP) g_integral = -ADJ_CLAMP;
-	if (g_integral >  ADJ_CLAMP) g_integral =  ADJ_CLAMP;
+	if (g_integral < -g_adj_clamp) g_integral = -g_adj_clamp;
+	if (g_integral >  g_adj_clamp) g_integral =  g_adj_clamp;
 
-	adjust = delta * P_GAIN + g_integral;
-	if (adjust < -ADJ_CLAMP) adjust = -ADJ_CLAMP;
-	if (adjust >  ADJ_CLAMP) adjust =  ADJ_CLAMP;
+	adjust = delta * P_GAIN + g_integral + g_ff;
+	if (adjust < -g_adj_clamp) adjust = -g_adj_clamp;
+	if (adjust >  g_adj_clamp) adjust =  g_adj_clamp;
 
 	/* Buffer filling up means we are producing too fast, so consume more source
 	 * per output frame - a larger ratio yields fewer output frames. */
@@ -378,6 +394,10 @@ static int16_t clip(double v)
 
 size_t diatom_audio_push(const int16_t *in, size_t frames)
 {
+	/* Fast-forward makes several frames of audio per panel period, which is already quieted and cannot all be played:
+	 * not queued, and counted apart, so "dropped" means the sink could not keep up and not that the player sped up. */
+	if (g_state & DIATOM_AUDIO_ST_FF) { g_ff_discarded += frames; return frames; }
+
 	int16_t out[OUT_CHUNK * 2];
 	size_t produced = 0, total = 0;
 	size_t keep;
