@@ -437,7 +437,7 @@ int main(int argc, char **argv)
 	const GLubyte *(*gl_string)(GLenum);
 	int frames = argc > 2 ? atoi(argv[2]) : 120;
 	int sw = 0, sh = 0, ww = 0, wh = 0;
-	chain chains[2 + 19 + 4 + 2];
+	chain chains[2 + 19 + 4 + 2 + 1];
 	int nchains = 0, c, si;
 	uint8_t *buf;
 	uint64_t *ready, *swap;
@@ -563,6 +563,9 @@ bench:
 	chains[nchains++] = (chain){ "pt", 1, { { "PT_SkyWalker541", false, 0 } }, false, false };
 	chains[nchains++] = (chain){ "pt after lcd3x", 2,
 		{ { "lcd3x", false, 0 }, { "PT_SkyWalker541", false, 0 } }, false, false };
+	/* libretro's fakelottes-geom-mini, plorpOS's "CRT Geom Mini" (plorpos-qim): its
+	 * preset samples the frame with linear filtering. */
+	chains[nchains++] = (chain){ "crt-geom-mini", 1, { { "fakelottes-geom-mini", true, 0 } }, false, false };
 
 	buf = malloc(640 * 480 * 4);
 	ready = malloc(sizeof *ready * (size_t)frames);

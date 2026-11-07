@@ -207,6 +207,14 @@ ifeq ($(PORT),rotate)
   LDFLAGS += -lasound   # the mic thread, through PipeWire's ALSA plugin
 endif
 
+# Sanitizers for the host tests, where the host has their runtimes: a machine
+# without libasan/libubsan/libtsan (Fedora ships them as separate packages)
+# links nothing at all, and `make check` stopped at the first test. There the
+# tests build and run unsanitized, and `make check` says so.
+SAN_AU := $(shell echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined -o /dev/null - 2>/dev/null && echo -fsanitize=address,undefined)
+SAN_T  := $(shell echo 'int main(void){return 0;}' | cc -x c -fsanitize=thread -o /dev/null - 2>/dev/null && echo -fsanitize=thread)
+$(if $(findstring check,$(MAKECMDGOALS)),$(if $(and $(SAN_AU),$(SAN_T)),,$(info note: host lacks sanitizer runtime(s); tests that use them run unsanitized)))
+
 .PHONY: all clean check check-seam check-proto check-port check-register check-register-diff \
         check-corefacts check-cheevos stub run-stub tools probes hooks
 
@@ -377,12 +385,12 @@ check-rewind: $(BUILD)/rewind-test-asan $(BUILD)/rewind-test-tsan
 
 $(BUILD)/rewind-test-asan: $(REWIND_TEST_SRC) src/rewind.h
 	@mkdir -p $(BUILD)
-	cc $(REWIND_TEST_FLAGS) -fsanitize=address,undefined -fno-sanitize-recover=all \
+	cc $(REWIND_TEST_FLAGS) $(SAN_AU) -fno-sanitize-recover=all \
 	   -o $@ $(REWIND_TEST_SRC) -lpthread
 
 $(BUILD)/rewind-test-tsan: $(REWIND_TEST_SRC) src/rewind.h
 	@mkdir -p $(BUILD)
-	cc $(REWIND_TEST_FLAGS) -fsanitize=thread -o $@ $(REWIND_TEST_SRC) -lpthread
+	cc $(REWIND_TEST_FLAGS) $(SAN_T) -o $@ $(REWIND_TEST_SRC) -lpthread
 .PHONY: check-rewind
 
 # One option table per core the registry can hold, at the ports' 16
@@ -392,7 +400,7 @@ check-options: $(BUILD)/options-test
 
 $(BUILD)/options-test: test/options_test.c src/options.c src/diatom.h
 	@mkdir -p $(BUILD)
-	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc $(SAN_AU) \
 	   -fno-sanitize-recover=all -DDIATOM_MAX_RESIDENT=16 -o $@ test/options_test.c src/options.c
 .PHONY: check-options
 
@@ -402,7 +410,7 @@ check-turboassign: $(BUILD)/turboassign-test
 
 $(BUILD)/turboassign-test: test/turboassign_test.c src/turboassign.c src/turboassign.h
 	@mkdir -p $(BUILD)
-	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc $(SAN_AU) \
 	   -fno-sanitize-recover=all -o $@ test/turboassign_test.c src/turboassign.c
 .PHONY: check-turboassign
 
@@ -412,7 +420,7 @@ check-stylus: $(BUILD)/stylus-test
 
 $(BUILD)/stylus-test: test/stylus_test.c src/stylus.c src/stylus.h
 	@mkdir -p $(BUILD)
-	cc -std=gnu11 -Wall -Wextra -O1 -g -Isrc -fsanitize=address,undefined \
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Isrc $(SAN_AU) \
 	   -fno-sanitize-recover=all -o $@ test/stylus_test.c src/stylus.c
 .PHONY: check-stylus
 
@@ -422,7 +430,7 @@ check-dslayout: $(BUILD)/dslayout-test
 
 $(BUILD)/dslayout-test: test/dslayout_test.c src/scale.c src/diatom.h
 	@mkdir -p $(BUILD)
-	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc -fsanitize=address,undefined \
+	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc $(SAN_AU) \
 	   -fno-sanitize-recover=all -o $@ test/dslayout_test.c src/scale.c
 .PHONY: check-dslayout
 

@@ -18,6 +18,7 @@
 #include "diatom.h"
 #include "stylus.h"
 
+static bool g_throttle_ff, g_throttle_rewind;   /* diatom_env_set_throttle's, for GET_THROTTLE_STATE */
 #define MASK(x) ((x) & 0xffff)   /* experimental commands carry 0x10000 */
 
 static void capture_descriptors(const struct retro_input_descriptor *d);
@@ -397,6 +398,14 @@ static bool env_cb(unsigned cmd, void *data)
 		 * its own default. That is the right answer for an unknown key. */
 		return v->value != NULL;
 	}
+	case MASK(RETRO_ENVIRONMENT_GET_THROTTLE_STATE): {
+		struct retro_throttle_state *t = data;
+
+		if (!t) return true;
+		t->mode = g_throttle_rewind ? RETRO_THROTTLE_REWINDING : g_throttle_ff ? RETRO_THROTTLE_FAST_FORWARD : RETRO_THROTTLE_VSYNC;
+		t->rate = 0.0f;   /* no fixed rate in fast-forward; the target in normal play is the core's own fps */
+		return true;
+	}
 	case MASK(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE):
 		/* Every frame, all six cores. Must stay this cheap. */
 		*(bool *)data = diatom_options_take_update();
@@ -479,6 +488,14 @@ static bool env_cb(unsigned cmd, void *data)
 
 /* Defined down with the map, which is the state it exists to advance. */
 static void turbo_tick(void);
+
+/* What the frame loop is doing to the clock, for a core that asks (GET_THROTTLE_STATE): the cores that can drop
+ * optional drawing while the player holds fast-forward - their frame budget is a fraction of normal then. */
+void diatom_env_set_throttle(bool fast_forward, bool rewinding)
+{
+	g_throttle_ff = fast_forward;
+	g_throttle_rewind = rewinding;
+}
 
 bool diatom_env_polled(void)
 {
