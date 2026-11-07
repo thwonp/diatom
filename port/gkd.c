@@ -880,6 +880,19 @@ static void bright_nudge(int dir);
 #define LEVEL_REPEAT_RATE_US   90000ull
 static uint64_t g_level_next_us[2];   /* when it next repeats; 0 is not held */
 static bool     g_level_bright[2];
+/* Quiet at the press (Muse plays) and not brightness: the hold is a track skip
+ * at DIATOM_SKIP_HOLD_US, not a repeat. moved: the press's step changed the
+ * level, so a skip can take it back (plorpos-7wu.3). */
+static bool     g_level_skip[2];
+static bool     g_level_moved[2];
+static int      g_skip_pending;
+
+static int volume_index(void)
+{
+	int i = -1, c;
+
+	return diatom_port_level_get(DIATOM_LEVEL_VOLUME, &i, &c) ? i : -1;
+}
 
 static void level_step(int k)
 {
@@ -916,6 +929,13 @@ static void levels_repeat(void)
 			g_level_next_us[k] = 0;
 			continue;
 		}
+		if (g_level_skip[k]) {   /* held long enough: a skip, once */
+			g_level_skip[k]    = false;
+			g_level_next_us[k] = 0;
+			if (g_level_moved[k]) gain_nudge(k == 0 ? -1 : +1);
+			g_skip_pending = k == 0 ? +1 : -1;
+			continue;
+		}
 		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
 		level_step(k);
 	}
@@ -941,8 +961,15 @@ static void keys_read(void)
 			else continue;
 			if (!ev[i].value) { g_level_next_us[k] = 0; continue; }
 			g_level_bright[k]  = g_home;
-			g_level_next_us[k] = diatom_port_now_us() + LEVEL_REPEAT_DELAY_US;
-			level_step(k);
+			g_level_skip[k]    = !g_home && diatom_audio_quiet_get();
+			g_level_next_us[k] = diatom_port_now_us() +
+			                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US);
+			{
+				int before = volume_index();
+
+				level_step(k);
+				g_level_moved[k] = volume_index() != before;
+			}
 		}
 	}
 }
@@ -1203,6 +1230,14 @@ void diatom_port_input_poll(void)
 
 uint32_t diatom_port_input_state(void) { return g_buttons; }
 bool     diatom_port_should_quit(void) { return g_quit; }
+
+int diatom_port_take_skip(void)
+{
+	int v = g_skip_pending;
+
+	g_skip_pending = 0;
+	return v;
+}
 
 bool diatom_port_take_switcher(void)
 {

@@ -2042,11 +2042,24 @@ static const struct { int idx; int dir; } level_buttons[] = {
 #define LEVEL_BUTTONS (sizeof level_buttons / sizeof level_buttons[0])
 static uint64_t g_level_next_us[LEVEL_BUTTONS];   /* when it next repeats; 0 is not held */
 static bool     g_level_bright[LEVEL_BUTTONS];
+/* Quiet at the press (Muse plays) and not brightness: the hold is a track skip
+ * at DIATOM_SKIP_HOLD_US, not a repeat. moved: the press's step changed the
+ * level, so a skip can take it back (plorpos-7wu.3). */
+static bool     g_level_skip[LEVEL_BUTTONS];
+static bool     g_level_moved[LEVEL_BUTTONS];
+static int      g_skip_pending;
 
 static void level_step(size_t k)
 {
 	if (g_level_bright[k]) bright_nudge(level_buttons[k].dir);
 	else                   gain_nudge(level_buttons[k].dir);
+}
+
+static int volume_index(void)
+{
+	int i = -1, c;
+
+	return diatom_port_level_get(DIATOM_LEVEL_VOLUME, &i, &c) ? i : -1;
 }
 
 /* While a brightness key is held under MENU: LEVEL makes that MENU a chord
@@ -2069,9 +2082,16 @@ static bool level_button(int button, bool down)
 	for (k = 0; k < LEVEL_BUTTONS; k++) {
 		if (level_buttons[k].idx != button) continue;
 		if (down) g_level_bright[k] = (g_buttons & DIATOM_BIT(DIATOM_BTN_MENU)) != 0;
-		g_level_next_us[k] = down ? diatom_port_now_us() + LEVEL_REPEAT_DELAY_US : 0;
+		g_level_skip[k]    = down && !g_level_bright[k] && diatom_audio_quiet_get();
+		g_level_next_us[k] = down ? diatom_port_now_us() +
+		                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US) : 0;
 		level_chord();
-		if (down) level_step(k);
+		if (down) {
+			int before = volume_index();
+
+			level_step(k);
+			g_level_moved[k] = volume_index() != before;
+		}
 		return true;
 	}
 	return false;
@@ -2087,6 +2107,13 @@ static void levels_repeat(void)
 		if (!g_joy || !SDL_JoystickGetButton(g_joy, level_buttons[k].idx)) {
 			g_level_next_us[k] = 0;
 			level_chord();
+			continue;
+		}
+		if (g_level_skip[k]) {   /* held long enough: a skip, once */
+			g_level_skip[k]    = false;
+			g_level_next_us[k] = 0;
+			if (g_level_moved[k]) gain_nudge(-level_buttons[k].dir);
+			g_skip_pending = level_buttons[k].dir;
 			continue;
 		}
 		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
@@ -2373,6 +2400,13 @@ bool diatom_port_mute_get(void) { return g_muted; }
 /* No hold on the Brick yet: its Menu is a press, not a tap on release
  * (TortOS plorpos-gl5.4). */
 bool diatom_port_take_switcher(void) { return false; }
+int  diatom_port_take_skip(void)
+{
+	int v = g_skip_pending;
+
+	g_skip_pending = 0;
+	return v;
+}
 
 /* No DS layouts or touch panel here (TortOS plorpos-3yv.47). */
 void diatom_port_split(bool on, diatom_rect top, diatom_rect bot) { (void)on; (void)top; (void)bot; }

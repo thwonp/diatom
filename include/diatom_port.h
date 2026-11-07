@@ -404,6 +404,17 @@ bool diatom_port_should_quit(void);
 #define DIATOM_SWITCHER_HOLD_US 700000ull
 bool diatom_port_take_switcher(void);
 
+/* A volume key held DIATOM_SKIP_HOLD_US while the game is quiet - the
+ * launcher's Muse is playing (diatom_audio_quiet_get, the core's) - is the
+ * launcher's next track (Vol+) or previous track (Vol-), as it is on the
+ * launcher's own screens (TortOS plorpos-7wu.2). Returns +1 or -1 once per
+ * hold, else 0. The press itself stepped the volume at once, so the port takes
+ * that step back when the hold turns out to be a skip. A game that is not quiet
+ * keeps the repeating volume key, and a port without the hold returns 0. */
+#define DIATOM_SKIP_HOLD_US 500000ull
+int  diatom_port_take_skip(void);
+bool diatom_audio_quiet_get(void);
+
 /* What was last presented, as pixels: no domain nouns, and every backend
  * wants it - on desktop to see what happened, on device because a screenshot
  * is otherwise unobtainable. Also not in ADR-0007: that interface specified
