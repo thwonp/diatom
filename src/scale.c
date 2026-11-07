@@ -29,6 +29,8 @@
 const diatom_display_mode_info diatom_modes[] = {
 	{ "integer",   DIATOM_SCALE_INTEGER,
 	  "largest whole factor, letterboxed" },
+	{ "integer-over", DIATOM_SCALE_INTEGER_OVER,
+	  "next whole factor, a few edge pixels cropped (integer if it would crop more)" },
 	{ "aspect",    DIATOM_SCALE_ASPECT_FIT,
 	  "shape the core asks for, fits inside the panel" },
 	{ "stretch",   DIATOM_SCALE_STRETCH,
@@ -77,6 +79,8 @@ static diatom_rect centered(int w, int h, int surf_w, int surf_h)
 	return r;
 }
 
+#define OVER_MAX_PCT 8   /* integer-over: the most it may crop on either axis */
+
 diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
                               double aspect, int surf_w, int surf_h)
 {
@@ -97,6 +101,28 @@ diatom_rect diatom_scale_rect(diatom_scale_mode mode, int src_w, int src_h,
 		 * it 1:1 and let the port clip rather than refusing the frame outright.
 		 * Reachable today: SNES hires is 512x448, and 2x would need 1024x896. */
 		if (f < 1) f = 1;
+		return centered(src_w * f, src_h * f, surf_w, surf_h);
+
+	case DIATOM_SCALE_INTEGER_OVER:
+		/* The smallest whole factor that covers the panel on one axis, kept
+		 * only when it crops at most OVER_MAX_PCT of either axis: 256x224 on
+		 * a 720x720 panel is 3x, 768x672, 24 columns off each side, where
+		 * integer is 2x and 70% of the width. A bigger crop is not "a few
+		 * garbage pixels" - it falls back to integer (the Brick's 4x SNES
+		 * would lose 14% of the rows). Uniform pixels either way. */
+		fx = surf_w / src_w;
+		fy = surf_h / src_h;
+		f  = fx < fy ? fx : fy;
+		if (f < 1) f = 1;
+		fx = (surf_w + src_w - 1) / src_w;
+		fy = (surf_h + src_h - 1) / src_h;
+		{
+			int k = fx < fy ? fx : fy;
+			long ow = (long)src_w * k - surf_w, oh = (long)src_h * k - surf_h;
+			if (k > f && ow * 100 <= (long)OVER_MAX_PCT * src_w * k
+			          && oh * 100 <= (long)OVER_MAX_PCT * src_h * k)
+				f = k;
+		}
 		return centered(src_w * f, src_h * f, surf_w, surf_h);
 
 	case DIATOM_SCALE_DS_A:     /* drawn as two rects (diatom_ds_rects); */

@@ -11,6 +11,18 @@ int main(void)
 {
 	diatom_rect f, s;
 
+	{
+		diatom_rect o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 256, 224, 0, 720, 720);
+		CHECK(o.w == 768 && o.h == 672 && o.x == -24 && o.y == 24, "integer-over SNES on 720x720: 3x, 24 columns cropped a side");
+		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 256, 224, 0, 1024, 768);
+		CHECK(o.w == 768 && o.h == 672, "integer-over SNES on the Brick: 4x would crop 14% rows, stays 3x");
+		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 240, 160, 0, 720, 720);
+		CHECK(o.w == 720 && o.h == 480 && o.x == 0, "integer-over GBA on 720x720: exact 3x, nothing cropped");
+		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 160, 144, 0, 720, 720);
+		CHECK(o.w == 640 && o.h == 576, "integer-over GB on 720x720: 5x would crop 11%, stays 4x");
+		o = diatom_scale_rect(DIATOM_SCALE_INTEGER_OVER, 512, 448, 0, 720, 720);
+		CHECK(o.w == 512 && o.h == 448, "integer-over hires on 720x720: 1x, 2x crops far too much");
+	}
 	diatom_ds_focus_rects(1024, 768, true, &f, &s);
 	CHECK(f.x == 0 && f.y == 96 && f.w == 768 && f.h == 576, "Brick top focus: 3x at the left, centred");
 	CHECK(s.x == 768 && s.w == 256 && s.h == 192 && s.y == 96 + 576 - 192, "small bottom screen at the bottom-right corner");

@@ -371,6 +371,7 @@ bool diatom_state_load(diatom_core *c, const char *path);
  * question can be answered by looking at a panel rather than by argument. */
 typedef enum {
 	DIATOM_SCALE_INTEGER,        /* largest whole factor that fits, boxed     */
+	DIATOM_SCALE_INTEGER_OVER,   /* next whole factor if it crops <= 8%, else integer */
 	DIATOM_SCALE_ASPECT_FIT,     /* fractional, shape kept, boxed             */
 	DIATOM_SCALE_STRETCH,        /* fills both axes, shape ignored            */
 	/* The Nintendo DS's two screens, which the core stacks top over bottom
