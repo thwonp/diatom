@@ -238,6 +238,9 @@ void diatom_port_split(bool on, diatom_rect top, diatom_rect bot);
  * bottom screen, in the whole frame's -0x7fff..0x7fff (top half is screen 1,
  * bottom half screen 2). True while pressed. A port with no panel: false. */
 bool diatom_port_pointer(int16_t *x, int16_t *y);
+/* The core reads the finger over its whole picture (PokeDaisy, TortOS plorpos-oe0.41): a port with a panel passes its
+ * first finger as the pointer (-1..1 over the game's picture both ways), without its own touch gestures. */
+void diatom_port_touch_core(bool on);
 
 /* The stylus hotkey (HK_STYLUS), every frame: held or not. A port with no
  * panel but a stick (the GKD, TortOS plorpos-46o.4) moves a cursor over the
@@ -403,6 +406,20 @@ bool diatom_port_should_quit(void);
  * A port without the hold returns false. */
 #define DIATOM_SWITCHER_HOLD_US 700000ull
 bool diatom_port_take_switcher(void);
+
+/* A volume key held DIATOM_SKIP_HOLD_US while the game is quiet - the
+ * launcher's Muse is playing (diatom_audio_quiet_get, the core's) - is the
+ * launcher's next track (Vol+) or previous track (Vol-), as it is on the
+ * launcher's own screens (TortOS plorpos-7wu.2). Returns +1 or -1 once per
+ * hold, else 0. The press itself stepped the volume at once, so the port takes
+ * that step back when the hold turns out to be a skip. A game that is not quiet
+ * keeps the repeating volume key, and a port without the hold returns 0. */
+#define DIATOM_SKIP_HOLD_US 500000ull
+/* Both volume keys together are the launcher's Muse pause/play, quiet or not
+ * (plorpos-7wu.5): DIATOM_SKIP_TOGGLE, with the first key's step taken back. */
+#define DIATOM_SKIP_TOGGLE 2
+int  diatom_port_take_skip(void);
+bool diatom_audio_quiet_get(void);
 
 /* What was last presented, as pixels: no domain nouns, and every backend
  * wants it - on desktop to see what happened, on device because a screenshot

@@ -1000,9 +1000,8 @@ Two levers the spike discovered:
       **[ADR-0045](decisions/0045-turbo-assign-is-reported-the-launcher-maps-it.md)**
       *(Accepted)*. A `turbo` hotkey, then a button, then the button it
       lives on, flips that turbo there (2026-10-30, plorpos-c4l); held 2 s
-      it clears all. Diatom sends TURBO and keeps nothing;
-      the launcher owns the session's map and answers with SETMAP
-      (plorpos-tkh).
+      it clears all. Diatom sends TURBO and keeps nothing; the launcher
+      owns the session's map and answers with SETMAP (plorpos-tkh).
 - [x] **[LB]** **Volume keys work during a game**, handled in the port and
       never reported upward. 20 steps of 5%; level 0 cuts `HpSpeaker Switch`
       because `digital volume` advertises `mute=0` - its minimum is ~-74 dB,

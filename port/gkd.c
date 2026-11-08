@@ -880,6 +880,19 @@ static void bright_nudge(int dir);
 #define LEVEL_REPEAT_RATE_US   90000ull
 static uint64_t g_level_next_us[2];   /* when it next repeats; 0 is not held */
 static bool     g_level_bright[2];
+/* Quiet at the press (Muse plays) and not brightness: the hold is a track skip
+ * at DIATOM_SKIP_HOLD_US, not a repeat. moved: the press's step changed the
+ * level, so a skip can take it back (plorpos-7wu.3). */
+static bool     g_level_skip[2];
+static bool     g_level_moved[2];
+static int      g_skip_pending;
+
+static int volume_index(void)
+{
+	int i = -1, c;
+
+	return diatom_port_level_get(DIATOM_LEVEL_VOLUME, &i, &c) ? i : -1;
+}
 
 static void level_step(int k)
 {
@@ -916,6 +929,13 @@ static void levels_repeat(void)
 			g_level_next_us[k] = 0;
 			continue;
 		}
+		if (g_level_skip[k]) {   /* held long enough: a skip, once */
+			g_level_skip[k]    = false;
+			g_level_next_us[k] = 0;
+			if (g_level_moved[k]) gain_nudge(k == 0 ? -1 : +1);
+			g_skip_pending = k == 0 ? +1 : -1;
+			continue;
+		}
 		g_level_next_us[k] = now + LEVEL_REPEAT_RATE_US;
 		level_step(k);
 	}
@@ -940,9 +960,24 @@ static void keys_read(void)
 			else if (ev[i].code == KEY_VOLUMEDOWN) k = 1;
 			else continue;
 			if (!ev[i].value) { g_level_next_us[k] = 0; continue; }
+			if (!g_home && g_level_next_us[1 - k] && !g_level_bright[1 - k]) {
+				/* The other key is held: both are Muse's pause/play. */
+				if (g_level_moved[1 - k]) gain_nudge(k == 0 ? +1 : -1);
+				g_level_next_us[0] = g_level_next_us[1] = 0;
+				g_level_skip[0] = g_level_skip[1] = false;
+				g_skip_pending = DIATOM_SKIP_TOGGLE;
+				continue;
+			}
 			g_level_bright[k]  = g_home;
-			g_level_next_us[k] = diatom_port_now_us() + LEVEL_REPEAT_DELAY_US;
-			level_step(k);
+			g_level_skip[k]    = !g_home && diatom_audio_quiet_get();
+			g_level_next_us[k] = diatom_port_now_us() +
+			                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US);
+			{
+				int before = volume_index();
+
+				level_step(k);
+				g_level_moved[k] = volume_index() != before;
+			}
 		}
 	}
 }
@@ -976,6 +1011,7 @@ static float    g_px, g_py, g_py0;
 static int      g_ptr_edge;             /* +1 top band, -1 bottom, 0 none */
 static bool     g_ptr_on, g_ptr_down, g_ptr_pending, g_ptr_tap, g_ptr_release;
 static uint64_t g_ptr_t0_us;
+static bool     g_touch_core;           /* PokeDaisy: the finger over the whole picture (diatom_port_touch_core) */
 
 static void pointer_event(const SDL_Event *e)
 {
@@ -1027,6 +1063,16 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 	const diatom_rect b = g_split_bot;
 	float fx, fy;
 
+	if (!g_split && g_touch_core) {     /* the whole picture is the pointer's -1..1 both ways */
+		const diatom_rect d = g_last_dst;
+		if (!g_ptr_down || d.w <= 0 || d.h <= 0) return false;
+		fx = (g_px - d.x) / d.w;
+		fy = (g_py - d.y) / d.h;
+		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return false;
+		*x = (int16_t)((fx * 2 - 1) * 0x7fff);
+		*y = (int16_t)((fy * 2 - 1) * 0x7fff);
+		return true;
+	}
 	if (!g_split || !g_ptr_down || b.w <= 0 || b.h <= 0) return false;
 	/* Bottom Overlay: the top screen drawn over the bottom one's corner is
 	 * not the bottom screen (plorpos-6ei.5). */
@@ -1046,9 +1092,14 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 void diatom_port_stylus(bool down) { (void)down; }
 static void draw_cursor(void) {}
 
+/* PokeDaisy reads the finger over its whole picture (its companion, HUD and quick menu: TortOS plorpos-oe0.41): as a DS's
+ * bottom screen, the first finger is the pointer, the launcher's edge swipes are held back the same way, and there is no
+ * hold-for-Menu. */
+void diatom_port_touch_core(bool on) { g_touch_core = on; }
+
 static void touch_event(const SDL_Event *e)
 {
-	if (g_split) { pointer_event(e); return; }
+	if (g_split || g_touch_core) { pointer_event(e); return; }
 	if (e->type == SDL_FINGERDOWN) {
 		if (g_fingers++ == 0) {
 			g_tx0 = g_tx = e->tfinger.x;
@@ -1068,7 +1119,7 @@ static void touch_hold(void)
 {
 	float dx = g_tx - g_tx0, dy = g_ty - g_ty0;
 
-	if (g_split) { pointer_tick(); return; }
+	if (g_split || g_touch_core) { pointer_tick(); return; }
 	if (g_fingers != 1 || g_touch_spent) return;
 	if (dx * dx + dy * dy > TOUCH_STILL * TOUCH_STILL) { g_touch_spent = true; return; }
 	if (diatom_port_now_us() - g_t0_us < TOUCH_HOLD_MS * 1000ull) return;
@@ -1203,6 +1254,14 @@ void diatom_port_input_poll(void)
 
 uint32_t diatom_port_input_state(void) { return g_buttons; }
 bool     diatom_port_should_quit(void) { return g_quit; }
+
+int diatom_port_take_skip(void)
+{
+	int v = g_skip_pending;
+
+	g_skip_pending = 0;
+	return v;
+}
 
 bool diatom_port_take_switcher(void)
 {
