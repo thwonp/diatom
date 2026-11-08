@@ -657,6 +657,11 @@ void diatom_port_shutdown(void)
 	pthread_cond_signal(&g_flip_cond);
 	pthread_mutex_unlock(&g_flip_lock);
 	pthread_join(g_flip_thr, NULL);
+	/* The MI_SYS contiguous-memory heap is 21 MB and owned by the kernel, not the
+	 * process: a buffer never freed here stays "app-mmaAlloc" until reboot. About
+	 * a hundred diatom launches filled it, and then every blit took a vblank
+	 * longer (5 ms -> 22 ms) until a power cycle (plorpos-f1p.31). */
+	if (g_src_virt) { mi.munmap(g_src_virt, g_src_size); mi.mma_free(g_src_phy); g_src_virt = NULL; g_src_size = 0; }
 	audio_close();
 	if (g_pad >= 0) { close(g_pad); g_pad = -1; }
 	if (g_fbmem) { munmap(g_fbmem, g_fix.smem_len); g_fbmem = NULL; }
