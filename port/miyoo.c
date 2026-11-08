@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <dirent.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -472,6 +473,49 @@ static unsigned long long g_src_phy;
 static void *g_src_virt;
 static unsigned g_src_size;
 
+/* A diatom that is killed (SIGKILL, the OOM killer, a crash, a deploy) cannot free
+ * its MI_SYS video buffer, and the kernel does not: the chunk stays "app-mmaAlloc"
+ * in the 21 MB heap until reboot (plorpos-f1p.31). So at start, when no other
+ * diatom is running and nothing of ours can be live, free what is left. The heap
+ * is listed in /proc as offset/length/used/task per chunk under a header row that
+ * carries the CPU bus base; MI_SYS_MMA_Free takes the memory controller's
+ * address, which is that base less 0x20000000, plus the chunk's offset. */
+static void mma_reap_stale(void)
+{
+	const char *heap = "/proc/mi_modules/mi_sys_mma/mma_heap_name0";
+	FILE *f;
+	char line[256];
+	unsigned long long base = 0, off, len;
+	int used, freed = 0;
+	char task[64];
+	DIR *d = opendir("/proc");
+	struct dirent *e;
+
+	if (!mi.mma_free || !d) { if (d) closedir(d); return; }
+	while ((e = readdir(d))) {
+		char path[64], comm[32] = "";
+		FILE *c;
+		if (e->d_name[0] < '0' || e->d_name[0] > '9' || atoi(e->d_name) == (int)getpid()) continue;
+		snprintf(path, sizeof path, "/proc/%s/comm", e->d_name);
+		if ((c = fopen(path, "r"))) {
+			if (fgets(comm, sizeof comm, c) && !strncmp(comm, "diatom", 6)) { fclose(c); closedir(d); return; }
+			fclose(c);
+		}
+	}
+	closedir(d);
+	if (!(f = fopen(heap, "r"))) return;
+	while (fgets(line, sizeof line, f)) {
+		char name[64];
+		if (sscanf(line, " %63s %llx", name, &off) == 2 && !strncmp(name, "mma_heap_name", 13)) { base = off; continue; }
+		if (base && sscanf(line, " %llx %llx %d %63s", &off, &len, &used, task) == 4 &&
+		    used == 1 && !strcmp(task, "app-mmaAlloc")) {
+			if (mi.mma_free(base - 0x20000000ull + off) == 0) freed++;
+		}
+	}
+	fclose(f);
+	if (freed) fprintf(stderr, "[info] video: freed %d stale MMA chunk(s) of a killed diatom\n", freed);
+}
+
 static bool gfx_init(void)
 {
 	int rc = -1;
@@ -482,6 +526,7 @@ static bool gfx_init(void)
 		        mi_ready(), (void *)mi.gfx_open, (unsigned)rc);
 		return false;
 	}
+	mma_reap_stale();
 	diatom_port_log(DIATOM_LOG_INFO, "video: MI_GFX blit (scale + 180-degree turn)");
 	return true;
 }
