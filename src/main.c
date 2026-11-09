@@ -71,6 +71,25 @@ static void apply_display(int mode, diatom_filter filter);
 static bool g_menu_held_switcher;
 
 static diatom_core     *g_core;   /* resident, never unloaded - ADR-0006 */
+
+/* Run one core frame without trusting the core with d8-d15. On 32-bit hard-float ARM
+ * those are callee-saved and the pacing loop keeps frame_us/next_us in them across the
+ * call; pcsx_rearmed on the Flip left them changed on some paths, the loop's clock went
+ * NaN, never slept or resynced, and PlayStation ran at 85-115 fps (plorpos-f1p.35,
+ * frame_us read -nan at exit). Saving and restoring costs a few ns a frame and covers
+ * every core. Deliberately NOT declared as clobbered: the restore leaves the registers
+ * as the compiler believes them. */
+static inline void core_run(void)
+{
+#if defined(__arm__) && defined(__ARM_PCS_VFP)
+	double vsave[8];
+	__asm__ volatile("vstmia %0, {d8-d15}" : : "r"(vsave) : "memory");
+	g_core->run();
+	__asm__ volatile("vldmia %0, {d8-d15}" : : "r"(vsave) : "memory");
+#else
+	g_core->run();
+#endif
+}
 static diatom_policy    g_policy;
 
 /* An overlay image, from the launcher, to be composited over the game.
@@ -2098,7 +2117,7 @@ static int run_session_inner(const diatom_session *sn)
 		int w;
 		g_audio_warmup = true;
 		for (w = 0; w < 3; w++) {
-			g_core->run();
+			core_run();
 			present_frame(true);
 		}
 		g_audio_warmup = false;
@@ -2152,7 +2171,7 @@ static int run_session_inner(const diatom_session *sn)
 			 * g_frame exactly as it was instead of quietly resuming forward
 			 * play the player never un-paused. */
 			if (diatom_rewind_step_back(g_core))
-				g_core->run();   /* renders the frame the restore left us at */
+				core_run();   /* renders the frame the restore left us at */
 		} else {
 			/* Locked, an iteration that slipped a vsync took two panel periods and made one frame of audio against two of
 			 * consumption; nothing else puts it back, and the queue empties while the player scrolls. Run the core one
@@ -2165,7 +2184,7 @@ static int run_session_inner(const diatom_session *sn)
 			{
 				diatom_audio_set_state(DIATOM_AUDIO_ST_LOCK | DIATOM_AUDIO_ST_CATCHUP);
 				if (g_core->audio_status) g_core->audio_status(true, 50, true);
-				g_core->run();
+				core_run();
 			}
 			catch_up = false;
 #ifdef DIATOM_PORT_FRAMESKIP
@@ -2188,7 +2207,7 @@ static int run_session_inner(const diatom_session *sn)
 				g_core->audio_status(true, 50, late);
 			}
 #endif
-			g_core->run();   /* renders forward play */
+			core_run();   /* renders forward play */
 			if (!vlock) diatom_rewind_capture(g_core);   /* locked: after present, in the panel's slack (below) */
 			diatom_disk_tick(g_core);   /* a swapped disc's tray closes */
 		}
