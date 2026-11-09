@@ -489,6 +489,41 @@ void diatom_on_video(const void *data, unsigned w, unsigned h, size_t pitch)
 		g_frame = p;
 		g_frame_cap = need;
 	}
+#ifdef DIATOM_PORT_SOFTROTATE
+	if (diatom_env_rotation() && (g_policy.pixfmt == DIATOM_PIX_RGB565 || g_policy.pixfmt == DIATOM_PIX_XRGB8888)) {
+		/* Turn the frame as it is copied (plorpos-f1p.33): a vertical arcade game arrives as
+		 * its landscape raster with SET_ROTATION asking the frontend for the turn. Quarter
+		 * turns counter-clockwise: 1 = 90, 2 = 180, 3 = 270. Odd ones swap width and height,
+		 * the shape the core announced. The copy walks the destination in order. */
+		const unsigned rot = diatom_env_rotation();
+		const size_t bpp = g_policy.pixfmt == DIATOM_PIX_RGB565 ? 2 : 4;
+		const unsigned dw = (rot & 1) ? h : w, dh = (rot & 1) ? w : h;
+		const size_t dpitch = (size_t)dw * bpp, dneed = dpitch * dh;
+		unsigned x, y;
+
+		if (dneed > g_frame_cap) {
+			void *p = realloc(g_frame, dneed);
+			if (!p) return;
+			g_frame = p;
+			g_frame_cap = dneed;
+		}
+		for (y = 0; y < dh; y++) {
+			uint8_t *d = (uint8_t *)g_frame + (size_t)y * dpitch;
+			for (x = 0; x < dw; x++, d += bpp) {
+				unsigned sx, sy;
+				if (rot == 1)      { sx = w - 1 - y; sy = x; }
+				else if (rot == 2) { sx = w - 1 - x; sy = h - 1 - y; }
+				else               { sx = y;         sy = h - 1 - x; }
+				memcpy(d, (const uint8_t *)data + (size_t)sy * pitch + (size_t)sx * bpp, bpp);
+			}
+		}
+		g_frame_w = (int)dw;
+		g_frame_h = (int)dh;
+		g_frame_pitch = dpitch;
+		g_frame_fresh = true;
+		return;
+	}
+#endif
 	memcpy(g_frame, data, need);
 	g_frame_w = (int)w;
 	g_frame_h = (int)h;

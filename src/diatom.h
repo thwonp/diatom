@@ -140,6 +140,7 @@ void diatom_env_bind(diatom_core *c, diatom_policy *p, diatom_port_caps *caps);
  * time. */
 void diatom_env_pixfmt_begin(void);
 void diatom_env_pixfmt_settle(diatom_core *c);
+unsigned diatom_env_rotation(void);   /* quarter turns CCW the core asked for; 0 unless the port honours it */
 bool diatom_env_geometry_changed(void);
 bool diatom_env_new_geometry(int *w, int *h, double *aspect);   /* consumes the flag */
 

@@ -64,6 +64,11 @@ static bool unmappable(int b)
 	    || (b >= DIATOM_BTN_R3 && b <= DIATOM_BTN_LEVEL);
 }
 
+/* SET_ROTATION as the core asked for it, in quarter turns counter-clockwise (libretro: 0..3).
+ * Only a port that defines DIATOM_PORT_SOFTROTATE honours it; the rest decline, as before. */
+static unsigned g_rotation;
+unsigned diatom_env_rotation(void) { return g_rotation; }
+
 bool diatom_env_geometry_changed(void)
 {
 	bool v = g_geometry_dirty;
@@ -324,12 +329,25 @@ static bool env_cb(unsigned cmd, void *data)
 		diatom_port_log(DIATOM_LOG_INFO, "core asked to shut down");
 		g_shutdown = true;
 		return true;
-	case MASK(RETRO_ENVIRONMENT_SET_ROTATION):
-		/* Declined by default - the port already owns panel rotation, and
-		 * honoring this would mean rotation twice over. Logged so we find out
-		 * if the assumption is wrong. */
-		diatom_port_log(DIATOM_LOG_INFO, "core asked for SET_ROTATION; declined");
+	case MASK(RETRO_ENVIRONMENT_SET_ROTATION): {
+		unsigned r = data ? *(const unsigned *)data : 99u;
+		char m[80];
+#ifdef DIATOM_PORT_SOFTROTATE
+		/* The Flip's panel is 180 degrees from the frame and has no rotation of its own to
+		 * spare for this, so diatom_on_video turns the frame as it copies it (plorpos-f1p.33). */
+		if (r < 4) {
+			g_rotation = r;
+			snprintf(m, sizeof m, "core asked for SET_ROTATION %u; honoured", r);
+			diatom_port_log(DIATOM_LOG_INFO, m);
+			return true;
+		}
+#endif
+		/* Declined by default - the port already owns panel rotation, and honoring this would
+		 * mean rotation twice over. Logged so we find out if the assumption is wrong. */
+		snprintf(m, sizeof m, "core asked for SET_ROTATION %u; declined", r);
+		diatom_port_log(DIATOM_LOG_INFO, m);
 		return false;
+	}
 
 	/* ---- audio ---------------------------------------------------------- */
 	case MASK(RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE):
@@ -959,6 +977,7 @@ void diatom_env_bind(diatom_core *c, diatom_policy *p, diatom_port_caps *caps)
 	g_policy = p;
 	g_caps   = caps;
 	g_bound  = c;
+	g_rotation = 0;
 	g_core_log_left = CORE_LOG_LINES;
 	diatom_env_core_log_flush();
 

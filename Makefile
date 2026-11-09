@@ -143,6 +143,8 @@ ifeq ($(PORT),miyoo)
   # Country's draws although it held speed; 14 ms skips none there and still
   # holds Star Fox at 60.09 fps (4% of draws skipped).
   CFLAGS  += -DDIATOM_PORT_FRAMESKIP -DDIATOM_FRAMESKIP_DEFAULT_MS=14.0
+  # Vertical arcade games: turn the frame when the core asks (SET_ROTATION), plorpos-f1p.33.
+  CFLAGS  += -DDIATOM_PORT_SOFTROTATE
   LDFLAGS += -lm -ldl -lpthread
 endif
 ifeq ($(PORT),brick)
