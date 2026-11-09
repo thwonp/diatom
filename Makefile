@@ -131,6 +131,13 @@ ifeq ($(PORT),miyoo)
   CFLAGS  += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16 -DDIATOM_NO_PREMAP
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(8u * 1024 * 1024)'
+  # Tell a core its frame is late (and skip the blit) when the loop is more
+  # than 14 ms behind: snes9x2010's frameskip=auto reads that signal, so Star
+  # Fox's Super FX scenes drop draws without touching emulation timing
+  # (plorpos-f1p.28). Measured on the Flip: 8 ms skipped 6% of Donkey Kong
+  # Country's draws although it held speed; 14 ms skips none there and still
+  # holds Star Fox at 60.09 fps (4% of draws skipped).
+  CFLAGS  += -DDIATOM_PORT_FRAMESKIP -DDIATOM_FRAMESKIP_DEFAULT_MS=14.0
   LDFLAGS += -lm -ldl -lpthread
 endif
 ifeq ($(PORT),brick)

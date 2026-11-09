@@ -1800,7 +1800,10 @@ static int run_session_inner(const diatom_session *sn)
 	 * hold and the panel repeats one picture - never more than twice in a
 	 * row. DIATOM_FRAMESKIP_MS sets the tolerance, 0 turns it off. */
 #ifdef DIATOM_PORT_FRAMESKIP   /* a port opts in: measured on the Brick and the H700 */
-	const double fs_tol_us = (getenv("DIATOM_FRAMESKIP_MS") ? atof(getenv("DIATOM_FRAMESKIP_MS")) : 8.0) * 1000.0;
+#ifndef DIATOM_FRAMESKIP_DEFAULT_MS
+#define DIATOM_FRAMESKIP_DEFAULT_MS 8.0
+#endif
+	const double fs_tol_us = (getenv("DIATOM_FRAMESKIP_MS") ? atof(getenv("DIATOM_FRAMESKIP_MS")) : DIATOM_FRAMESKIP_DEFAULT_MS) * 1000.0;
 #else
 	const double fs_tol_us = 0;
 #endif
