@@ -131,6 +131,11 @@ ifeq ($(PORT),miyoo)
   CFLAGS  += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16 -DDIATOM_NO_PREMAP
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(8u * 1024 * 1024)'
+  # Rewind starts OFF, as on every other port: the launcher's rewindspeed
+  # defaults to 0 but its SETREWINDSPEED follows RUN and did not always win, so
+  # PS1 ran with a 15-frame capture, +27 MB, and was OOM-killed after a big
+  # shelf browse (plorpos-f1p.40).
+  CFLAGS  += -DDIATOM_REWIND_CAPTURE_EVERY=0
   # Tell a core its frame is late (and skip the blit) when the loop is more
   # than 14 ms behind: snes9x2010's frameskip=auto reads that signal, so Star
   # Fox's Super FX scenes drop draws without touching emulation timing
