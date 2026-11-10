@@ -748,21 +748,21 @@ void diatom_port_shutdown(void)
 
 /* ---------- backlight: pwm0, the launcher's ladder ---------------------------- */
 
-/* The same twelve rungs and period as the launcher's apply_brightness (TortOS
- * platform_miyoo.c), so a level handed either way lands on the same duty. */
+/* The same twelve raw duties as the launcher's apply_brightness (TortOS
+ * platform_miyoo.c; judged by eye, plorpos-f1p.53), so a level handed either
+ * way lands on the same duty. */
 #define PWM_DUTY   "/sys/class/pwm/pwmchip0/pwm0/duty_cycle"
-#define PWM_PERIOD 800
 #define BRIGHT_CNT 12
 static int g_bright_idx = -1;
 
 static void bright_apply(void)
 {
-	static const unsigned char ladder[BRIGHT_CNT] = { 2, 4, 8, 16, 32, 48, 72, 96, 128, 160, 192, 255 };
+	static const unsigned char ladder[BRIGHT_CNT] = { 3, 5, 8, 12, 17, 24, 33, 44, 56, 70, 85, 100 };
 	FILE *f;
 
 	if (g_bright_idx < 0) return;
 	if (!(f = fopen(PWM_DUTY, "w"))) return;
-	fprintf(f, "%d", ladder[g_bright_idx] * PWM_PERIOD / 255);
+	fprintf(f, "%d", ladder[g_bright_idx]);
 	fclose(f);
 }
 
