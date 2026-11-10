@@ -21,6 +21,9 @@
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <linux/input.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -150,21 +153,53 @@ static volatile bool   g_audio_on, g_stop;
 static volatile bool   g_muted;
 static volatile bool   g_lid_closed;   /* the hall sensor, polled in input_poll */
 
+/* Music in (TortOS plorpos-f1p.9): Muse sends its PCM - 48 kHz S16 stereo,
+ * raw - over a unix socket, because MI_AO has one owner and it is this
+ * process. A thread reads the socket into a ring, and the writer below plays
+ * a music chunk INSTEAD of the game's: a game is silent while music plays, as
+ * on every other port. The game's own chunk is still consumed, so its audio
+ * pacing does not notice. A client going away empties the ring (that is how
+ * Muse drops what it queued). */
+#define MUSIC_SOCK   "/tmp/diatom-music.sock"
+#define MUSIC_RING   4096
+#define MUSIC_HOLD   28          /* chunks (~300 ms) music keeps the output after its last */
+static int16_t         g_mring[MUSIC_RING * 2];
+static size_t          g_mrd, g_mwr;        /* frames, free-running; under g_lock */
+static int             g_mlisten = -1;
+static pthread_t       g_music;
+static bool            g_music_on;
+
 static void *writer(void *arg)
 {
-	static int16_t chunk[AUDIO_CHUNK * 2];
+	static int16_t chunk[AUDIO_CHUNK * 2], mchunk[AUDIO_CHUNK * 2];
+	int hold = 0;
 	(void)arg;
 
 	while (!g_stop) {
 		size_t have;
+		bool music = false;
 
 		pthread_mutex_lock(&g_lock);
 		have = g_wr - g_rd;
-		if (have >= AUDIO_CHUNK) {
+		if (g_mwr - g_mrd >= AUDIO_CHUNK) {
 			for (size_t i = 0; i < AUDIO_CHUNK; i++) {
-				size_t at = (g_rd + i) % AUDIO_BUFFER_FRAMES;
-				chunk[2 * i]     = g_ring[2 * at];
-				chunk[2 * i + 1] = g_ring[2 * at + 1];
+				size_t at = (g_mrd + i) % MUSIC_RING;
+				mchunk[2 * i]     = g_mring[2 * at];
+				mchunk[2 * i + 1] = g_mring[2 * at + 1];
+			}
+			g_mrd += AUDIO_CHUNK;
+			music = true;
+			hold = MUSIC_HOLD;
+		} else if (hold > 0) {
+			hold--;
+		}
+		if (have >= AUDIO_CHUNK) {
+			if (!music && hold == 0) {
+				for (size_t i = 0; i < AUDIO_CHUNK; i++) {
+					size_t at = (g_rd + i) % AUDIO_BUFFER_FRAMES;
+					chunk[2 * i]     = g_ring[2 * at];
+					chunk[2 * i + 1] = g_ring[2 * at + 1];
+				}
 			}
 			g_rd += AUDIO_CHUNK;
 		}
@@ -172,8 +207,12 @@ static void *writer(void *arg)
 		/* Nothing to play: play silence. A starved MI_AO lets the amplifier
 		 * pick up the Wi-Fi radio - three pops every couple of seconds, heard
 		 * on the Flip (2026-11-04) - which is why Allium runs an audioserver
-		 * that does exactly this. MI_AO's own queue paces the loop. */
-		if (have < AUDIO_CHUNK || g_muted || g_lid_closed) memset(chunk, 0, sizeof chunk);
+		 * that does exactly this. MI_AO's own queue paces the loop. Music, or
+		 * the short hold after it, takes the output from the game; a gap
+		 * inside the hold is silence, not the game. */
+		if (music) memcpy(chunk, mchunk, sizeof chunk);
+		else if (hold > 0 || have < AUDIO_CHUNK) memset(chunk, 0, sizeof chunk);
+		if (g_muted || g_lid_closed) memset(chunk, 0, sizeof chunk);
 
 		mi_audio_frame f;
 		memset(&f, 0, sizeof f);
@@ -186,6 +225,80 @@ static void *writer(void *arg)
 		while (!g_stop && mi.send(0, 0, &f, 1) != 0) usleep(2000);
 	}
 	return NULL;
+}
+
+/* Push frames into the music ring, waiting for room: the wait is the
+ * backpressure that paces Muse. */
+static void music_push(const int16_t *fr, size_t n)
+{
+	while (n && !g_stop) {
+		size_t room, k;
+
+		pthread_mutex_lock(&g_lock);
+		room = MUSIC_RING - (g_mwr - g_mrd);
+		k = n < room ? n : room;
+		for (size_t i = 0; i < k; i++) {
+			size_t at = (g_mwr + i) % MUSIC_RING;
+			g_mring[2 * at]     = fr[2 * i];
+			g_mring[2 * at + 1] = fr[2 * i + 1];
+		}
+		g_mwr += k;
+		pthread_mutex_unlock(&g_lock);
+		fr += 2 * k;
+		n -= k;
+		if (n) usleep(4000);
+	}
+}
+
+static void *music_thread(void *arg)
+{
+	uint8_t buf[2048];
+	(void)arg;
+
+	while (!g_stop) {
+		struct pollfd pf = { g_mlisten, POLLIN, 0 };
+		size_t have = 0;
+		int c;
+
+		if (poll(&pf, 1, 200) <= 0 || (c = accept4(g_mlisten, NULL, NULL, SOCK_CLOEXEC)) < 0) continue;
+		pf.fd = c;
+		while (!g_stop) {
+			ssize_t r;
+
+			if (poll(&pf, 1, 200) <= 0) continue;
+			if ((r = read(c, buf + have, sizeof buf - have)) <= 0) {
+				if (r < 0 && errno == EINTR) continue;
+				break;
+			}
+			have += (size_t)r;
+			music_push((const int16_t *)buf, have / 4);
+			memmove(buf, buf + have / 4 * 4, have % 4);   /* a split frame waits for its rest */
+			have %= 4;
+		}
+		close(c);
+		pthread_mutex_lock(&g_lock);   /* the client went: what it queued goes with it */
+		g_mrd = g_mwr;
+		pthread_mutex_unlock(&g_lock);
+	}
+	return NULL;
+}
+
+static void music_open(void)
+{
+	struct sockaddr_un a;
+
+	if ((g_mlisten = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) return;
+	memset(&a, 0, sizeof a);
+	a.sun_family = AF_UNIX;
+	snprintf(a.sun_path, sizeof a.sun_path, "%s", MUSIC_SOCK);
+	unlink(MUSIC_SOCK);
+	if (bind(g_mlisten, (struct sockaddr *)&a, sizeof a) < 0 || listen(g_mlisten, 1) < 0 ||
+	    pthread_create(&g_music, NULL, music_thread, NULL) != 0) {
+		close(g_mlisten);
+		g_mlisten = -1;
+		return;
+	}
+	g_music_on = true;
 }
 
 static bool mi_ready(void)
@@ -231,6 +344,7 @@ static bool audio_open(void)
 	g_stop = false;
 	if (pthread_create(&g_writer, NULL, writer, NULL) != 0) return false;
 	g_audio_on = true;
+	music_open();
 	volume_apply();
 	diatom_port_log(DIATOM_LOG_INFO, "audio: MI_AO 48000 Hz stereo, 512-frame chunks");
 	return true;
@@ -241,6 +355,13 @@ static void audio_close(void)
 	if (!g_audio_on) return;
 	g_stop = true;
 	pthread_join(g_writer, NULL);
+	if (g_music_on) {
+		pthread_join(g_music, NULL);
+		close(g_mlisten);
+		unlink(MUSIC_SOCK);
+		g_mlisten = -1;
+		g_music_on = false;
+	}
 	mi.disable_chn(0, 0);
 	mi.disable(0);
 	g_audio_on = false;
@@ -256,7 +377,7 @@ bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 void diatom_port_audio_get(char *out, size_t cap) { if (out && cap) out[0] = '\0'; }
 
 /* MI_AO stays open for diatom's whole life, fed silence between games (see
- * writer). Handing it to Muse is TortOS plorpos-f1p.9's design. */
+ * writer); Muse's music comes in over a socket (music_thread). */
 size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 {
 	size_t room;
