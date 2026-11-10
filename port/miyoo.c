@@ -148,6 +148,7 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t       g_writer;
 static volatile bool   g_audio_on, g_stop;
 static volatile bool   g_muted;
+static volatile bool   g_lid_closed;   /* the hall sensor, polled in input_poll */
 
 static void *writer(void *arg)
 {
@@ -172,7 +173,7 @@ static void *writer(void *arg)
 		 * pick up the Wi-Fi radio - three pops every couple of seconds, heard
 		 * on the Flip (2026-11-04) - which is why Allium runs an audioserver
 		 * that does exactly this. MI_AO's own queue paces the loop. */
-		if (have < AUDIO_CHUNK || g_muted) memset(chunk, 0, sizeof chunk);
+		if (have < AUDIO_CHUNK || g_muted || g_lid_closed) memset(chunk, 0, sizeof chunk);
 
 		mi_audio_frame f;
 		memset(&f, 0, sizeof f);
@@ -747,6 +748,39 @@ static void bright_step(int step)
 
 /* ---------- input ----------------------------------------------------------- */
 
+/* The lid, in a game (plorpos-f1p.7; the launcher does the same on the shelf):
+ * the hall sensor's level, closed = 0 (1 was read with the lid open). Closed
+ * blanks pwm0 and mutes the writer; open writes the duty back. No suspend. */
+#define HALL_VALUE "/sys/devices/soc0/soc/soc:hall-mh248/hallvalue"
+static void lid_poll(void)
+{
+	static uint64_t next;
+	static char saved[16];
+	uint64_t now = diatom_port_now_us();
+	char buf[8] = "";
+	int fd;
+	bool c;
+	FILE *f;
+
+	if (now < next) return;
+	next = now + 250000;
+	if ((fd = open(HALL_VALUE, O_RDONLY | O_CLOEXEC)) < 0) return;
+	if (read(fd, buf, sizeof buf - 1) <= 0) { close(fd); return; }
+	close(fd);
+	c = buf[0] == '0';
+	if (c == g_lid_closed) return;
+	fprintf(stderr, "lid: %s (hall %c)\n", c ? "closed" : "open", buf[0]);
+	if (c) {
+		saved[0] = 0;
+		if ((f = fopen(PWM_DUTY, "r"))) { if (!fgets(saved, sizeof saved, f)) saved[0] = 0; fclose(f); }
+		if ((f = fopen(PWM_DUTY, "w"))) { fputs("0", f); fclose(f); }
+	} else if (saved[0] && (f = fopen(PWM_DUTY, "w"))) {
+		fputs(saved, f);
+		fclose(f);
+	}
+	g_lid_closed = c;
+}
+
 static const struct { int code; int btn; } keymap[] = {
 	{ KEY_UP, DIATOM_BTN_UP }, { KEY_DOWN, DIATOM_BTN_DOWN },
 	{ KEY_LEFT, DIATOM_BTN_LEFT }, { KEY_RIGHT, DIATOM_BTN_RIGHT },
@@ -770,6 +804,7 @@ void diatom_port_input_poll(void)
 	unsigned char bits[KEY_MAX / 8 + 1];
 	uint32_t s = 0;
 
+	lid_poll();
 	while (g_pad >= 0 && read(g_pad, &ev, sizeof ev) == (ssize_t)sizeof ev) { }
 	memset(bits, 0, sizeof bits);
 	if (g_pad < 0 || ioctl(g_pad, EVIOCGKEY(sizeof bits), bits) < 0) { g_buttons = 0; return; }
