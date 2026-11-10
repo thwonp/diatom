@@ -391,6 +391,34 @@ static void draw_overlay(uint32_t *px, size_t pitch_px)
 	}
 }
 
+/* The level bar after a Vol or MENU+Vol step (plorpos-f1p.50): 12 logical rows
+ * across the top, written straight into the page after the blit - no read-back
+ * of fb memory, and nothing at all while hidden but one compare in present.
+ * Same tints as the launcher's UI_OSD_VOLUME / UI_OSD_BRIGHT. */
+static uint64_t g_bar_until;
+static int g_bar_level, g_bar_max = 1;
+static bool g_bar_bright;
+
+static void bar_show(bool bright, int level, int max)
+{
+	g_bar_bright = bright; g_bar_level = level; g_bar_max = max > 0 ? max : 1;
+	g_bar_until = diatom_port_now_us() + 1500000ull;
+}
+
+static void draw_bar(uint32_t *px, size_t pitch_px)
+{
+	const uint32_t on = 0xFF000000u | (g_bar_bright ? (255u << 16 | 206u << 8 | 128u) : (61u << 16 | 214u << 8 | 255u));
+	const uint32_t off = 0xFF000000u | (60u << 16 | 62u << 8 | 72u), scrim = 0xFF000000u | (24u << 16 | 24u << 8 | 30u);
+	const int W = (int)g_var.xres, fill = W * g_bar_level / g_bar_max;
+
+	for (int y = 0; y < 12; y++) {
+		/* Turned 180 degrees, as scale() draws (the panel is upside down). */
+		uint32_t *row = px + (size_t)(g_var.yres - 1 - (unsigned)y) * pitch_px;
+		for (int x = 0; x < W; x++)
+			row[W - 1 - x] = y < 3 || y >= 9 ? scrim : x < fill ? on : off;
+	}
+}
+
 static diatom_rect g_ov_drawn[3];
 
 /* The flip thread: FBIOPAN_DISPLAY waits for vblank here (12.7 ms a frame
@@ -599,6 +627,10 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 		draw_overlay(px, pitch_px);
 		g_ov_drawn[back].w = 1;
 	}
+	if (g_bar_until && t1 < g_bar_until) {
+		draw_bar(px, pitch_px);
+		g_ov_drawn[back].w = 1;
+	}
 	flip_to(back);
 	t2 = diatom_port_now_us();
 	/* Where present's time goes (TortOS plorpos-f1p.14): the blit, and the
@@ -740,10 +772,12 @@ static void bright_step(int step)
 
 	if (to < 0) to = 0;
 	if (to > BRIGHT_CNT - 1) to = BRIGHT_CNT - 1;
-	if (to == g_bright_idx) return;
-	g_bright_idx = to;
-	bright_apply();
-	fprintf(stderr, "backlight: %d/%d\n", g_bright_idx, BRIGHT_CNT - 1);
+	if (to != g_bright_idx) {
+		g_bright_idx = to;
+		bright_apply();
+		fprintf(stderr, "backlight: %d/%d\n", g_bright_idx, BRIGHT_CNT - 1);
+	}
+	bar_show(true, g_bright_idx, BRIGHT_CNT - 1);
 }
 
 /* ---------- input ----------------------------------------------------------- */
@@ -837,6 +871,7 @@ void diatom_port_input_poll(void)
 				volume_apply();
 				fprintf(stderr, "audio: volume %d/%d\n", g_vol_idx, g_vol_cnt - 1);
 			}
+			bar_show(false, g_vol_idx, g_vol_cnt - 1);
 		}
 	}
 }
