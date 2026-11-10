@@ -713,6 +713,38 @@ void diatom_port_shutdown(void)
 	if (g_fb >= 0) { close(g_fb); g_fb = -1; }
 }
 
+/* ---------- backlight: pwm0, the launcher's ladder ---------------------------- */
+
+/* The same twelve rungs and period as the launcher's apply_brightness (TortOS
+ * platform_miyoo.c), so a level handed either way lands on the same duty. */
+#define PWM_DUTY   "/sys/class/pwm/pwmchip0/pwm0/duty_cycle"
+#define PWM_PERIOD 800
+#define BRIGHT_CNT 12
+static int g_bright_idx = -1;
+
+static void bright_apply(void)
+{
+	static const unsigned char ladder[BRIGHT_CNT] = { 2, 4, 8, 16, 32, 48, 72, 96, 128, 160, 192, 255 };
+	FILE *f;
+
+	if (g_bright_idx < 0) return;
+	if (!(f = fopen(PWM_DUTY, "w"))) return;
+	fprintf(f, "%d", ladder[g_bright_idx] * PWM_PERIOD / 255);
+	fclose(f);
+}
+
+static void bright_step(int step)
+{
+	int to = (g_bright_idx < 0 ? BRIGHT_CNT / 2 : g_bright_idx) + step;
+
+	if (to < 0) to = 0;
+	if (to > BRIGHT_CNT - 1) to = BRIGHT_CNT - 1;
+	if (to == g_bright_idx) return;
+	g_bright_idx = to;
+	bright_apply();
+	fprintf(stderr, "backlight: %d/%d\n", g_bright_idx, BRIGHT_CNT - 1);
+}
+
 /* ---------- input ----------------------------------------------------------- */
 
 static const struct { int code; int btn; } keymap[] = {
@@ -745,15 +777,23 @@ void diatom_port_input_poll(void)
 		if (bits[keymap[i].code / 8] >> (keymap[i].code % 8) & 1) s |= DIATOM_BIT(keymap[i].btn);
 	g_buttons = s;
 	/* The volume keys, here in a game: this process owns MI_AO, and the
-	 * launcher does not see them while a game runs (2026-11-04). */
+	 * launcher does not see them while a game runs (2026-11-04). Under MENU
+	 * they are brightness (as on the shelf; plorpos-f1p.50), and LEVEL is
+	 * held while one is down so that MENU's release is no menu tap. */
 	{
-		static bool up_was, dn_was;
+		static bool up_was, dn_was, chord;
 		bool up = bits[KEY_VOLUMEUP / 8] >> (KEY_VOLUMEUP % 8) & 1;
 		bool dn = bits[KEY_VOLUMEDOWN / 8] >> (KEY_VOLUMEDOWN % 8) & 1;
+		bool menu = s & DIATOM_BIT(DIATOM_BTN_MENU);
 		int step = (up && !up_was) - (dn && !dn_was);
 
 		up_was = up; dn_was = dn;
-		if (step) {
+		if (step && menu) chord = true;
+		if (!up && !dn) chord = false;
+		if (chord) g_buttons |= DIATOM_BIT(DIATOM_BTN_LEVEL);
+		if (step && menu) {
+			bright_step(step);
+		} else if (step) {
 			int to = g_vol_idx + step;
 			if (to < 0) to = 0;
 			if (to > g_vol_cnt - 1) to = g_vol_cnt - 1;
@@ -783,9 +823,14 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
 	fprintf(stderr, "[%s] %s\n", tag[lvl], msg);
 }
 
-/* Volume only; brightness is the launcher's (pwm0). */
 bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 {
+	if (kind == DIATOM_LEVEL_BRIGHTNESS) {
+		if (g_bright_idx < 0) return false;   /* nothing handed over yet */
+		*index = g_bright_idx;
+		*count = BRIGHT_CNT;
+		return true;
+	}
 	if (kind != DIATOM_LEVEL_VOLUME) return false;
 	*index = g_vol_idx;
 	*count = g_vol_cnt;
@@ -793,6 +838,12 @@ bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 }
 bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 {
+	if (kind == DIATOM_LEVEL_BRIGHTNESS) {
+		if (count < 2 || index < 0 || index >= count) return false;
+		g_bright_idx = (index * (BRIGHT_CNT - 1) + (count - 1) / 2) / (count - 1);
+		bright_apply();
+		return true;
+	}
 	if (kind != DIATOM_LEVEL_VOLUME || count < 2 || index < 0 || index >= count) return false;
 	g_vol_idx = index;
 	g_vol_cnt = count;
