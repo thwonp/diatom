@@ -388,6 +388,23 @@ void diatom_rewind_capture(diatom_core *c)
 		quiet_end(quiet);
 	}
 	if (!n || n > (size_t)LZ4_MAX_INPUT_SIZE) return;
+#ifdef DIATOM_REWIND_MAX_STATE_BYTES
+	/* plorpos-f1p.45. Rewind holds six buffers of n bytes plus a scratch of
+	 * about n: a PS1 state (several MB) costs ~26 MB beside the 8 MB ring,
+	 * which on a 101 MB device took the resident to 50 MB anon and 4-6 MB
+	 * MemAvailable (the same game standalone, rewind off, is 23 MB). A core
+	 * this large gets no rewind rather than a dead device. */
+	if (n > DIATOM_REWIND_MAX_STATE_BYTES) {
+		static size_t said;
+
+		if (said != n) {
+			said = n;
+			fprintf(stderr, "diatom: rewind off, state %zu bytes is over the %u cap\n",
+			        n, (unsigned)DIATOM_REWIND_MAX_STATE_BYTES);
+		}
+		return;
+	}
+#endif
 
 	pthread_mutex_lock(&g_qmx);
 	/* Every path below that needs the worker idle checks rather than waits:

@@ -130,6 +130,11 @@ ifeq ($(PORT),miyoo)
   CC       = $(CROSS)gcc
   CFLAGS  += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16 -DDIATOM_NO_PREMAP
+  # plorpos-f1p.45: re-exec the resident between games when it retains more
+  # than this much anon (core .bss that malloc_trim cannot return).
+  CFLAGS  += -DDIATOM_RECYCLE_ANON_KB=4096
+  # plorpos-f1p.45: no rewind for a core whose state is bigger than this (PS1).
+  CFLAGS  += -DDIATOM_REWIND_MAX_STATE_BYTES='(2u * 1024 * 1024)'
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(8u * 1024 * 1024)'
   # Rewind starts OFF, as on every other port: the launcher's rewindspeed
   # defaults to 0 but its SETREWINDSPEED follows RUN and did not always win, so

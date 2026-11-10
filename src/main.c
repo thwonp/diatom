@@ -16,6 +16,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -2803,6 +2804,30 @@ static int run_session_inner(const diatom_session *sn)
 /* The phase belongs out here, not inside, so that an early return added later
  * cannot forget to clear it and leave the crash handler reporting on a game
  * that is no longer in flight. There are six such returns already. */
+#ifdef DIATOM_RECYCLE_ANON_KB
+/* plorpos-f1p.45. A resident never unloads a core (ADR-0006), and a core's
+ * .bss pages stay resident after its game ends: snes9x2010 keeps 10 MB of
+ * them, which no malloc_trim can return. The next big core (PS1, 24 MB) then
+ * lands on top and the resident is OOM-killed on a 101 MB device. Cores run
+ * retro_init once and are never deinitialised, so zeroing that bss is not
+ * safe either; a fresh process is. Checked between games, after EXIT, so it
+ * costs the player nothing: the launcher reconnects to the new resident on
+ * its next launch, as it does after any restart. */
+static long self_anon_kb(void)
+{
+	char line[128];
+	long kb = -1;
+	FILE *f = fopen("/proc/self/status", "r");
+
+	if (!f) return -1;
+	while (fgets(line, sizeof line, f))
+		if (sscanf(line, "RssAnon: %ld kB", &kb) == 1) break;
+	fclose(f);
+	return kb;
+}
+static bool g_recycle;
+#endif
+
 static int run_session(const diatom_session *sn)
 {
 	int rc;
@@ -2986,7 +3011,11 @@ int main(int argc, char **argv)
 		 * holds only the cores actually played (TortOS plorpos-f1p.14). */
 		terminate_init();
 
-		while (!g_quit_requested && !g_terminate) {
+		while (!g_quit_requested && !g_terminate
+#ifdef DIATOM_RECYCLE_ANON_KB
+		       && !g_recycle
+#endif
+		       ) {
 			diatom_msg m;
 			diatom_session sn;
 
@@ -3053,6 +3082,16 @@ int main(int argc, char **argv)
 			 * resident and several systems share one, so a value left
 			 * standing reaches the next game through the same core. */
 			diatom_options_clear_pending();
+#ifdef DIATOM_RECYCLE_ANON_KB
+			{
+				long kb = self_anon_kb();
+
+				if (kb > DIATOM_RECYCLE_ANON_KB) {
+					fprintf(stderr, "diatom: recycle, %ld kB anon retained after the game\n", kb);
+					g_recycle = true;
+				}
+			}
+#endif
 		}
 		diatom_proto_close();
 	} else {
@@ -3074,5 +3113,19 @@ int main(int argc, char **argv)
 	diatom_audio_tap_close();
 	diatom_port_shutdown();
 	free(g_frame);
+#ifdef DIATOM_RECYCLE_ANON_KB
+	if (g_recycle) {
+		/* The resolved path, not /proc/self/exe: exec'd through that link the
+		 * process is named "exe", and `pidof diatom` (launch.sh) loses it. */
+		char exe[1024];
+		ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+
+		if (n > 0) {
+			exe[n] = '\0';
+			execv(exe, argv);
+		}
+		fprintf(stderr, "diatom: recycle exec failed: %s\n", strerror(errno));
+	}
+#endif
 	return 0;
 }
