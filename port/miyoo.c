@@ -554,9 +554,15 @@ static int             g_inflight = -1; /* page being panned to, or -1 */
 static bool            g_flipping, g_flip_stop;
 static int             g_npages;
 
+/* The vsync lock's state the flip thread reads (the lock itself is below). */
+static volatile double g_panel_us;   /* the panel's period, measured here; 0 until known */
+static bool     g_vlock;
+static unsigned g_lk_off;            /* frames left with the lock stood down */
+static unsigned g_replaced;          /* frames replaced before their pan, since the last flip line */
+
 static void *flipper(void *arg)
 {
-	uint64_t t0 = diatom_port_now_us();
+	uint64_t t0 = diatom_port_now_us(), flast = 0;
 	unsigned pans = 0;
 	(void)arg;
 
@@ -569,15 +575,29 @@ static void *flipper(void *arg)
 		g_pending = -1;
 		g_inflight = page;
 		g_flipping = true;
+		pthread_cond_broadcast(&g_flip_cond);   /* the vsync lock waits for this take */
 		pthread_mutex_unlock(&g_flip_lock);
 		pan_to(page);
+		{
+			/* The panel's own period: gaps of one vsync each (a frame that came
+			 * late is a gap of two, not the panel slowing), averaged over a few
+			 * hundred of them. */
+			uint64_t t = diatom_port_now_us();
+			double g = flast ? (double)(t - flast) : 0;
+			if (g > 15000 && g < 18500)
+				g_panel_us = g_panel_us > 0 ? g_panel_us + (g - g_panel_us) / 256.0 : g;
+			flast = t;
+		}
 		pthread_mutex_lock(&g_flip_lock);
 		g_flipping = false;
 		g_inflight = -1;
 		pthread_cond_broadcast(&g_flip_cond);
 		if (++pans == 600) {
 			uint64_t now = diatom_port_now_us();
-			fprintf(stderr, "flip: %.2f pans/s\n", 600 * 1e6 / (double)(now - t0));
+			fprintf(stderr, "flip: %.2f pans/s, %u frame(s) never shown, panel %.3f Hz, vsync lock %s\n",
+			        600 * 1e6 / (double)(now - t0), g_replaced, g_panel_us > 0 ? 1e6 / g_panel_us : 0.0,
+			        g_vlock ? "on" : g_lk_off ? "stood down" : "off");
+			g_replaced = 0;
 			t0 = now; pans = 0;
 		}
 	}
@@ -600,6 +620,7 @@ static int free_page(void)
 static void flip_to(int page)
 {
 	pthread_mutex_lock(&g_flip_lock);
+	if (g_pending >= 0) g_replaced++;   /* a frame never shown */
 	g_pending = page;
 	pthread_cond_signal(&g_flip_cond);
 	pthread_mutex_unlock(&g_flip_lock);
@@ -611,6 +632,101 @@ static void flip_drain(void)
 	pthread_mutex_lock(&g_flip_lock);
 	while (g_pending >= 0 || g_flipping) pthread_cond_wait(&g_flip_cond, &g_flip_lock);
 	pthread_mutex_unlock(&g_flip_lock);
+}
+
+/* ---------- vsync lock (TortOS plorpos-f1p.66, ADR-0048) ----------------------
+ * The panel refreshes at 59.65 Hz and most cores run at 60.1: free-running, a
+ * newer frame replaces one still waiting for its pan about every 2.2 s, and a
+ * scrolling game visibly hitches (Super Mario Bros). Locked, the loop waits after
+ * each frame until its page is on glass, so it runs at the panel's rate and every
+ * frame is shown; main's rate control resamples audio by the panel/core ratio.
+ * Only for the cores in LOCK_CORES (TortOS plorpos-f1p.66), whose heaviest
+ * measured content leaves a whole vsync of headroom: locked, the frameskip that
+ * keeps a heavy core at full speed never engages, and DKC (snes9x2010, 7.9 ms
+ * a frame) played at 58-59 fps locked against 60.08 free. Per-frame core time
+ * measured on the Flip (lrbench, average / p99): FCEUmm worst 4.4 / 5.2
+ * (Castlevania III), mGBA 3.2 / 3.7, Beetle PCE Fast 2.2 / 2.6. RACE is light
+ * too (3.9 at worst over 49 ROMs) but keeps its own 60.25 Hz: one retro_run
+ * sometimes emulates two frames, so holding the loop does not hold the game, and
+ * locked its audio overflowed (4400-6400 frames dropped a run). Every other core
+ * runs free, as on Onion, sprigUI and
+ * Allium, which ship RetroArch with vsync off (on only for fake-08). The Flip's
+ * governor is already `performance`, so the Brick's governor pin is not needed.
+ * Forced off by DIATOM_VSYNC=0 or TortOS/diatom.novsync. A locked core that
+ * cannot keep the panel (more than 2 of 120 frames slipping a vsync: a state
+ * load, a save flush) stands down and tries again later, waiting twice as long
+ * each time (10 s .. 5 min), as on the Brick. */
+static const char *const LOCK_CORES[] = { "FCEUmm", "mGBA", "Beetle PCE Fast" };
+static bool     g_lk_core;     /* this game's core is in LOCK_CORES */
+static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600;
+static uint64_t g_lk_last;
+
+/* The core's library_name, once per game as it loads. */
+void diatom_port_core_name(const char *name)
+{
+	size_t i;
+
+	g_lk_core = false;
+	for (i = 0; name && i < sizeof LOCK_CORES / sizeof LOCK_CORES[0]; i++)
+		if (!strcmp(name, LOCK_CORES[i])) g_lk_core = true;
+	g_lk_off = 0;
+	g_lk_backoff = 600;
+	g_lk_frames = g_lk_miss = 0;
+	g_lk_last = 0;
+	fprintf(stderr, "vsync: lock %s for %s\n", g_lk_core ? "on" : "off", name ? name : "?");
+}
+
+double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
+
+bool diatom_port_vsync_lock(bool want)
+{
+	static int on = -1;
+	static unsigned calls;
+
+	if (!(calls++ & 63) || on < 0) {
+		const char *e = getenv("DIATOM_VSYNC");
+		on = !((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.novsync", F_OK) == 0);
+	}
+	if (g_lk_off) { g_lk_off--; want = false; g_lk_last = 0; g_lk_frames = g_lk_miss = 0; }
+	g_vlock = on > 0 && want && g_lk_core && g_fbmem && g_panel_us > 0;
+	return g_vlock;
+}
+
+/* After each locked frame: wait (50 ms at most) until the flip thread has taken
+ * the page just handed over - not until it is on glass, as on the Brick. With
+ * three pages the loop may then run one frame ahead: a light core is still held
+ * to the panel (its next frame waits for this pan to finish) and no frame is ever
+ * replaced, while a heavy frame that runs past a vsync costs only its overrun.
+ * Waiting for the pan itself made every late DKC frame cost a whole vsync. Two
+ * returns one panel period apart = on time; 1.5 periods or more = a slip. */
+void diatom_port_vsync_wait(void)
+{
+	struct timespec to;
+	uint64_t t;
+
+	if (!g_vlock) return;
+	clock_gettime(CLOCK_REALTIME, &to);
+	to.tv_nsec += 50 * 1000000L;
+	if (to.tv_nsec >= 1000000000L) { to.tv_sec++; to.tv_nsec -= 1000000000L; }
+	pthread_mutex_lock(&g_flip_lock);
+	while (!g_flip_stop && g_pending >= 0)
+		if (pthread_cond_timedwait(&g_flip_cond, &g_flip_lock, &to) != 0) break;
+	pthread_mutex_unlock(&g_flip_lock);
+	t = diatom_port_now_us();
+	if (g_lk_last && g_panel_us > 0) {
+		if ((double)(t - g_lk_last) > g_panel_us * 1.5) g_lk_miss++;
+		if (++g_lk_frames >= 120) {
+			if (g_lk_miss > 2) {
+				fprintf(stderr, "vsync: lock stands down for %u frames (%u of 120 slipped)\n", g_lk_backoff, g_lk_miss);
+				g_lk_off = g_lk_backoff;
+				g_lk_backoff = g_lk_backoff < 18000 ? g_lk_backoff * 2 : g_lk_backoff;
+			} else {
+				g_lk_backoff = 600;
+			}
+			g_lk_frames = g_lk_miss = 0;
+		}
+	}
+	g_lk_last = t;
 }
 
 /* The hardware path: the core's frame copied into MMA memory (physically
