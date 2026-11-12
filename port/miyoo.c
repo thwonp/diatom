@@ -635,46 +635,37 @@ static void flip_drain(void)
 	pthread_mutex_unlock(&g_flip_lock);
 }
 
-/* ---------- vsync lock (TortOS plorpos-f1p.66, ADR-0048) ----------------------
- * The panel refreshes at 59.65 Hz and most cores run at 60.1: free-running, a
- * newer frame replaces one still waiting for its pan about every 2.2 s, and a
- * scrolling game visibly hitches (Super Mario Bros). Locked, the loop waits after
- * each frame until its page is on glass, so it runs at the panel's rate and every
- * frame is shown; main's rate control resamples audio by the panel/core ratio.
- * Only for the cores in LOCK_CORES (TortOS plorpos-f1p.66), whose heaviest
- * measured content leaves a whole vsync of headroom: locked, the frameskip that
- * keeps a heavy core at full speed never engages, and DKC (snes9x2010, 7.9 ms
- * a frame) played at 58-59 fps locked against 60.08 free. Per-frame core time
- * measured on the Flip (lrbench, average / p99): FCEUmm worst 4.4 / 5.2
- * (Castlevania III), mGBA 3.2 / 3.7, Beetle PCE Fast 2.2 / 2.6. RACE is light
- * too (3.9 at worst over 49 ROMs) but keeps its own 60.25 Hz: one retro_run
- * sometimes emulates two frames, so holding the loop does not hold the game, and
- * locked its audio overflowed (4400-6400 frames dropped a run). Every other core
- * runs free, as on Onion, sprigUI and
- * Allium, which ship RetroArch with vsync off (on only for fake-08). The Flip's
- * governor is already `performance`, so the Brick's governor pin is not needed.
- * Forced off by DIATOM_VSYNC=0 or TortOS/diatom.novsync. A locked core that
- * cannot keep the panel (more than 2 of 120 frames slipping a vsync: a state
- * load, a save flush) stands down and tries again later, waiting twice as long
- * each time (10 s .. 5 min), as on the Brick. */
-static const char *const LOCK_CORES[] = { "FCEUmm", "mGBA", "Beetle PCE Fast" };
-static bool     g_lk_core;     /* this game's core is in LOCK_CORES */
+/* ---------- vsync lock (TortOS plorpos-f1p.66, .68, ADR-0048) ----------------
+ * Every core runs locked: the loop waits after each frame until the flip thread
+ * has taken its page, so the game runs at the panel's rate and every frame is
+ * shown; main's rate control resamples audio by the panel/core ratio. The panel
+ * is retimed to the core's own fps at game start (below), so that ratio is about
+ * 1.0 and the game keeps its true speed. Measured on the Flip, locked against
+ * free: DKC (snes9x2010) 60.00 / 60.09 fps, Dank Tomb (fake-08) 60.01 / 60.00,
+ * SMB3 (FCEUmm) 60.10, every one 0 audio dropped and 0 frames never shown.
+ * Two ways out, each automatic, so no core list is needed:
+ * - a core that cannot keep the panel (more than 2 of 120 frames slipping a
+ *   vsync: a heavy scene, a state load, a save flush) stands down and tries
+ *   again later, waiting twice as long each time (10 s .. 5 min), as on the Brick;
+ * - a core whose audio overflows while locked (more than 1 ms of audio dropped
+ *   since it locked) runs free for the rest of the game. RACE is the one seen: one
+ *   retro_run sometimes emulates two frames, so holding the loop does not hold the
+ *   game (60.56 fps locked against its 60.25, 7188 audio frames dropped in 73 s).
+ * Forced off by DIATOM_VSYNC=0 or TortOS/diatom.novsync. */
+uint64_t diatom_audio_dropped(void);   /* src/audio.c: frames the sink would not take */
+static bool     g_lk_audio_off;        /* this game overflowed audio locked: free until it ends */
 static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600;
-static uint64_t g_lk_last;
+static uint64_t g_lk_last, g_lk_dropped;
 
 /* The core's library_name, once per game as it loads. */
 void diatom_port_core_name(const char *name)
 {
-	size_t i;
-
-	g_lk_core = false;
-	for (i = 0; name && i < sizeof LOCK_CORES / sizeof LOCK_CORES[0]; i++)
-		if (!strcmp(name, LOCK_CORES[i])) g_lk_core = true;
+	g_lk_audio_off = false;
 	g_lk_off = 0;
 	g_lk_backoff = 600;
 	g_lk_frames = g_lk_miss = 0;
 	g_lk_last = 0;
-	fprintf(stderr, "vsync: lock %s for %s\n", g_lk_core ? "on" : "off", name ? name : "?");
+	fprintf(stderr, "vsync: lock on for %s\n", name ? name : "?");
 }
 
 double diatom_port_panel_hz(void) { return g_panel_us > 0 ? 1000000.0 / g_panel_us : 0.0; }
@@ -689,7 +680,8 @@ bool diatom_port_vsync_lock(bool want)
 		on = !((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.novsync", F_OK) == 0);
 	}
 	if (g_lk_off) { g_lk_off--; want = false; g_lk_last = 0; g_lk_frames = g_lk_miss = 0; }
-	g_vlock = on > 0 && want && g_lk_core && g_fbmem && g_panel_us > 0;
+	g_vlock = on > 0 && want && !g_lk_audio_off && g_fbmem && g_panel_us > 0;
+	if (!g_vlock) g_lk_last = 0;   /* fast-forward, rewind, stood down: the next locked frame starts a new window */
 	return g_vlock;
 }
 
@@ -714,7 +706,16 @@ void diatom_port_vsync_wait(void)
 		if (pthread_cond_timedwait(&g_flip_cond, &g_flip_lock, &to) != 0) break;
 	pthread_mutex_unlock(&g_flip_lock);
 	t = diatom_port_now_us();
+	if (!g_lk_last) { g_lk_frames = g_lk_miss = 0; g_lk_dropped = diatom_audio_dropped(); }   /* a window starts */
 	if (g_lk_last && g_panel_us > 0) {
+		uint64_t dr = diatom_audio_dropped();
+
+		/* Checked every frame, so the lock lets go at the first overflow: clean cores drop 0 locked. */
+		if (dr > g_lk_dropped && dr - g_lk_dropped > AUDIO_RATE / 1000) {
+			fprintf(stderr, "vsync: lock off for the rest of the game (%llu audio frames dropped after %u frames locked)\n",
+			        (unsigned long long)(dr - g_lk_dropped), g_lk_frames);
+			g_lk_audio_off = true;
+		}
 		if ((double)(t - g_lk_last) > g_panel_us * 1.5) g_lk_miss++;
 		if (++g_lk_frames >= 120) {
 			if (g_lk_miss > 2) {
