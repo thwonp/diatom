@@ -274,7 +274,7 @@ void diatom_audio_configure(double src_rate, int dst_rate, int capacity_frames)
 void diatom_audio_prime(void)
 {
 	int16_t silence[512 * 2];
-	int remaining = g_capacity / 2;
+	int remaining = g_capacity / 4;   /* a quarter, not the target: see the comment in main.c where it is called */
 
 	memset(silence, 0, sizeof silence);
 	while (remaining > 0) {

@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 /* SPDX-License-Identifier: MIT */
 /* Loading a core, and its lifecycle.
  *
@@ -10,6 +13,11 @@
  */
 #include <dirent.h>
 #include <dlfcn.h>
+#include <link.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <time.h>
 #include <stdio.h>
@@ -224,6 +232,96 @@ static bool read_file(const char *path, void **out, size_t *len)
 	return true;
 }
 
+
+/* Make every file page this process has mapped resident before the clock starts.
+ *
+ * dlopen maps a core, it does not read it, and nothing else puts the pages of the process's own mappings (the diatom
+ * binary, SDL, the firmware's libraries, the core) in the page cache. On a restarted or cache-pressured device the
+ * first time any of them runs a path it has not run yet is a major fault: one read from the SD card in the middle of
+ * a frame. Measured on the Flip 2026-11-12, page cache dropped: ONE major fault in play was a 29 ms frame (majflt
+ * 25 -> 26 at frame 101), which the lock, the catch-up run and the audio queue then each answered in their own way
+ * (dropped audio, a lock stand-down). The warmup only walks the first three frames' paths; the same game on a warm
+ * cache has no major faults at all.
+ *
+ * Only the pages mincore() reports absent are read, in runs, so a warm launch costs a pass over /proc/self/maps. */
+double diatom_core_prefault_ms;
+size_t diatom_core_prefault_bytes;
+
+static void prefault_map(const char *path, uintptr_t start, uintptr_t end, off_t foff, int fd, char *buf, size_t bufsz)
+{
+	long pg = sysconf(_SC_PAGESIZE);
+	unsigned char vec[256];
+	uintptr_t p = start;
+
+	while (p < end) {
+		size_t n = (size_t)((end - p) / (uintptr_t)pg), k;
+
+		if (n > sizeof vec) n = sizeof vec;
+		if (mincore((void *)p, n * (size_t)pg, vec) != 0) return;
+		for (k = 0; k < n; k++) {
+			size_t run = 1;
+			ssize_t got;
+
+			if (vec[k] & 1) continue;
+			while (k + run < n && !(vec[k + run] & 1) && run * (size_t)pg < bufsz) run++;
+			got = pread(fd, buf, run * (size_t)pg, foff + (off_t)(p + k * (size_t)pg - start));
+			if (got > 0) diatom_core_prefault_bytes += (size_t)got;
+			k += run - 1;
+		}
+		p += n * (size_t)pg;
+	}
+	(void)path;
+}
+
+/* The running core first, then the small shared libraries (libm, libc: the first math call of a game is a fault).
+ * Not the other cores the resident has premapped (fbneo alone is 79 MB) and not the GPU driver (libmali is 56 MB):
+ * reading those cost 1.3-1.6 s of a cold launch on the GKD and the Brick for pages no game needs. Capped as a whole. */
+#define PREFAULT_LIB_MAX   (4u << 20)
+#define PREFAULT_BUDGET    (16u << 20)
+
+static void core_prefault(diatom_core *c)
+{
+	double t0 = dbg_now_ms();
+	long pg = sysconf(_SC_PAGESIZE);
+	size_t bufsz = 256 * (size_t)pg;
+	char *buf = malloc(bufsz);
+	FILE *m = fopen("/proc/self/maps", "r");
+	char line[1200];
+	int pass;
+
+	diatom_core_prefault_bytes = 0;
+	for (pass = 0; buf && m && pass < 2; pass++) {
+		char last[1024] = "";
+		int fd = -1;
+
+		rewind(m);
+		while (fgets(line, sizeof line, m) && diatom_core_prefault_bytes < PREFAULT_BUDGET) {
+			unsigned long a, b, off, ino;
+			char perms[8], dev[16], path[1024] = "";
+			bool is_core;
+			struct stat st;
+
+			if (sscanf(line, "%lx-%lx %7s %lx %15s %lu %1023[^\n]", &a, &b, perms, &off, dev, &ino, path) < 6) continue;
+			if (!ino || path[0] != '/' || !strncmp(path, "/dev/", 5) || !strncmp(path, "/tmp/", 5) || !strncmp(path, "/proc/", 6)) continue;
+			if (perms[0] != 'r') continue;
+			is_core = c->path && !strcmp(path, c->path);
+			if (pass == 0 ? !is_core : (is_core || strstr(path, "_libretro.so"))) continue;
+			if (strcmp(path, last)) {
+				if (fd >= 0) close(fd);
+				fd = open(path, O_RDONLY | O_CLOEXEC);
+				snprintf(last, sizeof last, "%s", path);
+			}
+			if (fd < 0) continue;
+			if (pass == 1 && (fstat(fd, &st) != 0 || st.st_size > (off_t)PREFAULT_LIB_MAX)) continue;
+			prefault_map(path, (uintptr_t)a, (uintptr_t)b, (off_t)off, fd, buf, bufsz);
+		}
+		if (fd >= 0) close(fd);
+	}
+	if (m) fclose(m);
+	free(buf);
+	diatom_core_prefault_ms = dbg_now_ms() - t0;
+}
+
 /* How long the last start spent reading the ROM (plorpos-2wl.12). */
 double diatom_core_read_ms;
 
@@ -235,6 +333,7 @@ bool diatom_core_start(diatom_core *c, const char *rom_path, int disc)
 	size_t len = 0;
 	bool ok;
 
+	core_prefault(c);
 	memset(&si, 0, sizeof si);
 	c->get_system_info(&si);
 

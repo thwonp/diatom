@@ -1829,6 +1829,8 @@ static bool state_plane_msg(const diatom_msg *m)
 }
 
 extern double diatom_core_read_ms;
+extern double diatom_core_prefault_ms;
+extern size_t diatom_core_prefault_bytes;
 
 static int run_session_inner(const diatom_session *sn)
 {
@@ -2038,7 +2040,6 @@ static int run_session_inner(const diatom_session *sn)
 	diatom_audio_configure(av.timing.sample_rate, g_caps.audio_rate,
 	                       g_caps.audio_buffer_frames);
 #endif
-	diatom_audio_prime();
 
 	/* The rect is computed from BASE geometry and does not move again unless
 	 * the user asks - ADR-0011.
@@ -2176,6 +2177,7 @@ static int run_session_inner(const diatom_session *sn)
 			sscanf(ml, "Writeback: %lu", &wb);
 		}
 		if (mi) fclose(mi);
+		printf("diatom: mapped pages read in %.1f ms (%zu kB were absent from the page cache)\n", diatom_core_prefault_ms, diatom_core_prefault_bytes / 1024);
 		printf("diatom: stages core %.0f (rom read %.0f), save+state %.0f, "
 		       "setup %.0f, to-warmup %.0f, total %.0f ms; dirty %lu wb %lu kB\n",
 		       (st1 - st0) / 1000.0, diatom_core_read_ms, (st2 - st1) / 1000.0,
@@ -2183,6 +2185,14 @@ static int run_session_inner(const diatom_session *sn)
 		       (st4 - st0) / 1000.0, dirty, wb);
 	}
 
+	/* Primed here, after the warmup and not before it. The warmup is three unpaced runs (7 ms warm, 30-850 ms on a cold
+	 * process) whose own audio is discarded; a buffer primed ahead of it is drained by the sink while the warmup runs, and the
+	 * loop started on an empty queue (measured: Brick 0 of 2048 at the first frame on every launch, GKD 0 on a cold one) and
+	 * then crept up under rate control for seconds. Primed last, every launch starts the clock on the same buffer, cold or warm.
+	 * A quarter of the capacity, not the target: a core that pushes in chunks (fake-08: 1600 frames every second frame, into a
+	 * sink that drains in steps of 1024) peaks about 2600 frames above the level the loop samples, and starting at the full
+	 * 2048 put those peaks on the 4096 cap within the first half second on the Flip (measured 2026-11-12). */
+	diatom_audio_prime();
 	t_start = diatom_port_now_us();
 	next_us = (double)t_start;
 	uint64_t lk_prev = 0;     /* when the previous locked iteration's page latched */
