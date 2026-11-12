@@ -645,8 +645,9 @@ static void flip_drain(void)
  * SMB3 (FCEUmm) 60.10, every one 0 audio dropped and 0 frames never shown.
  * Two ways out, each automatic, so no core list is needed:
  * - a core that cannot keep the panel (more than 2 of 120 frames slipping a
- *   vsync: a heavy scene, a state load, a save flush) stands down and tries
- *   again later, waiting twice as long each time (10 s .. 5 min), as on the Brick;
+ *   vsync, or 120 frames taking 2 % longer than 120 periods: a heavy scene, a
+ *   state load, a save flush) stands down and tries
+ *   again later, waiting twice as long each time (10 s .. 5 min, never shorter again within a game);
  * - a core whose audio overflows while locked (more than 1 ms of audio dropped
  *   since it locked) runs free for the rest of the game. RACE is the one seen: one
  *   retro_run sometimes emulates two frames, so holding the loop does not hold the
@@ -655,7 +656,7 @@ static void flip_drain(void)
 uint64_t diatom_audio_dropped(void);   /* src/audio.c: frames the sink would not take */
 static bool     g_lk_audio_off;        /* this game overflowed audio locked: free until it ends */
 static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600;
-static uint64_t g_lk_last, g_lk_dropped;
+static uint64_t g_lk_last, g_lk_dropped, g_lk_win0;   /* g_lk_win0: when this 120-frame window began */
 
 /* The core's library_name, once per game as it loads. */
 void diatom_port_core_name(const char *name)
@@ -706,7 +707,7 @@ void diatom_port_vsync_wait(void)
 		if (pthread_cond_timedwait(&g_flip_cond, &g_flip_lock, &to) != 0) break;
 	pthread_mutex_unlock(&g_flip_lock);
 	t = diatom_port_now_us();
-	if (!g_lk_last) { g_lk_frames = g_lk_miss = 0; g_lk_dropped = diatom_audio_dropped(); }   /* a window starts */
+	if (!g_lk_last) { g_lk_frames = g_lk_miss = 0; g_lk_dropped = diatom_audio_dropped(); g_lk_win0 = t; }   /* a window starts */
 	if (g_lk_last && g_panel_us > 0) {
 		uint64_t dr = diatom_audio_dropped();
 
@@ -718,14 +719,21 @@ void diatom_port_vsync_wait(void)
 		}
 		if ((double)(t - g_lk_last) > g_panel_us * 1.5) g_lk_miss++;
 		if (++g_lk_frames >= 120) {
-			if (g_lk_miss > 2) {
-				fprintf(stderr, "vsync: lock stands down for %u frames (%u of 120 slipped)\n", g_lk_backoff, g_lk_miss);
+			/* Slow without slipping: frames a little over one period each never
+			 * arrive 1.5 periods late, but 120 of them take longer than 120
+			 * periods, and locked the frameskip cannot help (Super Mario RPG's
+			 * SA-1 intro ran 56.8 fps locked). */
+			double win = (double)(t - g_lk_win0);
+			bool slow = win > 120 * g_panel_us * 1.02;
+
+			if (g_lk_miss > 2 || slow) {
+				fprintf(stderr, "vsync: lock stands down for %u frames (%u of 120 slipped, %.1f fps)\n",
+				        g_lk_backoff, g_lk_miss, 120e6 / win);
 				g_lk_off = g_lk_backoff;
 				g_lk_backoff = g_lk_backoff < 18000 ? g_lk_backoff * 2 : g_lk_backoff;
-			} else {
-				g_lk_backoff = 600;
-			}
+			}   /* never back to 10 s within a game: each retry of a heavy game costs a slow window */
 			g_lk_frames = g_lk_miss = 0;
+			g_lk_win0 = t;
 		}
 	}
 	g_lk_last = t;
