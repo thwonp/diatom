@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <linux/input.h>
+#include <math.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -584,7 +585,7 @@ static void *flipper(void *arg)
 			 * hundred of them. */
 			uint64_t t = diatom_port_now_us();
 			double g = flast ? (double)(t - flast) : 0;
-			if (g > 15000 && g < 18500)
+			if (g > 15000 && g < 21000)   /* 60.3 .. 50 Hz (retimed, plorpos-f1p.68) */
 				g_panel_us = g_panel_us > 0 ? g_panel_us + (g - g_panel_us) / 256.0 : g;
 			flast = t;
 		}
@@ -727,6 +728,132 @@ void diatom_port_vsync_wait(void)
 		}
 	}
 	g_lk_last = t;
+}
+
+/* ---------- panel retime (TortOS plorpos-f1p.68) -----------------------------
+ * The panel is MIPI DSI in video mode, and its refresh follows the frame the DSI
+ * host sends: retimed to the core's reported fps at game start, a free-running
+ * core no longer drops or repeats a frame every 2-3 s. Three writes, found in
+ * mhal.ko and measured on the device: the DSI horizontal front porch (bytes, even
+ * steps: the fine step), then the timing generator's vertical total and the DSI
+ * vertical front porch, changed by the same number of lines (one without the
+ * other rolls the picture). Hz = 59.657 * 580/V * 2850/(2850 - d) for V lines
+ * and d bytes off the 160-byte porch, within 0.015 Hz of the meter from 50.00 to
+ * 60.31 Hz. A rate that no setting reaches within 0.05 Hz keeps stock timing.
+ * Stock at resident start too, so a killed game cannot leave its rate behind; the
+ * launcher and Muse run at stock. No suspend on the Flip, so nothing to redo at a
+ * wake. Forced off by DIATOM_RETIME=0 or TortOS/diatom.noretime. */
+#define RT_TGEN_PG  0x1f225000u  /* bank 0x1129: vtotal = reg 0x12, 16-bit (bits 12:0) */
+#define RT_TGEN_VTT 0x248
+#define RT_DSI_PG   0x1f345000u  /* DSI host: 32-bit access only */
+#define RT_DSI_VFP  0x228
+#define RT_DSI_VACT 0x22c
+#define RT_DSI_HFP  0x258
+#define RT_V0       580          /* stock: 580 lines, VFP 10, HFP 160 bytes, 59.657 Hz */
+#define RT_VFP0     10
+#define RT_HFP0     160
+static volatile uint8_t *g_rt_tgen, *g_rt_dsi;  /* NULL = no retime on this unit */
+static int g_rt_v = RT_V0, g_rt_d;
+
+static double rt_hz(int v, int d) { return 59.657 * RT_V0 / v * 2850.0 / (2850 - d); }
+
+static void rt_write(int v, int d)
+{
+	volatile uint16_t *vtt = (volatile uint16_t *)(g_rt_tgen + RT_TGEN_VTT);
+	volatile uint32_t *vfp = (volatile uint32_t *)(g_rt_dsi + RT_DSI_VFP);
+	volatile uint32_t *hfp = (volatile uint32_t *)(g_rt_dsi + RT_DSI_HFP);
+
+	/* The order the device was tested in: porch, then the vertical pair back to
+	 * back going out; the pair, then the porch coming back. */
+	if (v != RT_V0 || d) {
+		*hfp = (uint32_t)(RT_HFP0 - d);
+		*vtt = (uint16_t)((*vtt & 0xe000) | v);
+		*vfp = (uint32_t)(RT_VFP0 + v - RT_V0);
+	} else {
+		*vfp = RT_VFP0;
+		*vtt = (uint16_t)((*vtt & 0xe000) | RT_V0);
+		*hfp = RT_HFP0;
+	}
+	g_rt_v = v; g_rt_d = d;
+	/* The flip thread's measure takes 10-20 s to follow a change: start it at the
+	 * new rate, for the vsync lock and the audio feed-forward. */
+	g_panel_us = 1e6 / rt_hz(v, d);
+}
+
+/* Map the two register pages and put stock timing back. Only a state this code
+ * could have written is accepted (560 active lines, vtotal and VFP 570 apart,
+ * HFP 148..160): any other panel is left alone. */
+static void rt_init(void)
+{
+	int fd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+	void *t = MAP_FAILED, *d = MAP_FAILED;
+	unsigned vtt, vfp, hfp, vact;
+
+	if (fd >= 0) {
+		t = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, RT_TGEN_PG);
+		d = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, RT_DSI_PG);
+		close(fd);
+	}
+	if (t == MAP_FAILED || d == MAP_FAILED) {
+		fprintf(stderr, "[warn] panel: no retime (/dev/mem: %s)\n", strerror(errno));
+		if (t != MAP_FAILED) munmap(t, 4096);
+		if (d != MAP_FAILED) munmap(d, 4096);
+		return;
+	}
+	vtt  = *(volatile uint16_t *)((uint8_t *)t + RT_TGEN_VTT) & 0x1fff;
+	vfp  = *(volatile uint32_t *)((uint8_t *)d + RT_DSI_VFP);
+	vact = *(volatile uint32_t *)((uint8_t *)d + RT_DSI_VACT);
+	hfp  = *(volatile uint32_t *)((uint8_t *)d + RT_DSI_HFP);
+	if (vact != 560 || vtt - vfp != RT_V0 - RT_VFP0 || hfp < RT_HFP0 - 12 || hfp > RT_HFP0 || (hfp & 1)) {
+		fprintf(stderr, "[warn] panel: no retime (unknown timing: vtt %u, vfp %u, vact %u, hfp %u)\n",
+		        vtt, vfp, vact, hfp);
+		munmap(t, 4096); munmap(d, 4096);
+		return;
+	}
+	g_rt_tgen = t; g_rt_dsi = d;
+	if (vtt != RT_V0 || hfp != RT_HFP0) {
+		fprintf(stderr, "panel: back to stock from vtt %u, hfp %u\n", vtt, hfp);
+		rt_write(RT_V0, 0);
+	}
+}
+
+void diatom_port_content_fps(double fps)
+{
+	int v = RT_V0, d = 0;
+	uint64_t t0;
+
+	if (!g_rt_tgen) return;
+	if (fps > 0) {
+		const char *e = getenv("DIATOM_RETIME");
+		double best = 1e9;
+
+		if ((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.noretime", F_OK) == 0) {
+			fprintf(stderr, "panel: retime off, stock for a %.4f fps core\n", fps);
+			fps = 0;
+		}
+		/* V >= 571 keeps VFP at 1 or more; 699 lines is 49.5 Hz. */
+		for (int vv = 571; fps > 0 && vv <= 699; vv++)
+			for (int dd = 0; dd <= 12; dd += 2) {
+				double err = fabs(rt_hz(vv, dd) - fps);
+				if (err < best) { best = err; v = vv; d = dd; }
+			}
+		if (fps > 0 && best > 0.05) {
+			fprintf(stderr, "panel: no setting within 0.05 Hz of %.4f fps, stock\n", fps);
+			v = RT_V0; d = 0;
+		}
+	}
+	if (v == g_rt_v && d == g_rt_d) {
+		if (fps > 0) fprintf(stderr, "panel: %.3f Hz for a %.4f fps core (unchanged)\n", rt_hz(v, d), fps);
+		return;
+	}
+	t0 = diatom_port_now_us();
+	rt_write(v, d);
+	if (fps > 0)
+		fprintf(stderr, "panel: %.3f Hz for a %.4f fps core (vtt %d, hfp %d) in %llu us\n",
+		        rt_hz(v, d), fps, v, RT_HFP0 - d, (unsigned long long)(diatom_port_now_us() - t0));
+	else
+		fprintf(stderr, "panel: stock %.3f Hz in %llu us\n", rt_hz(v, d),
+		        (unsigned long long)(diatom_port_now_us() - t0));
 }
 
 /* The hardware path: the core's frame copied into MMA memory (physically
@@ -946,6 +1073,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	if (g_npages > 3) g_npages = 3;
 	g_page = (int)(g_var.yoffset / g_var.yres);
 	if (g_page >= g_npages) g_page = 0;
+	rt_init();
 	if (pthread_create(&g_flip_thr, NULL, flipper, NULL) != 0) return false;
 
 	g_gfx = gfx_init();
