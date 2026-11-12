@@ -64,7 +64,8 @@ On the Flip only (`port/miyoo.c`):
 - **Every core runs locked** (the core list is gone), with three automatic exits:
   - more than 2 of 120 frames slip 1.5 panel periods, or 120 frames take 2 % longer than 120 periods (a core slow
     without slipping) -> stand down, retry after 10 s, doubling to 5 min, never shorter again within the game;
-  - more than 1 ms of audio dropped since the lock began, checked every frame -> free for the rest of the game.
+  - more than 1 ms of audio dropped since the lock began, checked every frame -> free for the rest of the game; not
+    counted in the first 30 locked frames of a game (see Consequences).
   Off: `DIATOM_VSYNC=0` or `TortOS/diatom.novsync`.
 
 ## Consequences
@@ -89,6 +90,12 @@ Measured through the launcher on the Flip (frames never shown counts the `flip:`
 - A heavy game that lets go of the lock on audio pays 1-3 ms of audio once (Star Fox 153 frames, Yoshi's Island 60,
   RACE 129); the same games free drop 0. The locked catch-up run (an extra `retro_run` when a frame slipped) is what
   overflows; changing it touches every locked core and was not done.
+- The audio exit ignores overflow in the first 30 locked frames of a game. A core that pushes audio in chunks (fake-08:
+  1600 frames every second frame, into a sink that drains in steps of 1024) peaks a few hundred frames under the 4096
+  capacity from the first frames, and the level creeping up by ~60 a step can reach it once in the first half second on a
+  warm cache as well (frames 3 and 7 in two runs, 126 and 252 frames refused, no slow frame in either); without the grace
+  that few milliseconds of audio cost the whole game its lock. RACE's steady overflow still trips the exit right after
+  (93 locked frames, 156 dropped).
 - A core that changes rate mid-game (`SET_SYSTEM_AV_INFO`) keeps the rate it started with, as the loop does.
 - Other ports are unchanged; 0048 still holds there.
 

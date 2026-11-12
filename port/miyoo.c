@@ -655,7 +655,7 @@ static void flip_drain(void)
  * Forced off by DIATOM_VSYNC=0 or TortOS/diatom.novsync. */
 uint64_t diatom_audio_dropped(void);   /* src/audio.c: frames the sink would not take */
 static bool     g_lk_audio_off;        /* this game overflowed audio locked: free until it ends */
-static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600;
+static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600, g_lk_grace;
 static uint64_t g_lk_last, g_lk_dropped, g_lk_win0;   /* g_lk_win0: when this 120-frame window began */
 
 /* The core's library_name, once per game as it loads. */
@@ -665,6 +665,7 @@ void diatom_port_core_name(const char *name)
 	g_lk_off = 0;
 	g_lk_backoff = 600;
 	g_lk_frames = g_lk_miss = 0;
+	g_lk_grace = 30;
 	g_lk_last = 0;
 	fprintf(stderr, "vsync: lock on for %s\n", name ? name : "?");
 }
@@ -711,8 +712,15 @@ void diatom_port_vsync_wait(void)
 	if (g_lk_last && g_panel_us > 0) {
 		uint64_t dr = diatom_audio_dropped();
 
+		/* Not in the first 30 locked frames of a game: the queue starts at its target and a chunky core (fake-08 pushes 1600
+		 * frames every second frame, the sink takes them in steps of 1024) peaks a few hundred frames below the 4096
+		 * capacity, so the level creeping up by ~60 a step can reach it once in the first half second, on a warm cache as
+		 * well (measured 2026-11-12: frames 3 and 7, 126 and 252 frames refused, no slow frame in either). One such
+		 * start-up overflow is a few ms of audio and must not cost the whole game its lock. RACE's steady overflow still
+		 * trips the exit right after. */
+		if (g_lk_grace) { g_lk_grace--; g_lk_dropped = dr; }
 		/* Checked every frame, so the lock lets go at the first overflow: clean cores drop 0 locked. */
-		if (dr > g_lk_dropped && dr - g_lk_dropped > AUDIO_RATE / 1000) {
+		else if (dr > g_lk_dropped && dr - g_lk_dropped > AUDIO_RATE / 1000) {
 			fprintf(stderr, "vsync: lock off for the rest of the game (%llu audio frames dropped after %u frames locked)\n",
 			        (unsigned long long)(dr - g_lk_dropped), g_lk_frames);
 			g_lk_audio_off = true;
