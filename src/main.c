@@ -936,6 +936,9 @@ __attribute__((weak)) bool diatom_port_vsync_lock(bool want) { (void)want; retur
 __attribute__((weak)) void diatom_port_vsync_default(bool on) { (void)on; }
 /* Optional port hook: the core's library_name, once per session as it loads (the Flip locks by core). */
 __attribute__((weak)) void diatom_port_core_name(const char *name) { (void)name; }
+/* Optional port hook: the core's reported fps once per game as it starts, and 0 as it ends (the Flip retimes its panel
+ * to it, TortOS plorpos-f1p.68). */
+__attribute__((weak)) void diatom_port_content_fps(double fps) { (void)fps; }
 /* The core reads a touch panel's finger over its whole picture (PokeDaisy's companion, HUD and quick menu: a port with a
  * panel passes it as the libretro pointer, TortOS plorpos-oe0.41). */
 __attribute__((weak)) void diatom_port_touch_core(bool on) { (void)on; }
@@ -2021,6 +2024,7 @@ static int run_session_inner(const diatom_session *sn)
 	       av.geometry.max_width, av.geometry.max_height,
 	       (double)av.geometry.aspect_ratio,
 	       av.timing.fps, av.timing.sample_rate, g_caps.audio_rate);
+	diatom_port_content_fps(av.timing.fps);
 
 #ifdef DIATOM_PORT_PACED
 	/* A core faster than the panel runs at the panel's rate, every frame
@@ -2788,6 +2792,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * opening the menu, which is exactly the asymmetry that identified it. The
 	 * launcher fades up from black, so black is the state it is about to
 	 * assume anyway. */
+	diatom_port_content_fps(0.0);
 	diatom_port_present_stop(DIATOM_PARK_BLANK);
 
 	/* The game ran and stopped, which is EXIT rather than ERROR whatever the
