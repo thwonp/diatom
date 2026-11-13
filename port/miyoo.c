@@ -166,9 +166,23 @@ static volatile bool   g_muted;
 #define MUSIC_HOLD   28          /* chunks (~300 ms) music keeps the output after its last */
 static int16_t         g_mring[MUSIC_RING * 2];
 static size_t          g_mrd, g_mwr;        /* frames, free-running; under g_lock */
-static int             g_mlisten = -1;
-static pthread_t       g_music;
-static bool            g_music_on;
+/* Game sound in (plorpos-f1p.78): native PICO-8, a process of its own, sends
+ * its PCM - 48 kHz S16 stereo, raw, as Muse's - over a second socket into the
+ * GAME ring, so it is played as a core's sound is (music over it, the volume
+ * ladder on it) while this diatom runs no game. The fill is held near
+ * PCM_FILL by backpressure, not the whole ring, to keep the latency down. */
+#define PCM_SOCK     "/tmp/diatom-pcm.sock"
+#define PCM_FILL     1536        /* frames (32 ms) the ring holds for it at most */
+
+typedef struct {
+	const char *path;
+	int         listen;
+	pthread_t   th;
+	bool        on;
+	void      (*push)(const int16_t *fr, size_t n);
+	void      (*come)(void);             /* a client came */
+	void      (*gone)(void);             /* the client went */
+} sock_in;
 
 static void *writer(void *arg)
 {
@@ -251,18 +265,73 @@ static void music_push(const int16_t *fr, size_t n)
 	}
 }
 
-static void *music_thread(void *arg)
+static void music_gone(void)
 {
+	pthread_mutex_lock(&g_lock);   /* the client went: what it queued goes with it */
+	g_mrd = g_mwr;
+	pthread_mutex_unlock(&g_lock);
+}
+
+/* Push frames into the game ring up to PCM_FILL, waiting for room. */
+static void pcm_push(const int16_t *fr, size_t n)
+{
+	while (n && !g_stop) {
+		size_t fill, room, k;
+
+		pthread_mutex_lock(&g_lock);
+		fill = g_wr - g_rd;
+		room = fill < PCM_FILL ? PCM_FILL - fill : 0;
+		k = n < room ? n : room;
+		for (size_t i = 0; i < k; i++) {
+			size_t at = (g_wr + i) % AUDIO_BUFFER_FRAMES;
+			g_ring[2 * at]     = fr[2 * i];
+			g_ring[2 * at + 1] = fr[2 * i + 1];
+		}
+		g_wr += k;
+		pthread_mutex_unlock(&g_lock);
+		fr += 2 * k;
+		n -= k;
+		if (n) usleep(2000);
+	}
+}
+
+/* PICO-8 runs at 60 (or 30) fps by its own clock, as fake08 reports 60.00: the
+ * panel is retimed for it as for any game (ADR-0049) while its client is here,
+ * and back to stock when it goes - an exit, a crash or a kill alike. */
+void diatom_port_content_fps(double fps);
+static bool g_pcm_retimed;
+
+static void music_come(void) { }
+
+static void pcm_come(void)
+{
+	diatom_port_content_fps(60.0);
+	g_pcm_retimed = true;
+}
+
+static void pcm_gone(void)       /* what it queued plays out: under 32 ms */
+{
+	if (!g_pcm_retimed) return;
+	g_pcm_retimed = false;
+	diatom_port_content_fps(0.0);
+}
+
+static sock_in g_music_in = { MUSIC_SOCK, -1, 0, false, music_push, music_come, music_gone };
+static sock_in g_pcm_in   = { PCM_SOCK,   -1, 0, false, pcm_push,   pcm_come,   pcm_gone };
+
+static void *sock_thread(void *arg)
+{
+	sock_in *si = arg;
 	uint8_t buf[2048];
-	(void)arg;
 
 	while (!g_stop) {
-		struct pollfd pf = { g_mlisten, POLLIN, 0 };
+		struct pollfd pf = { si->listen, POLLIN, 0 };
 		size_t have = 0;
 		int c;
 
-		if (poll(&pf, 1, 200) <= 0 || (c = accept4(g_mlisten, NULL, NULL, SOCK_CLOEXEC)) < 0) continue;
+		if (poll(&pf, 1, 200) <= 0 || (c = accept4(si->listen, NULL, NULL, SOCK_CLOEXEC)) < 0) continue;
 		pf.fd = c;
+		si->come();
 		while (!g_stop) {
 			ssize_t r;
 
@@ -272,34 +341,42 @@ static void *music_thread(void *arg)
 				break;
 			}
 			have += (size_t)r;
-			music_push((const int16_t *)buf, have / 4);
+			si->push((const int16_t *)buf, have / 4);
 			memmove(buf, buf + have / 4 * 4, have % 4);   /* a split frame waits for its rest */
 			have %= 4;
 		}
 		close(c);
-		pthread_mutex_lock(&g_lock);   /* the client went: what it queued goes with it */
-		g_mrd = g_mwr;
-		pthread_mutex_unlock(&g_lock);
+		si->gone();
 	}
 	return NULL;
 }
 
-static void music_open(void)
+static void sock_in_open(sock_in *si)
 {
 	struct sockaddr_un a;
 
-	if ((g_mlisten = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) return;
+	if ((si->listen = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) return;
 	memset(&a, 0, sizeof a);
 	a.sun_family = AF_UNIX;
-	snprintf(a.sun_path, sizeof a.sun_path, "%s", MUSIC_SOCK);
-	unlink(MUSIC_SOCK);
-	if (bind(g_mlisten, (struct sockaddr *)&a, sizeof a) < 0 || listen(g_mlisten, 1) < 0 ||
-	    pthread_create(&g_music, NULL, music_thread, NULL) != 0) {
-		close(g_mlisten);
-		g_mlisten = -1;
+	snprintf(a.sun_path, sizeof a.sun_path, "%s", si->path);
+	unlink(si->path);
+	if (bind(si->listen, (struct sockaddr *)&a, sizeof a) < 0 || listen(si->listen, 1) < 0 ||
+	    pthread_create(&si->th, NULL, sock_thread, si) != 0) {
+		close(si->listen);
+		si->listen = -1;
 		return;
 	}
-	g_music_on = true;
+	si->on = true;
+}
+
+static void sock_in_close(sock_in *si)
+{
+	if (!si->on) return;
+	pthread_join(si->th, NULL);
+	close(si->listen);
+	unlink(si->path);
+	si->listen = -1;
+	si->on = false;
 }
 
 static bool mi_ready(void)
@@ -345,7 +422,8 @@ static bool audio_open(void)
 	g_stop = false;
 	if (pthread_create(&g_writer, NULL, writer, NULL) != 0) return false;
 	g_audio_on = true;
-	music_open();
+	sock_in_open(&g_music_in);
+	sock_in_open(&g_pcm_in);
 	volume_apply();
 	diatom_port_log(DIATOM_LOG_INFO, "audio: MI_AO 48000 Hz stereo, 512-frame chunks");
 	return true;
@@ -356,13 +434,8 @@ static void audio_close(void)
 	if (!g_audio_on) return;
 	g_stop = true;
 	pthread_join(g_writer, NULL);
-	if (g_music_on) {
-		pthread_join(g_music, NULL);
-		close(g_mlisten);
-		unlink(MUSIC_SOCK);
-		g_mlisten = -1;
-		g_music_on = false;
-	}
+	sock_in_close(&g_music_in);
+	sock_in_close(&g_pcm_in);
 	mi.disable_chn(0, 0);
 	mi.disable(0);
 	g_audio_on = false;
@@ -378,7 +451,7 @@ bool diatom_port_audio_set(const char *name, char *actual, size_t cap)
 void diatom_port_audio_get(char *out, size_t cap) { if (out && cap) out[0] = '\0'; }
 
 /* MI_AO stays open for diatom's whole life, fed silence between games (see
- * writer); Muse's music comes in over a socket (music_thread). */
+ * writer); Muse's music and native PICO-8's sound come in over sockets (sock_thread). */
 size_t diatom_port_audio_write(const int16_t *frames, size_t n)
 {
 	size_t room;
