@@ -36,6 +36,8 @@
 #define DIATOM_REWIND_MAX_EVERY 60
 bool     diatom_rewind_set_every(int every);
 unsigned diatom_rewind_every(void);
+/* True while the core's state is over the port's rewind cap (no history is kept). */
+bool diatom_rewind_refused(void);
 
 /* Called once per RUN, before the frame loop starts. Frees any previous
  * session's history and buffers (waiting for the worker thread, so never

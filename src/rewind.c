@@ -132,6 +132,9 @@ static void xor_into(uint8_t *out, const uint8_t *a, const uint8_t *b, size_t n)
 	for (; i < n; i++) out[i] = a[i] ^ b[i];
 }
 
+/* Set when the state is over the port's cap: nothing is captured, so the hotkey must not hold the frame. */
+static bool g_refused;
+
 /* ---- the ring (g_rmx held) ---- */
 
 static entry *newest(void) { return &g_ent[(g_ent_tail + g_count - 1) % DIATOM_REWIND_MAX_DEPTH]; }
@@ -394,7 +397,8 @@ void diatom_rewind_capture(diatom_core *c)
 	 * which on a 101 MB device took the resident to 50 MB anon and 4-6 MB
 	 * MemAvailable (the same game standalone, rewind off, is 23 MB). A core
 	 * this large gets no rewind rather than a dead device. */
-	if (n > DIATOM_REWIND_MAX_STATE_BYTES) {
+	g_refused = n > DIATOM_REWIND_MAX_STATE_BYTES;
+	if (g_refused) {
 		static size_t said;
 
 		if (said != n) {
@@ -553,3 +557,4 @@ bool diatom_rewind_set_every(int every)
 }
 
 unsigned diatom_rewind_every(void) { return g_every; }
+bool diatom_rewind_refused(void) { return g_refused; }

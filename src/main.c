@@ -2218,7 +2218,7 @@ static int run_session_inner(const diatom_session *sn)
 		/* Rewind switched off (SETREWINDSPEED every=0) makes the hotkey
 		 * do nothing, rather than hold the frame the way an exhausted ring
 		 * does - there is no history to have run out of. */
-		if (g_rewind_active && diatom_rewind_every()) {
+		if (g_rewind_active && diatom_rewind_every() && !diatom_rewind_refused()) {
 			/* Ring exhausted: diatom_rewind_step_back()'s own contract is to
 			 * hold here, not to be called again - skipping run() keeps
 			 * g_frame exactly as it was instead of quietly resuming forward
