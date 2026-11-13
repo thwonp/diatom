@@ -4,7 +4,7 @@
  * Video: the core's frame is scaled by the CPU (nearest) into the back page
  * of fb0 (752x560, 32-bit xRGB, three pages) and panned onto glass. No
  * shaders - there is nothing to run them on; ADR-0041's chain carries two display filters instead
- * (scanlines, grid) that the blitter draws (plorpos-f1p.75).
+ * (scanlines) that the blitter draws (plorpos-f1p.75).
  *
  * Audio: the vendor's MI_AO, reached with dlopen so the build needs none of
  * the vendor's libraries or headers. ALSA hw:0,0 and OSS /dev/dsp both play
@@ -417,9 +417,9 @@ static int      g_page;             /* the page on glass */
 static diatom_rect g_last_dst[3];
 static uint32_t g_xmap[2048];
 /* The Flip's display filter (plorpos-f1p.75), picked through the shader chain the launcher sends: a chain
- * naming flipfx-scanlines is FX_SCAN, flipfx-grid FX_GRID, none is FX_OFF. Both need the game at 2x or
- * more; below that they draw plainly. */
-enum { FX_OFF, FX_SCAN, FX_GRID };
+ * naming flipfx-scanlines is FX_SCAN, none is FX_OFF. It needs the game at 2x or more; below that it
+ * draws plainly. */
+enum { FX_OFF, FX_SCAN };
 static int g_fx;
 static unsigned g_gfx_err;          /* filter blits or waits that returned an error, shown in the present: line */
 
@@ -958,46 +958,6 @@ static bool gfx_src(unsigned size)
 	return true;
 }
 
-/* The grid's columns: a 16-row texture, alpha ~35% on every third glass column, tint (7,24,33) (spruce's
- * Grid_2px), stretched down the game rect by the blitter. Allocated when a grid is first drawn. */
-static uint32_t *g_col;
-static unsigned long long g_col_phy;
-
-static bool col_init(void)
-{
-	unsigned size = g_var.xres * 16 * 4, sz = (size + 65535) & ~65535u;
-	void *v;
-
-	if (g_col) return true;
-	if (mi.mma_alloc(NULL, sz, &g_col_phy) != 0) return false;
-	if (mi.mmap(g_col_phy, sz, &v, 1) != 0) { mi.mma_free(g_col_phy); return false; }
-	g_col = v;
-	for (int y = 0; y < 16; y++)
-		for (unsigned x = 0; x < g_var.xres; x++) g_col[y * g_var.xres + x] = (x % 3 == 2) ? 0x5A071821u : 0;
-	mi.flush(g_col, size);
-	return true;
-}
-
-static void gfx_columns(mi_gfx_rect dr, int page)
-{
-	mi_gfx_surface ss, ds;
-	mi_gfx_rect sr = { dr.x, 0, dr.w, 16 };
-	mi_gfx_opt o;
-	unsigned short fence = 0;
-
-	if (!col_init()) return;
-	ss = (mi_gfx_surface){ g_col_phy, MI_GFX_ARGB8888, g_var.xres, 16, g_var.xres * 4 };
-	ds = (mi_gfx_surface){ g_fix.smem_start + (unsigned long long)page * g_var.yres * g_fix.line_length,
-	                       MI_GFX_ARGB8888, g_var.xres, g_var.yres, g_fix.line_length };
-	memset(&o, 0, sizeof o);
-	o.clip = (mi_gfx_rect){ 0, 0, g_var.xres, g_var.yres };
-	o.src_bld = 4;                  /* SRCALPHA */
-	o.dst_bld = 5;                  /* INVSRCALPHA */
-	o.blend_flags = 2;              /* ALPHACHANNEL */
-	if (mi.gfx_blit(&ss, &sr, &ds, &dr, &o, &fence) != 0) g_gfx_err++;
-	else if (mi.gfx_wait(0, fence) != 0) g_gfx_err++;
-}
-
 static bool gfx_present(const void *src, int w, int h, size_t pitch, diatom_pixfmt fmt,
                         diatom_rect d, int page)
 {
@@ -1045,7 +1005,6 @@ static bool gfx_present(const void *src, int w, int h, size_t pitch, diatom_pixf
 			if (mi.gfx_blit(&ss, &sr, &dk, &rk, &o, &fence) != 0) return false;
 			if (mi.gfx_wait(0, fence) != 0) g_gfx_err++;
 		}
-		if (g_fx == FX_GRID) gfx_columns(full, page);
 		return true;
 	}
 	memset(&o, 0, sizeof o);
@@ -1124,9 +1083,8 @@ bool diatom_port_shader_set(const diatom_shader_pass *p, int n, bool final_linea
 
 	(void)final_linear;
 	if (n == 1 && p[0].path && strstr(p[0].path, "flipfx-scanlines")) fx = FX_SCAN;
-	else if (n == 1 && p[0].path && strstr(p[0].path, "flipfx-grid")) fx = FX_GRID;
 	else if (n != 0) {
-		snprintf(err, cap, "this port has display filters only");
+		snprintf(err, cap, "this port has the scanline filter only");
 		return false;
 	}
 	if (fx != g_fx) {
