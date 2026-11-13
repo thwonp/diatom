@@ -59,6 +59,16 @@ static uint8_t    *g_sram;        /* the core's buffer; the core owns it */
 static uint8_t    *g_shadow;      /* what we last handed to the writer */
 static uint8_t    *g_staging;     /* the writer's private copy */
 static size_t      g_sram_size;
+
+/* RETRO_MEMORY_RTC (Gambatte's: the time the cartridge's clock counts from, 8 bytes): kept beside the
+ * save as <name>.rtc, read at load and written when it changes - synchronously, it is a few bytes and
+ * changes only when the game sets its clock. Without it a Game Boy clock restarted from zero at every
+ * launch, which Pokemon Gold, Silver and Crystal take for a reset clock (plorpos-f1p.77). */
+static uint8_t    *g_rtc;
+static size_t      g_rtc_size;
+static char        g_rtc_path[1024];
+static uint8_t     g_rtc_shadow[64];
+static bool        g_rtc_dirty;     /* no file yet: the first flush creates it */
 static uint64_t    g_last_write;
 
 static pthread_t       g_writer;
@@ -164,6 +174,19 @@ bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path
 
 	g_sram_size = c->get_memory_size(RETRO_MEMORY_SAVE_RAM);
 	g_sram      = c->get_memory_data(RETRO_MEMORY_SAVE_RAM);
+	stem(rom_path, name, sizeof name);
+	g_rtc_size = c->get_memory_size(RETRO_MEMORY_RTC);
+	g_rtc      = g_rtc_size ? c->get_memory_data(RETRO_MEMORY_RTC) : NULL;
+	if (!g_rtc || g_rtc_size > sizeof g_rtc_shadow) g_rtc_size = 0;
+	if (g_rtc_size) {
+		snprintf(g_rtc_path, sizeof g_rtc_path, "%s/%s.rtc", save_dir ? save_dir : ".", name);
+		g_rtc_dirty = true;
+		if ((f = fopen(g_rtc_path, "rb"))) {
+			if (fread(g_rtc, 1, g_rtc_size, f) == g_rtc_size) g_rtc_dirty = false;
+			fclose(f);
+		}
+		memcpy(g_rtc_shadow, g_rtc, g_rtc_size);
+	}
 
 	/* Measured: SRAM size is per GAME, not per system. Probotector reports 0,
 	 * Final Fantasy on the same core reports 8 KB. A game with no battery must
@@ -173,7 +196,6 @@ bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path
 		return true;
 	}
 
-	stem(rom_path, name, sizeof name);
 	snprintf(g_sram_path, sizeof g_sram_path, "%s/%s.srm",
 	         save_dir ? save_dir : ".", name);
 
@@ -217,8 +239,20 @@ bool diatom_save_init(diatom_core *c, const char *save_dir, const char *rom_path
 	return true;
 }
 
+/* The clock's base time, when it differs from what is on the card (or there is no file yet). */
+static void rtc_flush(void)
+{
+	if (!g_rtc_size) return;
+	if (!g_rtc_dirty && !memcmp(g_rtc, g_rtc_shadow, g_rtc_size)) return;
+	if (write_atomic(g_rtc_path, g_rtc, g_rtc_size)) {
+		memcpy(g_rtc_shadow, g_rtc, g_rtc_size);
+		g_rtc_dirty = false;
+	}
+}
+
 void diatom_save_tick(void)
 {
+	if (g_rtc_size && !g_rtc_dirty && memcmp(g_rtc, g_rtc_shadow, g_rtc_size)) rtc_flush();
 	if (!g_sram_size || !g_running) return;
 	/* memcmp of at most 128 KB, tens of microseconds. Cheap enough to do every
 	 * frame, and most frames find nothing: only games that actually save touch
@@ -244,6 +278,7 @@ void diatom_save_tick(void)
  * and a write it had queued could land after this newer one. */
 void diatom_save_now(void)
 {
+	rtc_flush();
 	if (!g_sram_size) return;
 	if (!g_running) { diatom_save_flush(); return; }
 
@@ -283,6 +318,7 @@ void diatom_save_kick(void)
 
 void diatom_save_flush(void)
 {
+	rtc_flush();
 	if (!g_sram_size) return;
 	if (!memcmp(g_sram, g_shadow, g_sram_size)) return;
 
@@ -309,6 +345,7 @@ void diatom_save_shutdown(void)
 	free(g_shadow); free(g_staging);
 	g_shadow = g_staging = NULL;
 	g_sram_size = 0;
+	g_rtc_size = 0;
 }
 
 /* The state to write, header and payload in one malloc'd buffer; NULL if the
