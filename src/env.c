@@ -19,6 +19,7 @@
 #include "stylus.h"
 
 static bool g_throttle_ff, g_throttle_rewind;   /* diatom_env_set_throttle's, for GET_THROTTLE_STATE */
+static bool g_video_shown = true;               /* diatom_env_set_video's, for GET_AUDIO_VIDEO_ENABLE */
 #define MASK(x) ((x) & 0xffff)   /* experimental commands carry 0x10000 */
 
 static void capture_descriptors(const struct retro_input_descriptor *d);
@@ -371,7 +372,9 @@ static bool env_cb(unsigned cmd, void *data)
 		return true;
 	}
 	case MASK(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE):
-		*(int *)data = 3;              /* both enabled; asked every frame */
+		/* Asked every frame. Video off only for a fast-forward frame the loop will not show (FF_SKIP ports), so a core
+		 * that honours it (armGBA's Fast-Forward Skip) leaves the drawing out; sound stays, as FF has always made it. */
+		*(int *)data = g_video_shown ? 3 : 2;
 		return true;
 
 	/* ---- paths - supplied by the host, never by the port ----------------- */
@@ -416,6 +419,10 @@ static bool env_cb(unsigned cmd, void *data)
 		 * its own default. That is the right answer for an unknown key. */
 		return v->value != NULL;
 	}
+	case MASK(RETRO_ENVIRONMENT_GET_FASTFORWARDING):
+		/* armGBA skips a hidden frame only when this says fast-forward too. */
+		if (data) *(bool *)data = g_throttle_ff;
+		return true;
 	case MASK(RETRO_ENVIRONMENT_GET_THROTTLE_STATE): {
 		struct retro_throttle_state *t = data;
 
@@ -513,6 +520,11 @@ void diatom_env_set_throttle(bool fast_forward, bool rewinding)
 {
 	g_throttle_ff = fast_forward;
 	g_throttle_rewind = rewinding;
+}
+
+void diatom_env_set_video(bool shown)
+{
+	g_video_shown = shown;
 }
 
 bool diatom_env_polled(void)

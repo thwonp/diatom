@@ -156,7 +156,8 @@ ifeq ($(PORT),brick)
   # TrimUI Brick (TG3040) - ADR-0012. Stock Debian cross-compiler; SDL2 is the
   # device's own library plus version-matched upstream headers, assembled into
   # sysroot/brick by tools/fetch-brick-sysroot.sh and never committed.
-  # Its GL swap waits for vsync: FF skips frames there - diatom_port_fast.
+  # Its GL swap waits for vsync and its blit is ~2 ms: in FF only frames the
+  # panel can show are drawn and presented (main.c DIATOM_FF_SHOW_US).
   CFLAGS  += -DDIATOM_PORT_FF_SKIP
   # A busy frame can miss its deadline by the 5 ms blit; skip the blit then
   # (main.c, TortOS plorpos-reo.21). Only measured on this port.

@@ -977,6 +977,16 @@ static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
 static turbo_assign g_ta;      /* Turbo Assign, ADR-0045; reset at RUN and RESUME */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
 /* END PolyForm-Noncommercial-1.0.0 */
+#ifdef DIATOM_PORT_FF_SKIP
+/* Fast-forward on a port whose panel shows far fewer frames than FF makes (the Brick): a frame is shown only this long
+ * after the last shown one finished presenting. The others are neither drawn by the core (GET_AUDIO_VIDEO_ENABLE without
+ * video: armGBA's Fast-Forward Skip) nor presented. Decided before the core runs, so both sides agree on which frames
+ * are seen. Three quarters of the panel's ~16.7 ms: the Mali swap waits for the next vsync whatever the swap interval,
+ * so swapping every frame capped FF at the panel's rate (plorpos-reo.13), and on the fb path the blit of a frame the
+ * flip thread replaces unseen, with the core's drawing, kept armGBA at 3x of a 4x FF (TortOS plorpos-881.3). */
+#define DIATOM_FF_SHOW_US 12500
+static uint64_t g_ff_shown_us;   /* when the last shown fast-forward frame finished presenting */
+#endif
 /* A core still emits one frame's worth of audio per retro_run() call while
  * fast-forwarding - nothing skips samples, only the sleep between frames
  * shrinks - so unthrottled output would play sped-up and garbled. Quieted
@@ -2231,11 +2241,16 @@ static int run_session_inner(const diatom_session *sn)
 	while (!diatom_port_should_quit() && !g_terminate && !stop &&
 	       (sn->limit <= 0 || frames < sn->limit)) {
 		uint64_t now;
+		bool ff_hide = false;   /* a fast-forward frame nobody will see: not drawn, not presented */
 
 		g_frame_fresh = false;
 		vlock = diatom_port_vsync_lock(g_ff_speed == 1 && !g_rewind_active);
 		diatom_audio_set_reach(vlock);
 		diatom_env_set_throttle(g_ff_speed > 1, g_rewind_active);
+#ifdef DIATOM_PORT_FF_SKIP
+		ff_hide = g_ff_speed > 1 && !g_rewind_active && diatom_port_now_us() - g_ff_shown_us < DIATOM_FF_SHOW_US;
+#endif
+		diatom_env_set_video(!ff_hide);
 		/* Rewind steps the ring backward and then runs the core once to
 		 * render the frame the restore corresponds to - see rewind.c's
 		 * header comment on the one-frame forward nudge this costs, judged
@@ -2366,13 +2381,10 @@ static int run_session_inner(const diatom_session *sn)
 			}
 		}
 
-		{
+		if (!ff_hide) {
 			uint64_t p0 = diatom_port_now_us();
 #ifdef DIATOM_PORT_PACED
 			paced = diatom_port_pace(pace_ok && g_ff_speed == 1);
-#endif
-#ifdef DIATOM_PORT_FF_SKIP
-			diatom_port_fast(g_ff_speed > 1);
 #endif
 #if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
 			/* Core time since the last present left, plus the blit, against
@@ -2418,6 +2430,9 @@ static int run_session_inner(const diatom_session *sn)
 			g_stat[SLOT(g_mode, g_filter)].present_us
 				+= diatom_port_now_us() - p0;
 			g_stat[SLOT(g_mode, g_filter)].frames++;
+#ifdef DIATOM_PORT_FF_SKIP
+			if (g_ff_speed > 1) g_ff_shown_us = diatom_port_now_us();
+#endif
 		}
 
 		/* Display switching lives after present, so the timing above covers

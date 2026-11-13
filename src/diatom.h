@@ -166,6 +166,8 @@ void diatom_audio_set_reach(bool wide);
 void diatom_audio_set_feedforward(double rel);
 /* Tell GET_THROTTLE_STATE what the loop is doing; called every frame before the core runs. */
 void diatom_env_set_throttle(bool fast_forward, bool rewinding);
+/* Whether this frame will be shown, for GET_AUDIO_VIDEO_ENABLE; called every frame before the core runs. */
+void diatom_env_set_video(bool shown);
 bool diatom_env_shutdown(void);
 
 /* options.c - what a core can be configured with, and what it currently is.
