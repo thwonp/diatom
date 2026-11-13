@@ -589,29 +589,56 @@ static const char *filter_name(diatom_filter f)
 	return f == DIATOM_FILTER_SHARP ? "sharp" : "nearest";
 }
 
-/* Screen Layout ->, <- (TortOS plorpos-reo.21): round the DS's layouts, for
- * this run - the launcher keeps the one chosen in its menu. A port that
- * draws a split (GKD, Rotate) has its five, the Brick and H700 their six;
- * both end on the two Overlays (plorpos-6ei.5). */
+/* The DS's layouts in pairs, the top screen big then the bottom (TortOS plorpos-jcj): Screen Layout rounds the
+ * pairs for this run - the launcher keeps the one chosen in its menu - and Swap Screens turns within one, which the
+ * launcher keeps per game. A port that draws a split (GKD, Rotate): Overlay, Offset, Even Split (one screen pair, so
+ * Swap Screens does nothing there), Single Screen; the Brick and H700: Overlay, Single Screen, Hybrid. Same order as
+ * the launcher's DS_RING. */
+static const char *const DS_PAIRS[][4][2] = {
+	{ { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-a", "ds-a-swap" }, { "ds-b", "ds-b" }, { "ds-top", "ds-bottom" } },
+	{ { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-top", "ds-bottom" }, { "ds-topfocus", "ds-bottomfocus" }, { NULL, NULL } },
+};
+static bool g_ds_bottom_big;   /* the side a layout change keeps, across Even Split, which has none */
+
+static int mode_index(const char *name)
+{
+	for (int m = 0; m < diatom_mode_count; m++)
+		if (!strcmp(diatom_modes[m].name, name)) return m;
+	return -1;
+}
+
+/* Where the current mode sits in this port's pairs: false when it is not a DS layout here. */
+static bool ds_pair_of(int *pair, int *side, int *n)
+{
+	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	const char *cur = diatom_modes[g_mode].name;
+
+	for (*n = 0; *n < 4 && p[*n][0]; (*n)++) ;
+	for (int i = 0; i < *n; i++)
+		for (int s = 0; s < 2; s++)
+			if (!strcmp(cur, p[i][s])) { *pair = i; *side = s; return true; }
+	return false;
+}
+
 static void layout_step(int dir)
 {
-	static const char *const rings[][6] = {
-		{ "ds-a", "ds-a-swap", "ds-b", "ds-topoverlay", "ds-bottomoverlay", NULL },
-		{ "ds-top", "ds-bottom", "ds-topfocus", "ds-bottomfocus", "ds-topoverlay", "ds-bottomoverlay" },
-	};
-	const char *const *ring = rings[g_caps.split ? 0 : 1];
-	int n = 0, at = -1, m;
+	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	int pair, side, n, m;
 
-	while (n < 6 && ring[n]) {
-		if (!strcmp(diatom_modes[g_mode].name, ring[n])) at = n;
-		n++;
-	}
-	if (at < 0) return;
-	for (m = 0; m < diatom_mode_count; m++)
-		if (!strcmp(diatom_modes[m].name, ring[(at + dir + n) % n])) {
-			apply_display(m, g_filter);
-			break;
-		}
+	if (!ds_pair_of(&pair, &side, &n)) return;
+	if (strcmp(p[pair][0], p[pair][1])) g_ds_bottom_big = side == 1;
+	pair = (pair + dir + n) % n;
+	if ((m = mode_index(p[pair][g_ds_bottom_big ? 1 : 0])) >= 0) apply_display(m, g_filter);
+}
+
+static void swap_screens(void)
+{
+	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	int pair, side, n, m;
+
+	if (!ds_pair_of(&pair, &side, &n) || !strcmp(p[pair][0], p[pair][1])) return;
+	g_ds_bottom_big = side == 0;
+	if ((m = mode_index(p[pair][side ^ 1])) >= 0) apply_display(m, g_filter);
 }
 
 static bool is_overlay(diatom_scale_mode m)
@@ -1278,8 +1305,10 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		 * Even Split, round again - a DS's layouts only, for this run;
 		 * the launcher keeps the one chosen in its menu. */
 		case HK_SWAP:
-		case HK_SWAPBACK:
-			if (pressed & bit) layout_step(action == HK_SWAP ? 1 : -1);
+			if (pressed & bit) layout_step(1);
+			break;
+		case HK_SWAPSCREENS:
+			if (pressed & bit) swap_screens();
 			break;
 		default: break;
 		}

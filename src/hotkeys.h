@@ -27,7 +27,8 @@ typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCR
                HK_STYLUS /* held: the DS stylus down where the port's cursor is
                           * (diatom_port_stylus; the GKD, TortOS plorpos-46o.4) */,
                HK_STYLUSMODE /* the d-pad as the stylus's cursor, on and off (stylus.h) */,
-               HK_SWAPBACK /* DS Layout <-: HK_SWAP the other way round */,
+               HK_SWAPSCREENS /* DS Swap Screens: the other screen of the layout's pair big (TortOS plorpos-jcj);
+                               * "swapback", Screen Layout <- until then, names it too so a key bound to that keeps working */,
                HK_BLOW  /* held: noise into the mic, a breath (TortOS plorpos-6ei.3) */ } hk_action;
 
 #define HK_MAX 11
