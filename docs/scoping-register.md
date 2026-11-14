@@ -886,6 +886,16 @@ Two levers the spike discovered:
       flip runs on its own thread behind a latest-wins mailbox rather than
       blocking the frame loop. On desktop it is deliberately **off**, per the
       1.4% deficit above. No tearing observed on the panel.
+- [x] **[OPEN]** **Vsync lock on by default beyond PokeDaisy?** →
+      **[ADR-0048](decisions/0048-the-vsync-lock-is-not-on-by-default-beyond-pokedaisy.md)**
+      *(Accepted)*. No: panels run off their modes' rates and a locked core
+      runs at the panel's. PokeDaisy only; `diatom.vsync`/`.novsync` on the
+      Brick, none on the GKD, Rotate, H700 (plorpos-rk0.14).
+- [x] **[OPEN]** **The Flip hitches every 2-3 s against its 59.657 Hz panel** →
+      **[ADR-0049](decisions/0049-the-flip-retimes-its-panel-and-locks-every-core.md)**
+      *(Accepted; supersedes 0048 on the Flip)*. The panel is retimed to the
+      core's fps and every core locks, standing down by itself if it slips or
+      drops audio (plorpos-f1p.68).
 - [x] **[OPEN]** **The end-of-session fps line counted menu time as slow
       frames.** `t_start` was set once at load and never rebased, so the rate
       was frames over wall clock. Pacing already rebased `next_us` on resume for
