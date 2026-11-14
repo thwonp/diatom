@@ -974,6 +974,9 @@ __attribute__((weak)) double diatom_port_panel_hz(void) { return 0.0; }
 /* Optional port hook: block until the frame just presented has latched at a vsync (only after a lock said yes). */
 __attribute__((weak)) void diatom_port_vsync_wait(void) {}
 static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
+/* Fast Forward (Toggle)'s state (TortOS plorpos-73b): on from one press to the next. Kept through the pause menu and a
+ * state save; off at every RUN and on any state load (owner). */
+static bool g_ff_toggled;
 static turbo_assign g_ta;      /* Turbo Assign, ADR-0045; reset at RUN and RESUME */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
 /* END PolyForm-Noncommercial-1.0.0 */
@@ -1136,6 +1139,7 @@ static bool menu_pause(const diatom_session *sn, bool switcher)
 			                  m.path);
 			break;
 		case DIATOM_MSG_LOAD:
+			g_ff_toggled = false;   /* off on a load (plorpos-73b) */
 			diatom_proto_send(diatom_state_load(g_core, m.path)
 			                  ? "LOADED\tpath=%s" : "ERROR\tcode=state_rejected\tmsg=%s",
 			                  m.path);
@@ -1238,6 +1242,7 @@ static int g_hotkey_ff_speed = DIATOM_HOTKEY_FF_SPEED;
  * stays true. */
 static bool g_hotkey_ff_active, g_hotkey_rewind_active;
 
+
 /* Checked every frame. Returns what the core must not see: every direct-bound
  * button, always - that system's game has given it up - and, while a
  * modifier is held, it plus every input bound under it. Whether or
@@ -1299,14 +1304,17 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_REWIND: if (buttons & bit) rewind_held = true; break;
 		case HK_STYLUS: if (buttons & bit) stylus_held = true; break;
 		case HK_BLOW:   if (buttons & bit) blow_held = true;   break;
+		case HK_FFTOGGLE: if (pressed & bit) g_ff_toggled = !g_ff_toggled; break;
 		case HK_STYLUSMODE: if (pressed & bit) sty_toggle(); break;
 		case HK_SAVESTATE:
 			if ((pressed & bit) && sn->state_exit)
 				diatom_state_save(g_core, sn->state_exit);
 			break;
 		case HK_LOADSTATE:
-			if ((pressed & bit) && sn->state_exit)
+			if ((pressed & bit) && sn->state_exit) {
+				g_ff_toggled = false;   /* off on a load (plorpos-73b) */
 				diatom_state_load(g_core, sn->state_exit);
+			}
 			break;
 		case HK_SCREENSHOT:
 			if (pressed & bit) shot_take(sn->shots, sn->rom);
@@ -1324,7 +1332,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		}
 	}
 
-	if (ff_held)                          { g_ff_speed = g_hotkey_ff_speed; g_hotkey_ff_active = true; }
+	if (ff_held || g_ff_toggled)          { g_ff_speed = g_hotkey_ff_speed; g_hotkey_ff_active = true; }
 	else if (g_hotkey_ff_active)          { g_ff_speed = 1; g_hotkey_ff_active = false; }
 	if (rewind_held)                      { g_rewind_active = true;  g_hotkey_rewind_active = true; }
 	else if (g_hotkey_rewind_active)      { g_rewind_active = false; g_hotkey_rewind_active = false; }
@@ -2120,6 +2128,7 @@ static int run_session_inner(const diatom_session *sn)
 	 * restored into another is not a smaller rewind, it is a crash. */
 	diatom_rewind_reset(g_core);
 	g_ff_speed = 1;
+	g_ff_toggled = false;
 	g_hotkey_ff_speed = DIATOM_HOTKEY_FF_SPEED;
 	g_rewind_active = false;
 	g_ff_quieted_us = false;
@@ -2472,6 +2481,7 @@ static int run_session_inner(const diatom_session *sn)
 				                  : "ERROR\tcode=save_failed\tmsg=%s", m.path);
 				break;
 			case DIATOM_MSG_LOAD:
+				g_ff_toggled = false;   /* off on a load (plorpos-73b) */
 				diatom_proto_send(diatom_state_load(g_core, m.path)
 				                  ? "LOADED\tpath=%s"
 				                  : "ERROR\tcode=state_rejected\tmsg=%s", m.path);

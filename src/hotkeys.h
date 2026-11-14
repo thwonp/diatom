@@ -29,9 +29,11 @@ typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCR
                HK_STYLUSMODE /* the d-pad as the stylus's cursor, on and off (stylus.h) */,
                HK_SWAPSCREENS /* DS Swap Screens: the other screen of the layout's pair big (TortOS plorpos-jcj);
                                * "swapback", Screen Layout <- until then, names it too so a key bound to that keeps working */,
-               HK_BLOW  /* held: noise into the mic, a breath (TortOS plorpos-6ei.3) */ } hk_action;
+               HK_BLOW  /* held: noise into the mic, a breath (TortOS plorpos-6ei.3) */,
+               HK_FFTOGGLE /* Fast Forward (Toggle): a press turns FF on, the next off; HK_FF is the held one (TortOS plorpos-73b) */ } hk_action;
 
-#define HK_MAX 11
+/* Bindings in one spec: a DS shelf can bind every action (12 with HK_FFTOGGLE). */
+#define HK_MAX 12
 
 /* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
  * a spec that is half garbage is refused whole rather than applying the good

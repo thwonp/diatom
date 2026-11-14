@@ -83,6 +83,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "stylusmode")) return HK_STYLUSMODE;
 	if (!strcmp(s, "swapscreens") || !strcmp(s, "swapback")) return HK_SWAPSCREENS;
 	if (!strcmp(s, "blow"))      return HK_BLOW;
+	if (!strcmp(s, "fftoggle"))  return HK_FFTOGGLE;
 	return HK_NONE;
 }
 
