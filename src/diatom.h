@@ -161,6 +161,8 @@ void diatom_env_core_log_flush(void);
 /* Once per frame, each consuming its flag: whether the core polled the pad
  * during that frame's run(), and whether it sent RETRO_ENVIRONMENT_SHUTDOWN. */
 bool diatom_env_polled(void);
+/* DIATOM_BIT(DIATOM_BTN_MENU) if the core's polls saw Menu since the last call. */
+uint32_t diatom_env_take_menu(void);
 /* Rate control's reach: wide while the loop is locked to the panel's rate. */
 void diatom_audio_set_reach(bool wide);
 void diatom_audio_set_feedforward(double rel);

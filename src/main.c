@@ -2495,7 +2495,7 @@ static int run_session_inner(const diatom_session *sn)
 		levels_tick();
 		audio_tick();
 
-		buttons = diatom_port_input_state();
+		buttons = diatom_port_input_state() | diatom_env_take_menu();
 		idle_note_input(buttons != 0);
 
 		/* Latched at whichever entry point began these frames - game start or

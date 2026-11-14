@@ -541,11 +541,26 @@ bool diatom_env_shutdown(void)
 	return v;
 }
 
+/* A Menu seen at any of this frame's polls, kept for the host's read after
+ * run(). The Rotate and H700 ports show a Menu tap as a one-poll pulse, and a
+ * core that polls twice a frame - PokeDaisy calls the poll itself, then its
+ * mGBA/armGBA run polls again - cleared it before the host looked: Menu never
+ * opened the menu (TortOS plorpos-49j). */
+static uint32_t g_menu_seen;
+
 static void cb_input_poll(void)
 {
 	g_polled = true;
 	diatom_port_input_poll();
+	g_menu_seen |= diatom_port_input_state() & DIATOM_BIT(DIATOM_BTN_MENU);
 	turbo_tick();
+}
+
+uint32_t diatom_env_take_menu(void)
+{
+	uint32_t v = g_menu_seen;
+	g_menu_seen = 0;
+	return v;
 }
 
 /* Canonical button names. The protocol speaks these, never retropad numbers,
