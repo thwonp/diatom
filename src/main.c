@@ -2243,8 +2243,11 @@ static int run_session_inner(const diatom_session *sn)
 	diatom_audio_prime();
 	t_start = diatom_port_now_us();
 	next_us = (double)t_start;
-	uint64_t lk_prev = 0;     /* when the previous locked iteration's page latched */
-	bool     catch_up = false; /* that iteration slipped a vsync: its audio is owed */
+	double   lk_grid = 0;     /* locked: when the core runs so far are due on the panel's clock (0 = not locked) */
+	double   lk_owed = 0;     /* us the locked loop is behind that clock: a catch-up run per whole period */
+	bool     lk_extra = false; /* this iteration ran the core a second time (catch-up): two periods' worth */
+	bool     lk_dupe = false;  /* the previous locked iteration had no new picture */
+	bool     catch_up = false; /* a whole panel period is owed: run the core once more next iteration */
 	log_guard_begin();
 
 	while (!diatom_port_should_quit() && !g_terminate && !stop &&
@@ -2291,6 +2294,7 @@ static int run_session_inner(const diatom_session *sn)
 				diatom_audio_set_state(DIATOM_AUDIO_ST_LOCK | DIATOM_AUDIO_ST_CATCHUP);
 				if (g_core->audio_status) g_core->audio_status(true, 50, true);
 				core_run();
+				lk_extra = true;
 			}
 			catch_up = false;
 #ifdef DIATOM_PORT_FRAMESKIP
@@ -2687,14 +2691,52 @@ static int run_session_inner(const diatom_session *sn)
 			double target_us = frame_us / g_ff_speed;
 		/* END PolyForm-Noncommercial-1.0.0 */
 
-			if (vlock && g_frame_fresh) {
+			if (vlock) {
 				double pu = diatom_port_panel_hz() > 0 ? 1e6 / diatom_port_panel_hz() : 0;
+				double late;
 
-				diatom_port_vsync_wait();
+				/* A dupe frame (no new picture: pcsx_rearmed sends one every other frame in a 30 fps game) hands
+				 * the port nothing to wait for, and the fresh frame after it finds the flip thread idle, so neither
+				 * waits for the panel: PS1 on the Flip ran 66 iterations a second locked and overflowed the audio.
+				 * Every locked iteration therefore keeps to the panel's clock: one period per core run (two after a
+				 * catch-up run). Only a dupe and the fresh frame after it sleep to that clock: a core that always draws
+				 * is held by the port's wait as before (sleeping its quick frames cost Star Fox 1% and made Super Mario
+				 * World slip), and its lead over the clock is capped at a period so a real slip still counts.
+				 * Behind it, the time is owed, and a whole period owed buys one catch-up run (the old rule, a run per
+				 * slipped iteration, counted a late-early pair of 25 + 15 ms as a whole frame and ran PS1 62 times a
+				 * second). An early iteration pays debt back first; at most a period and a half is ever owed. */
+				diatom_port_vsync_wait();   /* a dupe: returns at once, but the port's slip window counts it */
 				now = diatom_port_now_us();
-				catch_up = lk_prev && pu > 0 && (double)(now - lk_prev) > pu * 1.5;
-				lk_prev = now;
+				if (pu <= 0) lk_grid = 0;
+				else if (lk_grid == 0) lk_grid = (double)now;
+				else {
+					lk_grid += pu * (lk_extra ? 2 : 1);
+					late = (double)now - lk_grid;
+					if (late > 0) {
+						lk_owed = fmin(lk_owed + late, pu * 1.5);
+						lk_grid = (double)now;
+					} else {
+						double pay = fmin(lk_owed, -late);
+
+						lk_owed -= pay;
+						lk_grid -= pay;
+						if (!g_frame_fresh || lk_dupe) {
+							double d = lk_grid - (double)now;
+							struct timespec ts = { (time_t)(d / 1e6), (long)(fmod(d, 1e6) * 1000.0) };
+
+							nanosleep(&ts, NULL);
+						} else if (lk_grid > (double)now + pu) {
+							lk_grid = (double)now + pu;
+						}
+					}
+				}
+				catch_up = pu > 0 && lk_owed >= pu;
+				if (catch_up) lk_owed -= pu;
+				lk_dupe = !g_frame_fresh;
+			} else {
+				lk_grid = 0;
 			}
+			lk_extra = false;
 			next_us += target_us;
 			now = diatom_port_now_us();
 #ifdef DIATOM_PORT_PACED
@@ -2705,7 +2747,7 @@ static int run_session_inner(const diatom_session *sn)
 			if (paced) next_us = (double)now;
 #endif
 			/* A port that waits for the panel in present (the Brick's vsync lock): that wait is the clock, as above. */
-			if (vlock && g_frame_fresh) next_us = (double)now;
+			if (vlock) next_us = (double)now;
 
 			if (next_us > (double)now) {
 				struct timespec ts;

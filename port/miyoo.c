@@ -736,6 +736,7 @@ uint64_t diatom_audio_dropped(void);   /* src/audio.c: frames the sink would not
 static bool     g_lk_audio_off;        /* this game overflowed audio locked: free until it ends */
 static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600, g_lk_grace;
 static uint64_t g_lk_last, g_lk_dropped, g_lk_win0;   /* g_lk_win0: when this 120-frame window began */
+static uint64_t g_lk_grace_dr;   /* audio frames dropped in the grace: forgiven, but reported with the exit */
 
 /* The core's library_name, once per game as it loads. */
 void diatom_port_core_name(const char *name)
@@ -745,6 +746,7 @@ void diatom_port_core_name(const char *name)
 	g_lk_backoff = 600;
 	g_lk_frames = g_lk_miss = 0;
 	g_lk_grace = 30;
+	g_lk_grace_dr = 0;
 	g_lk_last = 0;
 	pthread_mutex_lock(&g_flip_lock);
 	g_pans = g_replaced = 0;
@@ -802,11 +804,11 @@ void diatom_port_vsync_wait(void)
 		 * well (measured 2026-11-12: frames 3 and 7, 126 and 252 frames refused, no slow frame in either). One such
 		 * start-up overflow is a few ms of audio and must not cost the whole game its lock. RACE's steady overflow still
 		 * trips the exit right after. */
-		if (g_lk_grace) { g_lk_grace--; g_lk_dropped = dr; }
+		if (g_lk_grace) { g_lk_grace--; g_lk_grace_dr += dr - g_lk_dropped; g_lk_dropped = dr; }
 		/* Checked every frame, so the lock lets go at the first overflow: clean cores drop 0 locked. */
 		else if (dr > g_lk_dropped && dr - g_lk_dropped > AUDIO_RATE / 1000) {
-			fprintf(stderr, "vsync: lock off for the rest of the game (%llu audio frames dropped after %u frames locked)\n",
-			        (unsigned long long)(dr - g_lk_dropped), g_lk_frames);
+			fprintf(stderr, "vsync: lock off for the rest of the game (%llu audio frames dropped after %u frames locked, %llu in the grace)\n",
+			        (unsigned long long)(dr - g_lk_dropped), g_lk_frames, (unsigned long long)g_lk_grace_dr);
 			g_lk_audio_off = true;
 		}
 		if ((double)(t - g_lk_last) > g_panel_us * 1.5) g_lk_miss++;
