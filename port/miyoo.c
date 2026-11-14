@@ -494,7 +494,7 @@ static uint32_t g_xmap[2048];
  * draws plainly. */
 enum { FX_OFF, FX_SCAN };
 static int g_fx;
-static unsigned g_gfx_err;          /* filter blits or waits that returned an error, shown in the present: line */
+static unsigned g_gfx_err;          /* filter blits or waits that returned an error, shown in the game-end line */
 
 static uint32_t *page_px(int page)
 {
@@ -639,12 +639,18 @@ static int             g_npages;
 static volatile double g_panel_us;   /* the panel's period, measured here; 0 until known */
 static bool     g_vlock;
 static unsigned g_lk_off;            /* frames left with the lock stood down */
-static unsigned g_replaced;          /* frames replaced before their pan, since the last flip line */
+static unsigned g_replaced;          /* frames replaced before their pan, this game */
+/* Per-game totals for the one summary line at game end (TortOS plorpos-f1p.91): a line every few seconds was a card
+ * write every few seconds of play. */
+static unsigned g_pans;              /* pages put on glass, this game */
+static uint64_t g_blit_us, g_hand_us;
+static unsigned g_presents, g_lk_downs, g_lk_down_miss;
+static double   g_lk_down_fps;
+static bool     g_gfx;               /* defined with MI_GFX below */
 
 static void *flipper(void *arg)
 {
-	uint64_t t0 = diatom_port_now_us(), flast = 0;
-	unsigned pans = 0;
+	uint64_t flast = 0;
 	(void)arg;
 
 	pthread_mutex_lock(&g_flip_lock);
@@ -673,14 +679,7 @@ static void *flipper(void *arg)
 		g_flipping = false;
 		g_inflight = -1;
 		pthread_cond_broadcast(&g_flip_cond);
-		if (++pans == 600) {
-			uint64_t now = diatom_port_now_us();
-			fprintf(stderr, "flip: %.2f pans/s, %u frame(s) never shown, panel %.3f Hz, vsync lock %s\n",
-			        600 * 1e6 / (double)(now - t0), g_replaced, g_panel_us > 0 ? 1e6 / g_panel_us : 0.0,
-			        g_vlock ? "on" : g_lk_off ? "stood down" : "off");
-			g_replaced = 0;
-			t0 = now; pans = 0;
-		}
+		g_pans++;
 	}
 	pthread_mutex_unlock(&g_flip_lock);
 	return NULL;
@@ -747,6 +746,11 @@ void diatom_port_core_name(const char *name)
 	g_lk_frames = g_lk_miss = 0;
 	g_lk_grace = 30;
 	g_lk_last = 0;
+	pthread_mutex_lock(&g_flip_lock);
+	g_pans = g_replaced = 0;
+	pthread_mutex_unlock(&g_flip_lock);
+	g_blit_us = g_hand_us = 0;
+	g_presents = g_lk_downs = 0;
 	fprintf(stderr, "vsync: lock on for %s\n", name ? name : "?");
 }
 
@@ -815,8 +819,9 @@ void diatom_port_vsync_wait(void)
 			bool slow = win > 120 * g_panel_us * 1.02;
 
 			if (g_lk_miss > 2 || slow) {
-				fprintf(stderr, "vsync: lock stands down for %u frames (%u of 120 slipped, %.1f fps)\n",
-				        g_lk_backoff, g_lk_miss, 120e6 / win);
+				g_lk_downs++;   /* reported in the game-end summary, not here */
+				g_lk_down_miss = g_lk_miss;
+				g_lk_down_fps = 120e6 / win;
 				g_lk_off = g_lk_backoff;
 				g_lk_backoff = g_lk_backoff < 18000 ? g_lk_backoff * 2 : g_lk_backoff;
 			}   /* never back to 10 s within a game: each retry of a heavy game costs a slow window */
@@ -919,6 +924,23 @@ void diatom_port_content_fps(double fps)
 	int v = RT_V0, d = 0;
 	uint64_t t0;
 
+	if (fps <= 0 && g_presents) {   /* a game ends: its one summary line (plorpos-f1p.91) */
+		unsigned pans, lost;
+
+		pthread_mutex_lock(&g_flip_lock);
+		pans = g_pans; lost = g_replaced;
+		pthread_mutex_unlock(&g_flip_lock);
+		fprintf(stderr, "flip: game: %u pans, %u never shown, panel %.3f Hz, blit %.2f / hand-over %.2f ms (%s)",
+		        pans, lost, g_panel_us > 0 ? 1e6 / g_panel_us : 0.0,
+		        g_blit_us / (double)g_presents / 1000.0, g_hand_us / (double)g_presents / 1000.0,
+		        g_gfx ? "MI_GFX" : "CPU");
+		if (g_gfx_err) fprintf(stderr, ", %u filter blit errors", g_gfx_err);
+		if (g_lk_downs)
+			fprintf(stderr, ", lock stood down %ux (last %u/120 slipped, %.1f fps)",
+			        g_lk_downs, g_lk_down_miss, g_lk_down_fps);
+		fputc('\n', stderr);
+		g_presents = 0;
+	}
 	if (!g_rt_tgen) return;
 	if (fps > 0) {
 		const char *e = getenv("DIATOM_RETIME");
@@ -1122,20 +1144,8 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	flip_to(back);
 	t2 = diatom_port_now_us();
 	/* Where present's time goes (TortOS plorpos-f1p.14): the blit, and the
-	 * pan, which may wait for vblank. */
-	{
-		static uint64_t blit, pan;
-		static unsigned n;
-
-		blit += t1 - t0; pan += t2 - t1;
-		if (++n == 300) {
-			fprintf(stderr, "present: blit avg %.2f ms, hand-over avg %.2f ms (%s)",
-			        blit / 300 / 1000.0, pan / 300 / 1000.0, g_gfx ? "MI_GFX" : "CPU");
-			if (g_gfx_err) fprintf(stderr, ", %u filter blit errors", g_gfx_err);
-			fputc('\n', stderr);
-			blit = pan = 0; n = 0;
-		}
-	}
+	 * pan, which may wait for vblank. Summed for the game-end line. */
+	g_blit_us += t1 - t0; g_hand_us += t2 - t1; g_presents++;
 }
 
 void diatom_port_present_stop(diatom_park park)
@@ -1275,7 +1285,6 @@ static void bright_step(int step)
 	if (to != g_bright_idx) {
 		g_bright_idx = to;
 		bright_apply();
-		fprintf(stderr, "backlight: %d/%d\n", g_bright_idx, BRIGHT_CNT - 1);
 	}
 	bar_show(true, g_bright_idx, BRIGHT_CNT - 1);
 }
@@ -1335,7 +1344,6 @@ void diatom_port_input_poll(void)
 			if (to != g_vol_idx) {
 				g_vol_idx = to;
 				volume_apply();
-				fprintf(stderr, "audio: volume %d/%d\n", g_vol_idx, g_vol_cnt - 1);
 			}
 			bar_show(false, g_vol_idx, g_vol_cnt - 1);
 		}
