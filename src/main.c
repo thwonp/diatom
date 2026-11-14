@@ -589,29 +589,56 @@ static const char *filter_name(diatom_filter f)
 	return f == DIATOM_FILTER_SHARP ? "sharp" : "nearest";
 }
 
-/* Screen Layout ->, <- (TortOS plorpos-reo.21): round the DS's layouts, for
- * this run - the launcher keeps the one chosen in its menu. A port that
- * draws a split (GKD, Rotate) has its five, the Brick and H700 their six;
- * both end on the two Overlays (plorpos-6ei.5). */
+/* The DS's layouts in pairs, the top screen big then the bottom (TortOS plorpos-jcj): Screen Layout rounds the
+ * pairs for this run - the launcher keeps the one chosen in its menu - and Swap Screens turns within one, which the
+ * launcher keeps per game. A port that draws a split (GKD, Rotate): Overlay, Offset, Even Split (one screen pair, so
+ * Swap Screens does nothing there), Single Screen; the Brick and H700: Overlay, Single Screen, Hybrid. Same order as
+ * the launcher's DS_RING. */
+static const char *const DS_PAIRS[][4][2] = {
+	{ { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-a", "ds-a-swap" }, { "ds-b", "ds-b" }, { "ds-top", "ds-bottom" } },
+	{ { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-top", "ds-bottom" }, { "ds-topfocus", "ds-bottomfocus" }, { NULL, NULL } },
+};
+static bool g_ds_bottom_big;   /* the side a layout change keeps, across Even Split, which has none */
+
+static int mode_index(const char *name)
+{
+	for (int m = 0; m < diatom_mode_count; m++)
+		if (!strcmp(diatom_modes[m].name, name)) return m;
+	return -1;
+}
+
+/* Where the current mode sits in this port's pairs: false when it is not a DS layout here. */
+static bool ds_pair_of(int *pair, int *side, int *n)
+{
+	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	const char *cur = diatom_modes[g_mode].name;
+
+	for (*n = 0; *n < 4 && p[*n][0]; (*n)++) ;
+	for (int i = 0; i < *n; i++)
+		for (int s = 0; s < 2; s++)
+			if (!strcmp(cur, p[i][s])) { *pair = i; *side = s; return true; }
+	return false;
+}
+
 static void layout_step(int dir)
 {
-	static const char *const rings[][6] = {
-		{ "ds-a", "ds-a-swap", "ds-b", "ds-topoverlay", "ds-bottomoverlay", NULL },
-		{ "ds-top", "ds-bottom", "ds-topfocus", "ds-bottomfocus", "ds-topoverlay", "ds-bottomoverlay" },
-	};
-	const char *const *ring = rings[g_caps.split ? 0 : 1];
-	int n = 0, at = -1, m;
+	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	int pair, side, n, m;
 
-	while (n < 6 && ring[n]) {
-		if (!strcmp(diatom_modes[g_mode].name, ring[n])) at = n;
-		n++;
-	}
-	if (at < 0) return;
-	for (m = 0; m < diatom_mode_count; m++)
-		if (!strcmp(diatom_modes[m].name, ring[(at + dir + n) % n])) {
-			apply_display(m, g_filter);
-			break;
-		}
+	if (!ds_pair_of(&pair, &side, &n)) return;
+	if (strcmp(p[pair][0], p[pair][1])) g_ds_bottom_big = side == 1;
+	pair = (pair + dir + n) % n;
+	if ((m = mode_index(p[pair][g_ds_bottom_big ? 1 : 0])) >= 0) apply_display(m, g_filter);
+}
+
+static void swap_screens(void)
+{
+	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	int pair, side, n, m;
+
+	if (!ds_pair_of(&pair, &side, &n) || !strcmp(p[pair][0], p[pair][1])) return;
+	g_ds_bottom_big = side == 0;
+	if ((m = mode_index(p[pair][side ^ 1])) >= 0) apply_display(m, g_filter);
 }
 
 static bool is_overlay(diatom_scale_mode m)
@@ -950,6 +977,16 @@ static int  g_ff_speed = 1;      /* 1 = normal; SETSPEED clamps to [1, MAX] */
 static turbo_assign g_ta;      /* Turbo Assign, ADR-0045; reset at RUN and RESUME */
 static bool g_rewind_active;     /* SETREWIND on=1: step the ring backward */
 /* END PolyForm-Noncommercial-1.0.0 */
+#ifdef DIATOM_PORT_FF_SKIP
+/* Fast-forward on a port whose panel shows far fewer frames than FF makes (the Brick): a frame is shown only this long
+ * after the last shown one finished presenting. The others are neither drawn by the core (GET_AUDIO_VIDEO_ENABLE without
+ * video: armGBA's Fast-Forward Skip) nor presented. Decided before the core runs, so both sides agree on which frames
+ * are seen. Three quarters of the panel's ~16.7 ms: the Mali swap waits for the next vsync whatever the swap interval,
+ * so swapping every frame capped FF at the panel's rate (plorpos-reo.13), and on the fb path the blit of a frame the
+ * flip thread replaces unseen, with the core's drawing, kept armGBA at 3x of a 4x FF (TortOS plorpos-881.3). */
+#define DIATOM_FF_SHOW_US 12500
+static uint64_t g_ff_shown_us;   /* when the last shown fast-forward frame finished presenting */
+#endif
 /* A core still emits one frame's worth of audio per retro_run() call while
  * fast-forwarding - nothing skips samples, only the sleep between frames
  * shrinks - so unthrottled output would play sped-up and garbled. Quieted
@@ -1278,8 +1315,10 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		 * Even Split, round again - a DS's layouts only, for this run;
 		 * the launcher keeps the one chosen in its menu. */
 		case HK_SWAP:
-		case HK_SWAPBACK:
-			if (pressed & bit) layout_step(action == HK_SWAP ? 1 : -1);
+			if (pressed & bit) layout_step(1);
+			break;
+		case HK_SWAPSCREENS:
+			if (pressed & bit) swap_screens();
 			break;
 		default: break;
 		}
@@ -2202,11 +2241,16 @@ static int run_session_inner(const diatom_session *sn)
 	while (!diatom_port_should_quit() && !g_terminate && !stop &&
 	       (sn->limit <= 0 || frames < sn->limit)) {
 		uint64_t now;
+		bool ff_hide = false;   /* a fast-forward frame nobody will see: not drawn, not presented */
 
 		g_frame_fresh = false;
 		vlock = diatom_port_vsync_lock(g_ff_speed == 1 && !g_rewind_active);
 		diatom_audio_set_reach(vlock);
 		diatom_env_set_throttle(g_ff_speed > 1, g_rewind_active);
+#ifdef DIATOM_PORT_FF_SKIP
+		ff_hide = g_ff_speed > 1 && !g_rewind_active && diatom_port_now_us() - g_ff_shown_us < DIATOM_FF_SHOW_US;
+#endif
+		diatom_env_set_video(!ff_hide);
 		/* Rewind steps the ring backward and then runs the core once to
 		 * render the frame the restore corresponds to - see rewind.c's
 		 * header comment on the one-frame forward nudge this costs, judged
@@ -2337,13 +2381,10 @@ static int run_session_inner(const diatom_session *sn)
 			}
 		}
 
-		{
+		if (!ff_hide) {
 			uint64_t p0 = diatom_port_now_us();
 #ifdef DIATOM_PORT_PACED
 			paced = diatom_port_pace(pace_ok && g_ff_speed == 1);
-#endif
-#ifdef DIATOM_PORT_FF_SKIP
-			diatom_port_fast(g_ff_speed > 1);
 #endif
 #if defined(DIATOM_PORT_PACED) && defined(DIATOM_PORT_FRAMESKIP)
 			/* Core time since the last present left, plus the blit, against
@@ -2389,6 +2430,9 @@ static int run_session_inner(const diatom_session *sn)
 			g_stat[SLOT(g_mode, g_filter)].present_us
 				+= diatom_port_now_us() - p0;
 			g_stat[SLOT(g_mode, g_filter)].frames++;
+#ifdef DIATOM_PORT_FF_SKIP
+			if (g_ff_speed > 1) g_ff_shown_us = diatom_port_now_us();
+#endif
 		}
 
 		/* Display switching lives after present, so the timing above covers
@@ -2451,7 +2495,7 @@ static int run_session_inner(const diatom_session *sn)
 		levels_tick();
 		audio_tick();
 
-		buttons = diatom_port_input_state();
+		buttons = diatom_port_input_state() | diatom_env_take_menu();
 		idle_note_input(buttons != 0);
 
 		/* Latched at whichever entry point began these frames - game start or

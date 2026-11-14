@@ -109,7 +109,12 @@ ifeq ($(PORT),h700)
     $(error h700 sysroot missing: run tools/fetch-h700-sysroot.sh)
   endif
   CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
-  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  # Resident cores: 32 on every premapping port (TortOS plorpos-881.6). The
+  # cards reached 17 (gambatte + armgba defaults, PokeDaisy GBA/GBC/DS): the
+  # 17th was refused, and its games fell back to a one-shot diatom - no
+  # hotkeys, no autostop. An entry is a dlopen handle and a path; the mapped
+  # pages are page cache.
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=32
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(128u * 1024 * 1024)' \
              -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
   # The SP's panel runs at ~59.6 Hz, below most cores: play is paced by the
@@ -156,7 +161,8 @@ ifeq ($(PORT),brick)
   # TrimUI Brick (TG3040) - ADR-0012. Stock Debian cross-compiler; SDL2 is the
   # device's own library plus version-matched upstream headers, assembled into
   # sysroot/brick by tools/fetch-brick-sysroot.sh and never committed.
-  # Its GL swap waits for vsync: FF skips frames there - diatom_port_fast.
+  # Its GL swap waits for vsync and its blit is ~2 ms: in FF only frames the
+  # panel can show are drawn and presented (main.c DIATOM_FF_SHOW_US).
   CFLAGS  += -DDIATOM_PORT_FF_SKIP
   # A busy frame can miss its deadline by the 5 ms blit; skip the blit then
   # (main.c, TortOS plorpos-reo.21). Only measured on this port.
@@ -170,7 +176,7 @@ ifeq ($(PORT),brick)
   CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT
   # Resident cores: 16, as on the GKD. Since plorpos-reo the Brick ships all
   # nine cores, and the ninth was refused at 8 (plorpos-gkd.83.12).
-  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=32
   # Rewind as on the GKD - a snapshot every 5 frames, 1800 entries, ~30 s of
   # hold - on half its budget (plorpos-gkd.38). 128 MiB against ~600 MB free
   # in a game; only PlayStation (~110 KB a delta) reaches it, at ~1160
@@ -206,7 +212,7 @@ ifeq ($(PORT),gkd)
   # Resident cores: 16, not the Brick's 8. The GKD has nine cores today and
   # PICO-8's fake08 was the one refused at 8 (plorpos-gkd.50.2). Each stays
   # mapped once played; FBNeo, the largest, is ~38 MB against ~1.5 GB free.
-  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=32
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   # The device's libSDL2 was built against glibc 2.40 and references 2.34+
   # symbols (dlerror@GLIBC_2.34) that this toolchain's 2.31 cannot resolve.
@@ -231,7 +237,7 @@ ifeq ($(PORT),rotate)
   # The GKD's budgets: ~2 GB free idle (sway and PipeWire included).
   CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
              -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
-  CFLAGS  += -DDIATOM_MAX_RESIDENT=16
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=32
   LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -Wl,--allow-shlib-undefined
   LDFLAGS += -lSDL2 -lm -ldl -lpthread

@@ -19,6 +19,7 @@
 #include "stylus.h"
 
 static bool g_throttle_ff, g_throttle_rewind;   /* diatom_env_set_throttle's, for GET_THROTTLE_STATE */
+static bool g_video_shown = true;               /* diatom_env_set_video's, for GET_AUDIO_VIDEO_ENABLE */
 #define MASK(x) ((x) & 0xffff)   /* experimental commands carry 0x10000 */
 
 static void capture_descriptors(const struct retro_input_descriptor *d);
@@ -371,7 +372,9 @@ static bool env_cb(unsigned cmd, void *data)
 		return true;
 	}
 	case MASK(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE):
-		*(int *)data = 3;              /* both enabled; asked every frame */
+		/* Asked every frame. Video off only for a fast-forward frame the loop will not show (FF_SKIP ports), so a core
+		 * that honours it (armGBA's Fast-Forward Skip) leaves the drawing out; sound stays, as FF has always made it. */
+		*(int *)data = g_video_shown ? 3 : 2;
 		return true;
 
 	/* ---- paths - supplied by the host, never by the port ----------------- */
@@ -416,6 +419,10 @@ static bool env_cb(unsigned cmd, void *data)
 		 * its own default. That is the right answer for an unknown key. */
 		return v->value != NULL;
 	}
+	case MASK(RETRO_ENVIRONMENT_GET_FASTFORWARDING):
+		/* armGBA skips a hidden frame only when this says fast-forward too. */
+		if (data) *(bool *)data = g_throttle_ff;
+		return true;
 	case MASK(RETRO_ENVIRONMENT_GET_THROTTLE_STATE): {
 		struct retro_throttle_state *t = data;
 
@@ -515,6 +522,11 @@ void diatom_env_set_throttle(bool fast_forward, bool rewinding)
 	g_throttle_rewind = rewinding;
 }
 
+void diatom_env_set_video(bool shown)
+{
+	g_video_shown = shown;
+}
+
 bool diatom_env_polled(void)
 {
 	bool v = g_polled;
@@ -529,11 +541,26 @@ bool diatom_env_shutdown(void)
 	return v;
 }
 
+/* A Menu seen at any of this frame's polls, kept for the host's read after
+ * run(). The Rotate and H700 ports show a Menu tap as a one-poll pulse, and a
+ * core that polls twice a frame - PokeDaisy calls the poll itself, then its
+ * mGBA/armGBA run polls again - cleared it before the host looked: Menu never
+ * opened the menu (TortOS plorpos-49j). */
+static uint32_t g_menu_seen;
+
 static void cb_input_poll(void)
 {
 	g_polled = true;
 	diatom_port_input_poll();
+	g_menu_seen |= diatom_port_input_state() & DIATOM_BIT(DIATOM_BTN_MENU);
 	turbo_tick();
+}
+
+uint32_t diatom_env_take_menu(void)
+{
+	uint32_t v = g_menu_seen;
+	g_menu_seen = 0;
+	return v;
 }
 
 /* Canonical button names. The protocol speaks these, never retropad numbers,
