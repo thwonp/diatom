@@ -1147,10 +1147,10 @@ bool diatom_port_vsync_lock(bool want)
 	if (!(calls++ & 63) || on < 0) {
 		const char *e = getenv("DIATOM_VSYNC");
 
-		/* Forced on for every core: DIATOM_VSYNC=1 or TortOS/diatom.vsync. Forced off: DIATOM_VSYNC=0 or
-		 * TortOS/diatom.novsync. Otherwise the core's default. */
-		if ((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.novsync", F_OK) == 0) on = 0;
-		else on = (e && *e == '1') || access("/mnt/SDCARD/TortOS/diatom.vsync", F_OK) == 0 || g_vlock_default;
+		/* Forced on for every core: DIATOM_VSYNC=1 or plorpOS/diatom.vsync. Forced off: DIATOM_VSYNC=0 or
+		 * plorpOS/diatom.novsync. Otherwise the core's default. */
+		if ((e && *e == '0') || access("/mnt/SDCARD/plorpOS/diatom.novsync", F_OK) == 0) on = 0;
+		else on = (e && *e == '1') || access("/mnt/SDCARD/plorpOS/diatom.vsync", F_OK) == 0 || g_vlock_default;
 	}
 	if ((calls & 63) == 1 && !g_gov_saved[0] && !(on > 0 && want)) gov_recover();   /* a dead presenter's pin, if one is left */
 	if (g_lk_off) { g_lk_off--; want = false; g_lk_last = 0; g_lk_frames = g_lk_miss = 0; }
