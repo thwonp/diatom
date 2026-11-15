@@ -171,6 +171,21 @@ static diatom_option *add(const char *key, const char *deflt)
 	return o;
 }
 
+/* One declared option, v1 or v2: copied, then given the value the launcher asked for. False when the table is full. */
+static bool declare(const char *key, const char *desc, const struct retro_core_option_value *values,
+                    const char *deflt)
+{
+	diatom_option *o = add(key, deflt);
+	int i;
+
+	if (!o) return false;
+	for (i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && values[i].value; i++)
+		;
+	own_strings(o, desc, values, i);
+	apply_pending(o);
+	return true;
+}
+
 void diatom_options_define_v2(const struct retro_core_options_v2 *v2)
 {
 	const struct retro_core_option_v2_definition *d;
@@ -178,16 +193,22 @@ void diatom_options_define_v2(const struct retro_core_options_v2 *v2)
 	if (!v2 || !v2->definitions || !g_active) return;
 	g_active->n = 0;
 
-	for (d = v2->definitions; d->key; d++) {
-		diatom_option *o = add(d->key, d->default_value);
-		int i;
-		if (!o) break;
-		for (i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && d->values[i].value; i++)
-			;
-		own_strings(o, d->desc, d->values, i);
-		apply_pending(o);
-	}
+	for (d = v2->definitions; d->key; d++)
+		if (!declare(d->key, d->desc, d->values, d->default_value)) break;
 	log_(DIATOM_LOG_INFO, "options: core declared %d", g_active->n);
+}
+
+/* v1 is v2's definition without the category fields. The Flip's gpSP declares its options with it. */
+void diatom_options_define_v1(const struct retro_core_option_definition *defs)
+{
+	const struct retro_core_option_definition *d;
+
+	if (!defs || !g_active) return;
+	g_active->n = 0;
+
+	for (d = defs; d->key; d++)
+		if (!declare(d->key, d->desc, d->values, d->default_value)) break;
+	log_(DIATOM_LOG_INFO, "options: core declared %d (v1)", g_active->n);
 }
 
 /* The pre-v1 format: value is "Description; first|second|third", and the first
