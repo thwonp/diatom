@@ -82,6 +82,15 @@ static bool g_menu_sent, g_menu_spent, g_menu_pulse;
  * a tap on release. */
 static uint64_t g_menu_t0_us;
 static bool g_switcher;
+#elif defined(DIATOM_PORT_RGDS)
+/* The Anbernic RG DS on ROCKNIX (TortOS plorpos-rgds): the GKD's session, so
+ * this file. Its buttons and sticks are held by ROCKNIX's InputPlumber, which
+ * shows them as one virtual DualSense - the GKD's button codes, the d-pad as
+ * a hat, the stick 0..255 around 128 (pad_read). The volume keys are their
+ * own node. Nothing on the virtual pad sends HOME_CODE yet (plorpos-rgds.3). */
+#define PAD_NAME  "Sony Interactive Entertainment DualSense Wireless Controller"
+#define KEYS_NAME "gpio-keys-volume"
+#define HOME_CODE BTN_TRIGGER_HAPPY1
 #else
 #define PAD_NAME  "gkd_atom_joypad"
 #define KEYS_NAME "gpio-keys"
@@ -742,6 +751,24 @@ static const struct { int code; int btn; } padmap[] = {
 static uint32_t g_pad_buttons;
 static int g_stick_x, g_stick_y;
 
+#if defined(DIATOM_PORT_RGDS)
+/* The RG DS's stick, 0..255 around 128, onto the GKD's -900..899. */
+#define STICK_RAW(v) (((v) - 128) * 7)
+/* Its d-pad, one hat axis at a time: x is ABS_HAT0X (left/right) or not
+ * (up/down); negative is left and up. */
+static void hat_set(bool x, int v)
+{
+	uint32_t neg = DIATOM_BIT(x ? DIATOM_BTN_LEFT  : DIATOM_BTN_UP);
+	uint32_t pos = DIATOM_BIT(x ? DIATOM_BTN_RIGHT : DIATOM_BTN_DOWN);
+
+	g_pad_buttons &= ~(neg | pos);
+	if (v < 0) g_pad_buttons |= neg;
+	if (v > 0) g_pad_buttons |= pos;
+}
+#else
+#define STICK_RAW(v) (v)
+#endif
+
 /* The GKD's one stick, scaled from its +-900 to the libretro range, for a core
  * that reads it (diatom_port_sticks). The Rotate has none to offer. */
 bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
@@ -804,8 +831,12 @@ static void pad_resync(void)
 	g_menu_sent = false;
 	g_menu_spent = g_home;
 #endif
-	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = abs.value;
-	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = abs.value;
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = STICK_RAW(abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = STICK_RAW(abs.value);
+#if defined(DIATOM_PORT_RGDS)
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_HAT0X), &abs) >= 0) hat_set(true, abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_HAT0Y), &abs) >= 0) hat_set(false, abs.value);
+#endif
 }
 
 static void pad_read(void)
@@ -826,8 +857,12 @@ static void pad_read(void)
 				return;
 			}
 			if (ev[i].type == EV_ABS) {
-				if (ev[i].code == ABS_X) g_stick_x = ev[i].value;
-				if (ev[i].code == ABS_Y) g_stick_y = ev[i].value;
+				if (ev[i].code == ABS_X) g_stick_x = STICK_RAW(ev[i].value);
+				if (ev[i].code == ABS_Y) g_stick_y = STICK_RAW(ev[i].value);
+#if defined(DIATOM_PORT_RGDS)
+				if (ev[i].code == ABS_HAT0X) hat_set(true, ev[i].value);
+				if (ev[i].code == ABS_HAT0Y) hat_set(false, ev[i].value);
+#endif
 				continue;
 			}
 			if (ev[i].type != EV_KEY || ev[i].value == 2) continue;
@@ -1335,6 +1370,12 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
 static const unsigned short bright_ladder[] = {
 	100, 200, 270, 360, 470, 600, 760, 960, 1250, 1570, 1880, 2499
 };
+#elif defined(DIATOM_PORT_RGDS)
+/* The RG DS's backlights run 0..1666: the GKD's rungs, scaled. TortOS
+ * src/platform_gkd.c's RG DS ladder, which must match. */
+static const unsigned short bright_ladder[] = {
+	261, 392, 516, 647, 771, 902, 1026, 1156, 1281, 1411, 1535, 1666
+};
 #else
 static const unsigned char bright_ladder[] = {
 	40, 60, 79, 99, 118, 138, 157, 177, 196, 216, 235, 255
@@ -1499,6 +1540,12 @@ static void levels_init(void)
 	DIR *d = opendir("/sys/class/backlight");
 	struct dirent *e;
 
+#if defined(DIATOM_PORT_RGDS)
+	/* Two panels: backlight1 is the top one, where the game is. */
+	if (d) closedir(d);
+	d = NULL;
+	snprintf(g_bl_path, sizeof g_bl_path, "/sys/class/backlight/backlight1/brightness");
+#endif
 	while (d && (e = readdir(d)))
 		if (e->d_name[0] != '.') {
 			snprintf(g_bl_path, sizeof g_bl_path,

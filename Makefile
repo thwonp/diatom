@@ -37,6 +37,9 @@ PORT_EXTRA_h700  := port/gkd_gl.c
 # The Rotate is the GKD's session (sway, PipeWire): the same port file.
 PORT_SRC_rotate  := port/gkd.c
 PORT_EXTRA_rotate := port/gkd_gl.c
+# The RG DS runs ROCKNIX as the GKD does: the same port file.
+PORT_SRC_rgds    := port/gkd.c
+PORT_EXTRA_rgds  := port/gkd_gl.c
 SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/stylus.c src/shot.c $(or $(PORT_SRC_$(PORT)),port/$(PORT).c) $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
@@ -218,6 +221,26 @@ ifeq ($(PORT),gkd)
   # symbols (dlerror@GLIBC_2.34) that this toolchain's 2.31 cannot resolve.
   # Those are SDL's own needs, met by the device at runtime; diatom's own
   # references are still checked against 2.31.
+  LDFLAGS += -Wl,--allow-shlib-undefined
+  LDFLAGS += -lSDL2 -lm -ldl -lpthread
+endif
+
+ifeq ($(PORT),rgds)
+  # Anbernic RG DS (RK3566-class, 4x A55, 3 GB) on ROCKNIX (TortOS
+  # plorpos-rgds): port/gkd.c built with DIATOM_PORT_RGDS, against the RG DS's
+  # own SDL2 (TortOS mk/fetch-rgds-sysroot.sh, copied to sysroot/rgds). The
+  # GKD's budgets: ~2.5 GB free idle.
+  CROSS   ?= aarch64-linux-gnu-
+  CC       = $(CROSS)gcc
+  SYSROOT ?= sysroot/rgds
+  ifeq ($(wildcard $(SYSROOT)/usr/lib/libSDL2.so),)
+    $(error rgds sysroot missing: copy TortOS's sysroot-rgds/usr to sysroot/rgds/usr)
+  endif
+  CFLAGS  += -I$(SYSROOT)/usr/include/SDL2 -D_REENTRANT -DDIATOM_PORT_RGDS
+  CFLAGS  += -DDIATOM_REWIND_BUDGET_BYTES='(256u * 1024 * 1024)' \
+             -DDIATOM_REWIND_CAPTURE_EVERY=0 -DDIATOM_REWIND_MAX_DEPTH=1800
+  CFLAGS  += -DDIATOM_MAX_RESIDENT=32
+  LDFLAGS += -L$(SYSROOT)/usr/lib -Wl,-rpath-link,$(SYSROOT)/usr/lib
   LDFLAGS += -Wl,--allow-shlib-undefined
   LDFLAGS += -lSDL2 -lm -ldl -lpthread
 endif
