@@ -87,10 +87,14 @@ static bool g_switcher;
  * this file. Its buttons and sticks are held by ROCKNIX's InputPlumber, which
  * shows them as one virtual DualSense - the GKD's button codes, the d-pad as
  * a hat, the stick 0..255 around 128 (pad_read). The volume keys are their
- * own node. Nothing on the virtual pad sends HOME_CODE yet (plorpos-rgds.3). */
+ * own node. L2 and R2 come as its analog triggers. */
 #define PAD_NAME  "Sony Interactive Entertainment DualSense Wireless Controller"
 #define KEYS_NAME "gpio-keys-volume"
 #define HOME_CODE BTN_TRIGGER_HAPPY1
+/* Home/Back is not on the pad: InputPlumber's map sends it as F1 on its
+ * virtual keyboard (home_read). The Anbernic key is the pad's BTN_MODE. */
+#define HOME_NAME "InputPlumber Keyboard"
+static int g_home_fd = -1;
 #else
 #define PAD_NAME  "gkd_atom_joypad"
 #define KEYS_NAME "gpio-keys"
@@ -480,6 +484,9 @@ bool diatom_port_init(diatom_port_caps *out)
 
 	g_pad_fd = evdev_open(PAD_NAME);
 	g_keys_fd = evdev_open(KEYS_NAME);
+#if defined(DIATOM_PORT_RGDS)
+	g_home_fd = evdev_open(HOME_NAME);
+#endif
 	if (g_pad_fd < 0)
 		diatom_port_log(DIATOM_LOG_WARN, "input: " PAD_NAME " not found; no buttons");
 	levels_init();
@@ -544,6 +551,9 @@ void diatom_port_shutdown(void)
 	if (g_window)   SDL_DestroyWindow(g_window);
 	if (g_pad_fd >= 0)  close(g_pad_fd);
 	if (g_keys_fd >= 0) close(g_keys_fd);
+#if defined(DIATOM_PORT_RGDS)
+	if (g_home_fd >= 0) close(g_home_fd);
+#endif
 	SDL_Quit();
 }
 
@@ -765,6 +775,28 @@ static void hat_set(bool x, int v)
 	if (v < 0) g_pad_buttons |= neg;
 	if (v > 0) g_pad_buttons |= pos;
 }
+/* L2 and R2, the DualSense's analog triggers: 0..255, down from half. */
+static void trigger_set(int btn, int v)
+{
+	if (v >= 128) g_pad_buttons |=  DIATOM_BIT(btn);
+	else          g_pad_buttons &= ~DIATOM_BIT(btn);
+}
+/* Home, the GKD's BTN_TRIGGER_HAPPY1: the brightness modifier and the hotkey
+ * button. */
+static void home_read(void)
+{
+	struct input_event ev[8];
+	ssize_t n;
+	size_t i;
+
+	while ((n = read(g_home_fd, ev, sizeof ev)) > 0)
+		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
+			if (ev[i].type != EV_KEY || ev[i].code != KEY_F1 || ev[i].value == 2) continue;
+			g_home = ev[i].value;
+			if (g_home) g_pad_buttons |=  DIATOM_BIT(DIATOM_BTN_HOTKEY);
+			else        g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_HOTKEY);
+		}
+}
 #else
 #define STICK_RAW(v) (v)
 #endif
@@ -824,7 +856,9 @@ static void pad_resync(void)
 	g_pad_buttons = 0;
 	for (k = 0; k < sizeof padmap / sizeof padmap[0]; k++)
 		if (bit_set(keys, padmap[k].code)) g_pad_buttons |= DIATOM_BIT(padmap[k].btn);
+#if !defined(DIATOM_PORT_RGDS)   /* its Home is another node's (home_read) */
 	g_home = bit_set(keys, HOME_CODE);
+#endif
 #if defined(DIATOM_PORT_ROTATE)
 	/* A Menu held through the drop is a modifier, not yet a tap. */
 	g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
@@ -836,6 +870,9 @@ static void pad_resync(void)
 #if defined(DIATOM_PORT_RGDS)
 	if (ioctl(g_pad_fd, EVIOCGABS(ABS_HAT0X), &abs) >= 0) hat_set(true, abs.value);
 	if (ioctl(g_pad_fd, EVIOCGABS(ABS_HAT0Y), &abs) >= 0) hat_set(false, abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Z), &abs) >= 0)  trigger_set(DIATOM_BTN_L2, abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_RZ), &abs) >= 0) trigger_set(DIATOM_BTN_R2, abs.value);
+	if (g_home) g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_HOTKEY);   /* held on its own node */
 #endif
 }
 
@@ -862,6 +899,8 @@ static void pad_read(void)
 #if defined(DIATOM_PORT_RGDS)
 				if (ev[i].code == ABS_HAT0X) hat_set(true, ev[i].value);
 				if (ev[i].code == ABS_HAT0Y) hat_set(false, ev[i].value);
+				if (ev[i].code == ABS_Z)  trigger_set(DIATOM_BTN_L2, ev[i].value);
+				if (ev[i].code == ABS_RZ) trigger_set(DIATOM_BTN_R2, ev[i].value);
 #endif
 				continue;
 			}
@@ -1262,6 +1301,9 @@ void diatom_port_input_poll(void)
 	touch_hold();
 #endif
 	if (g_pad_fd >= 0)  pad_read();
+#if defined(DIATOM_PORT_RGDS)
+	if (g_home_fd >= 0) home_read();
+#endif
 	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
 #if !defined(DIATOM_PORT_ROTATE)
 	cursor_tick();
