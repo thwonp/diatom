@@ -607,11 +607,104 @@ static void draw_overlay(void)
 static bool        g_split;
 static diatom_rect g_split_top, g_split_bot;
 
+#if defined(DIATOM_PORT_RGDS)
+/* BOTH DS SCREENS ON BOTH PANELS (TortOS plorpos-rgds.17, prototype). While a
+ * DS layout is up, the top screen fills the top panel (DSI-2, this window)
+ * and the bottom screen fills the bottom panel in a second window. Its title
+ * is one ROCKNIX's sway config already sends to DSI-1 and powers that panel
+ * on for ("Bottom"); turning it off again is this file's job, when the
+ * layout goes or the game ends. Both windows share the one GL context. A
+ * finger on the bottom panel is the libretro pointer (dual_touch). */
+static SDL_Window *g_win2;
+static int         g_w2, g_h2;
+static bool        g_dual;                /* window 2 mapped, panel on */
+
+static void dual_panel(bool on)
+{
+	/* Background: swaymsg is a few ms, and this is a frame path. */
+	if (system(on ? "swaymsg output DSI-1 power on > /dev/null 2>&1 &"
+	              : "swaymsg output DSI-1 power off > /dev/null 2>&1 &") != 0)
+		diatom_port_log(DIATOM_LOG_WARN, "dual: swaymsg did not start");
+}
+
+static bool dual_show(void)
+{
+	if (g_dual) return true;
+	if (!g_win2) {
+		g_win2 = SDL_CreateWindow("diatom Bottom",
+			SDL_WINDOWPOS_UNDEFINED_DISPLAY(1), SDL_WINDOWPOS_UNDEFINED_DISPLAY(1), 640, 480,
+			SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN);
+		if (!g_win2) {
+			char msg[160];
+			snprintf(msg, sizeof msg, "dual: no second window: %s", SDL_GetError());
+			diatom_port_log(DIATOM_LOG_WARN, msg);
+			return false;
+		}
+		if (SDL_GL_MakeCurrent(g_win2, g_gl) == 0) {
+			SDL_GL_SetSwapInterval(0);
+			SDL_GL_MakeCurrent(g_window, g_gl);
+		}
+	} else {
+		SDL_ShowWindow(g_win2);
+	}
+	for (int i = 0; i < 100; i++) {          /* sway's first configure, as for window 1 */
+		SDL_PumpEvents();
+		SDL_GL_GetDrawableSize(g_win2, &g_w2, &g_h2);
+		if (g_w2 > 1 && g_h2 > 1) break;
+		SDL_Delay(10);
+	}
+	dual_panel(true);
+	g_dual = true;
+	{
+		char msg[64];
+		snprintf(msg, sizeof msg, "dual: bottom window %dx%d", g_w2, g_h2);
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+	}
+	return true;
+}
+
+static void dual_hide(void)
+{
+	if (!g_dual) return;
+	SDL_HideWindow(g_win2);
+	SDL_PumpEvents();
+	dual_panel(false);
+	g_dual = false;
+}
+
+/* The bottom screen, whole, on window 2; window 1's context back after. */
+static void dual_present(bool linear)
+{
+	const diatom_rect none = { 0, 0, 0, 0 };
+
+	if (SDL_GL_MakeCurrent(g_win2, g_gl) != 0) return;
+	gkdgl_draw_split(g_w2, g_h2, none, (diatom_rect){ 0, 0, g_w2, g_h2 }, linear);
+	SDL_GL_SwapWindow(g_win2);
+	SDL_GL_MakeCurrent(g_window, g_gl);
+}
+
+/* A finger on the bottom panel, in window 2's pixels. */
+static bool  g_t_down;
+static float g_tx, g_ty;
+
+static void dual_touch(const SDL_Event *e)
+{
+	if (e->type != SDL_FINGERDOWN && e->type != SDL_FINGERMOTION && e->type != SDL_FINGERUP) return;
+	if (!g_dual || e->tfinger.windowID != SDL_GetWindowID(g_win2)) return;
+	g_tx = e->tfinger.x * g_w2;
+	g_ty = e->tfinger.y * g_h2;
+	g_t_down = e->type != SDL_FINGERUP;
+}
+#endif
+
 void diatom_port_split(bool on, diatom_rect top, diatom_rect bot)
 {
 	g_split = on;
 	g_split_top = top;
 	g_split_bot = bot;
+#if defined(DIATOM_PORT_RGDS)
+	if (!on) dual_hide();
+#endif
 }
 
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
@@ -637,6 +730,17 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * build no longer offers it (plorpos-gkd.73), shaders replace it. */
 	g_last_dst = dst;
 	g_last_linear = filter == DIATOM_FILTER_SHARP;
+#if defined(DIATOM_PORT_RGDS)
+	if (g_split && dual_show()) {
+		gkdgl_draw_split(g_sw, g_sh, (diatom_rect){ 0, 0, g_sw, g_sh }, (diatom_rect){ 0, 0, 0, 0 },
+		                 g_last_linear);
+		draw_overlay();
+		draw_osd();
+		SDL_GL_SwapWindow(g_window);
+		dual_present(g_last_linear);
+		return;
+	}
+#endif
 	if (g_split) gkdgl_draw_split(g_sw, g_sh, g_split_top, g_split_bot, g_last_linear);
 	else         gkdgl_draw(g_sw, g_sh, dst, g_last_linear);
 	draw_cursor();
@@ -1262,6 +1366,14 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 {
 	const diatom_rect b = g_split_bot;
 
+#if defined(DIATOM_PORT_RGDS)
+	if (g_dual) {                       /* the panel is the stylus */
+		if (!g_t_down || g_w2 <= 0 || g_h2 <= 0) return false;
+		*x = (int16_t)((g_tx / g_w2 * 2 - 1) * 0x7fff);
+		*y = (int16_t)(g_ty / g_h2 * 0x7fff);
+		return true;
+	}
+#endif
 	if (!g_split || g_cx < 0 || b.w <= 0 || b.h <= 0) return false;
 	*x = (int16_t)(((g_cx - b.x) / b.w * 2 - 1) * 0x7fff);
 	*y = (int16_t)((g_cy - b.y) / b.h * 0x7fff);
@@ -1295,6 +1407,8 @@ void diatom_port_input_poll(void)
 		if (ev.type == SDL_QUIT) g_quit = true;
 #if defined(DIATOM_PORT_ROTATE)
 		touch_event(&ev);
+#elif defined(DIATOM_PORT_RGDS)
+		dual_touch(&ev);
 #endif
 	}
 #if defined(DIATOM_PORT_ROTATE)
@@ -1700,6 +1814,9 @@ void diatom_port_present_stop(diatom_park park)
 	 * unmaps: nothing is coming back. */
 	if (park == DIATOM_PARK_KEEP) return;
 	(void)park;
+#if defined(DIATOM_PORT_RGDS)
+	dual_hide();
+#endif
 	if (!g_window || g_hidden) return;
 	SDL_HideWindow(g_window);
 	SDL_PumpEvents();
