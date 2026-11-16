@@ -1632,6 +1632,14 @@ static void bright_apply(void)
 	if (!f) return;
 	fprintf(f, "%d\n", bright_ladder[g_bright]);
 	fclose(f);
+#if defined(DIATOM_PORT_RGDS)
+	/* The bottom panel at the same level: one brightness for both
+	 * (TortOS plorpos-rgds.23). */
+	if ((f = fopen("/sys/class/backlight/backlight0/brightness", "w"))) {
+		fprintf(f, "%d\n", bright_ladder[g_bright]);
+		fclose(f);
+	}
+#endif
 }
 
 /* The bar: shown 1.5s from the last press, so holding the keys keeps it up. */
