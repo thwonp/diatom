@@ -2248,6 +2248,10 @@ static int run_session_inner(const diatom_session *sn)
 	bool     lk_extra = false; /* this iteration ran the core a second time (catch-up): two periods' worth */
 	bool     lk_dupe = false;  /* the previous locked iteration had no new picture */
 	bool     catch_up = false; /* a whole panel period is owed: run the core once more next iteration */
+#ifdef DIATOM_PORT_PACED
+	uint64_t pc_last = 0;      /* paced: when the previous iteration ended (0 = not paced) */
+	bool     pc_dupe = false;  /* paced: the previous iteration had no new picture */
+#endif
 	log_guard_begin();
 
 	while (!diatom_port_should_quit() && !g_terminate && !stop &&
@@ -2743,8 +2747,43 @@ static int run_session_inner(const diatom_session *sn)
 			/* The panel is the clock: present has just waited for it, so
 			 * neither sleep (that phase can miss the next refresh) nor count
 			 * being behind (always, by the panel's shortfall) as a stall.
-			 * Rate control follows the panel's rate instead. */
-			if (paced) next_us = (double)now;
+			 * Rate control follows the panel's rate instead.
+			 *
+			 * Except on a dupe frame (no new picture: pcsx_rearmed sends one
+			 * every other frame in a 30 fps game). Present has nothing to
+			 * show and returns at once, and the fresh frame after it finds
+			 * the flip thread idle, so neither waits: PS1 on the H700 ran at
+			 * 2x (plorpos-8ah). Those two sleep to one panel period after
+			 * the previous iteration, as the vsync lock does (f1p.81). */
+			if (paced) {
+				uint64_t mark = now;   /* the next due time counts from here */
+
+				if ((!g_frame_fresh || pc_dupe) && pc_last) {
+					double due = (double)pc_last + 1e6 / diatom_port_refresh_hz();
+
+					if (due > (double)now) {
+						double d = due - (double)now;
+						struct timespec ts = { (time_t)(d / 1e6), (long)(fmod(d, 1e6) * 1000.0) };
+
+						nanosleep(&ts, NULL);
+						now = diatom_port_now_us();
+						/* From the due time, not the wakeup: nanosleep's
+						 * ~0.1 ms overshoot per sleep ran PS1 0.6% slow. */
+						mark = (uint64_t)due;
+#ifdef DIATOM_PORT_FRAMESKIP
+						/* The wait for the panel, as present's own: not core
+						 * time the frame-skip rule should count as late. */
+						if (fs_exit) fs_exit = now;
+#endif
+					}
+				}
+				pc_dupe = !g_frame_fresh;
+				pc_last = mark;
+				next_us = (double)now;
+			} else {
+				pc_last = 0;
+				pc_dupe = false;
+			}
 #endif
 			/* A port that waits for the panel in present (the Brick's vsync lock): that wait is the clock, as above. */
 			if (vlock) next_us = (double)now;
