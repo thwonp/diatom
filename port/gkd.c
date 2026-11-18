@@ -82,6 +82,19 @@ static bool g_menu_sent, g_menu_spent, g_menu_pulse;
  * a tap on release. */
 static uint64_t g_menu_t0_us;
 static bool g_switcher;
+#elif defined(DIATOM_PORT_RGDS)
+/* The Anbernic RG DS on ROCKNIX (TortOS plorpos-rgds): the GKD's session, so
+ * this file. Its buttons and sticks are held by ROCKNIX's InputPlumber, which
+ * shows them as one virtual DualSense - the GKD's button codes, the d-pad as
+ * a hat, the stick 0..255 around 128 (pad_read). The volume keys are their
+ * own node. L2 and R2 come as its analog triggers. */
+#define PAD_NAME  "Sony Interactive Entertainment DualSense Wireless Controller"
+#define KEYS_NAME "gpio-keys-volume"
+#define HOME_CODE BTN_TRIGGER_HAPPY1
+/* Home/Back is not on the pad: InputPlumber's map sends it as F1 on its
+ * virtual keyboard (home_read). The Anbernic key is the pad's BTN_MODE. */
+#define HOME_NAME "InputPlumber Keyboard"
+static int g_home_fd = -1;
 #else
 #define PAD_NAME  "gkd_atom_joypad"
 #define KEYS_NAME "gpio-keys"
@@ -471,6 +484,9 @@ bool diatom_port_init(diatom_port_caps *out)
 
 	g_pad_fd = evdev_open(PAD_NAME);
 	g_keys_fd = evdev_open(KEYS_NAME);
+#if defined(DIATOM_PORT_RGDS)
+	g_home_fd = evdev_open(HOME_NAME);
+#endif
 	if (g_pad_fd < 0)
 		diatom_port_log(DIATOM_LOG_WARN, "input: " PAD_NAME " not found; no buttons");
 	levels_init();
@@ -535,6 +551,9 @@ void diatom_port_shutdown(void)
 	if (g_window)   SDL_DestroyWindow(g_window);
 	if (g_pad_fd >= 0)  close(g_pad_fd);
 	if (g_keys_fd >= 0) close(g_keys_fd);
+#if defined(DIATOM_PORT_RGDS)
+	if (g_home_fd >= 0) close(g_home_fd);
+#endif
 	SDL_Quit();
 }
 
@@ -588,11 +607,104 @@ static void draw_overlay(void)
 static bool        g_split;
 static diatom_rect g_split_top, g_split_bot;
 
+#if defined(DIATOM_PORT_RGDS)
+/* BOTH DS SCREENS ON BOTH PANELS (TortOS plorpos-rgds.17, prototype). While a
+ * DS layout is up, the top screen fills the top panel (DSI-2, this window)
+ * and the bottom screen fills the bottom panel in a second window. Its title
+ * is one ROCKNIX's sway config already sends to DSI-1 and powers that panel
+ * on for ("Bottom"); turning it off again is this file's job, when the
+ * layout goes or the game ends. Both windows share the one GL context. A
+ * finger on the bottom panel is the libretro pointer (dual_touch). */
+static SDL_Window *g_win2;
+static int         g_w2, g_h2;
+static bool        g_dual;                /* window 2 mapped, panel on */
+
+static void dual_panel(bool on)
+{
+	/* Background: swaymsg is a few ms, and this is a frame path. */
+	if (system(on ? "swaymsg output DSI-1 power on > /dev/null 2>&1 &"
+	              : "swaymsg output DSI-1 power off > /dev/null 2>&1 &") != 0)
+		diatom_port_log(DIATOM_LOG_WARN, "dual: swaymsg did not start");
+}
+
+static bool dual_show(void)
+{
+	if (g_dual) return true;
+	if (!g_win2) {
+		g_win2 = SDL_CreateWindow("diatom Bottom",
+			SDL_WINDOWPOS_UNDEFINED_DISPLAY(1), SDL_WINDOWPOS_UNDEFINED_DISPLAY(1), 640, 480,
+			SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN);
+		if (!g_win2) {
+			char msg[160];
+			snprintf(msg, sizeof msg, "dual: no second window: %s", SDL_GetError());
+			diatom_port_log(DIATOM_LOG_WARN, msg);
+			return false;
+		}
+		if (SDL_GL_MakeCurrent(g_win2, g_gl) == 0) {
+			SDL_GL_SetSwapInterval(0);
+			SDL_GL_MakeCurrent(g_window, g_gl);
+		}
+	} else {
+		SDL_ShowWindow(g_win2);
+	}
+	for (int i = 0; i < 100; i++) {          /* sway's first configure, as for window 1 */
+		SDL_PumpEvents();
+		SDL_GL_GetDrawableSize(g_win2, &g_w2, &g_h2);
+		if (g_w2 > 1 && g_h2 > 1) break;
+		SDL_Delay(10);
+	}
+	dual_panel(true);
+	g_dual = true;
+	{
+		char msg[64];
+		snprintf(msg, sizeof msg, "dual: bottom window %dx%d", g_w2, g_h2);
+		diatom_port_log(DIATOM_LOG_INFO, msg);
+	}
+	return true;
+}
+
+static void dual_hide(void)
+{
+	if (!g_dual) return;
+	SDL_HideWindow(g_win2);
+	SDL_PumpEvents();
+	dual_panel(false);
+	g_dual = false;
+}
+
+/* The bottom screen, whole, on window 2; window 1's context back after. */
+static void dual_present(bool linear)
+{
+	const diatom_rect none = { 0, 0, 0, 0 };
+
+	if (SDL_GL_MakeCurrent(g_win2, g_gl) != 0) return;
+	gkdgl_draw_split(g_w2, g_h2, none, (diatom_rect){ 0, 0, g_w2, g_h2 }, linear);
+	SDL_GL_SwapWindow(g_win2);
+	SDL_GL_MakeCurrent(g_window, g_gl);
+}
+
+/* A finger on the bottom panel, in window 2's pixels. */
+static bool  g_t_down;
+static float g_tx, g_ty;
+
+static void dual_touch(const SDL_Event *e)
+{
+	if (e->type != SDL_FINGERDOWN && e->type != SDL_FINGERMOTION && e->type != SDL_FINGERUP) return;
+	if (!g_dual || e->tfinger.windowID != SDL_GetWindowID(g_win2)) return;
+	g_tx = e->tfinger.x * g_w2;
+	g_ty = e->tfinger.y * g_h2;
+	g_t_down = e->type != SDL_FINGERUP;
+}
+#endif
+
 void diatom_port_split(bool on, diatom_rect top, diatom_rect bot)
 {
 	g_split = on;
 	g_split_top = top;
 	g_split_bot = bot;
+#if defined(DIATOM_PORT_RGDS)
+	if (!on) dual_hide();
+#endif
 }
 
 void diatom_port_present(const void *src, int w, int h, size_t pitch,
@@ -618,6 +730,17 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * build no longer offers it (plorpos-gkd.73), shaders replace it. */
 	g_last_dst = dst;
 	g_last_linear = filter == DIATOM_FILTER_SHARP;
+#if defined(DIATOM_PORT_RGDS)
+	if (g_split && dual_show()) {
+		gkdgl_draw_split(g_sw, g_sh, (diatom_rect){ 0, 0, g_sw, g_sh }, (diatom_rect){ 0, 0, 0, 0 },
+		                 g_last_linear);
+		draw_overlay();
+		draw_osd();
+		SDL_GL_SwapWindow(g_window);
+		dual_present(g_last_linear);
+		return;
+	}
+#endif
 	if (g_split) gkdgl_draw_split(g_sw, g_sh, g_split_top, g_split_bot, g_last_linear);
 	else         gkdgl_draw(g_sw, g_sh, dst, g_last_linear);
 	draw_cursor();
@@ -742,6 +865,46 @@ static const struct { int code; int btn; } padmap[] = {
 static uint32_t g_pad_buttons;
 static int g_stick_x, g_stick_y;
 
+#if defined(DIATOM_PORT_RGDS)
+/* The RG DS's stick, 0..255 around 128, onto the GKD's -900..899. */
+#define STICK_RAW(v) (((v) - 128) * 7)
+/* Its d-pad, one hat axis at a time: x is ABS_HAT0X (left/right) or not
+ * (up/down); negative is left and up. */
+static void hat_set(bool x, int v)
+{
+	uint32_t neg = DIATOM_BIT(x ? DIATOM_BTN_LEFT  : DIATOM_BTN_UP);
+	uint32_t pos = DIATOM_BIT(x ? DIATOM_BTN_RIGHT : DIATOM_BTN_DOWN);
+
+	g_pad_buttons &= ~(neg | pos);
+	if (v < 0) g_pad_buttons |= neg;
+	if (v > 0) g_pad_buttons |= pos;
+}
+/* L2 and R2, the DualSense's analog triggers: 0..255, down from half. */
+static void trigger_set(int btn, int v)
+{
+	if (v >= 128) g_pad_buttons |=  DIATOM_BIT(btn);
+	else          g_pad_buttons &= ~DIATOM_BIT(btn);
+}
+/* Home, the GKD's BTN_TRIGGER_HAPPY1: the brightness modifier and the hotkey
+ * button. */
+static void home_read(void)
+{
+	struct input_event ev[8];
+	ssize_t n;
+	size_t i;
+
+	while ((n = read(g_home_fd, ev, sizeof ev)) > 0)
+		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
+			if (ev[i].type != EV_KEY || ev[i].code != KEY_F1 || ev[i].value == 2) continue;
+			g_home = ev[i].value;
+			if (g_home) g_pad_buttons |=  DIATOM_BIT(DIATOM_BTN_HOTKEY);
+			else        g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_HOTKEY);
+		}
+}
+#else
+#define STICK_RAW(v) (v)
+#endif
+
 /* The GKD's one stick, scaled from its +-900 to the libretro range, for a core
  * that reads it (diatom_port_sticks). The Rotate has none to offer. */
 bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t *rx, int16_t *ry)
@@ -797,15 +960,24 @@ static void pad_resync(void)
 	g_pad_buttons = 0;
 	for (k = 0; k < sizeof padmap / sizeof padmap[0]; k++)
 		if (bit_set(keys, padmap[k].code)) g_pad_buttons |= DIATOM_BIT(padmap[k].btn);
+#if !defined(DIATOM_PORT_RGDS)   /* its Home is another node's (home_read) */
 	g_home = bit_set(keys, HOME_CODE);
+#endif
 #if defined(DIATOM_PORT_ROTATE)
 	/* A Menu held through the drop is a modifier, not yet a tap. */
 	g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
 	g_menu_sent = false;
 	g_menu_spent = g_home;
 #endif
-	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = abs.value;
-	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = abs.value;
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = STICK_RAW(abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = STICK_RAW(abs.value);
+#if defined(DIATOM_PORT_RGDS)
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_HAT0X), &abs) >= 0) hat_set(true, abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_HAT0Y), &abs) >= 0) hat_set(false, abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Z), &abs) >= 0)  trigger_set(DIATOM_BTN_L2, abs.value);
+	if (ioctl(g_pad_fd, EVIOCGABS(ABS_RZ), &abs) >= 0) trigger_set(DIATOM_BTN_R2, abs.value);
+	if (g_home) g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_HOTKEY);   /* held on its own node */
+#endif
 }
 
 static void pad_read(void)
@@ -826,8 +998,14 @@ static void pad_read(void)
 				return;
 			}
 			if (ev[i].type == EV_ABS) {
-				if (ev[i].code == ABS_X) g_stick_x = ev[i].value;
-				if (ev[i].code == ABS_Y) g_stick_y = ev[i].value;
+				if (ev[i].code == ABS_X) g_stick_x = STICK_RAW(ev[i].value);
+				if (ev[i].code == ABS_Y) g_stick_y = STICK_RAW(ev[i].value);
+#if defined(DIATOM_PORT_RGDS)
+				if (ev[i].code == ABS_HAT0X) hat_set(true, ev[i].value);
+				if (ev[i].code == ABS_HAT0Y) hat_set(false, ev[i].value);
+				if (ev[i].code == ABS_Z)  trigger_set(DIATOM_BTN_L2, ev[i].value);
+				if (ev[i].code == ABS_RZ) trigger_set(DIATOM_BTN_R2, ev[i].value);
+#endif
 				continue;
 			}
 			if (ev[i].type != EV_KEY || ev[i].value == 2) continue;
@@ -1188,6 +1366,14 @@ bool diatom_port_pointer(int16_t *x, int16_t *y)
 {
 	const diatom_rect b = g_split_bot;
 
+#if defined(DIATOM_PORT_RGDS)
+	if (g_dual) {                       /* the panel is the stylus */
+		if (!g_t_down || g_w2 <= 0 || g_h2 <= 0) return false;
+		*x = (int16_t)((g_tx / g_w2 * 2 - 1) * 0x7fff);
+		*y = (int16_t)(g_ty / g_h2 * 0x7fff);
+		return true;
+	}
+#endif
 	if (!g_split || g_cx < 0 || b.w <= 0 || b.h <= 0) return false;
 	*x = (int16_t)(((g_cx - b.x) / b.w * 2 - 1) * 0x7fff);
 	*y = (int16_t)((g_cy - b.y) / b.h * 0x7fff);
@@ -1221,12 +1407,17 @@ void diatom_port_input_poll(void)
 		if (ev.type == SDL_QUIT) g_quit = true;
 #if defined(DIATOM_PORT_ROTATE)
 		touch_event(&ev);
+#elif defined(DIATOM_PORT_RGDS)
+		dual_touch(&ev);
 #endif
 	}
 #if defined(DIATOM_PORT_ROTATE)
 	touch_hold();
 #endif
 	if (g_pad_fd >= 0)  pad_read();
+#if defined(DIATOM_PORT_RGDS)
+	if (g_home_fd >= 0) home_read();
+#endif
 	if (g_keys_fd >= 0) { keys_read(); levels_repeat(); }
 #if !defined(DIATOM_PORT_ROTATE)
 	cursor_tick();
@@ -1335,6 +1526,12 @@ void diatom_port_log(diatom_log_level lvl, const char *msg)
 static const unsigned short bright_ladder[] = {
 	100, 200, 270, 360, 470, 600, 760, 960, 1250, 1570, 1880, 2499
 };
+#elif defined(DIATOM_PORT_RGDS)
+/* The RG DS's backlights run 0..1666: the GKD's rungs, scaled. TortOS
+ * src/platform_gkd.c's RG DS ladder, which must match. */
+static const unsigned short bright_ladder[] = {
+	261, 392, 516, 647, 771, 902, 1026, 1156, 1281, 1411, 1535, 1666
+};
 #else
 static const unsigned char bright_ladder[] = {
 	40, 60, 79, 99, 118, 138, 157, 177, 196, 216, 235, 255
@@ -1435,6 +1632,14 @@ static void bright_apply(void)
 	if (!f) return;
 	fprintf(f, "%d\n", bright_ladder[g_bright]);
 	fclose(f);
+#if defined(DIATOM_PORT_RGDS)
+	/* The bottom panel at the same level: one brightness for both
+	 * (TortOS plorpos-rgds.23). */
+	if ((f = fopen("/sys/class/backlight/backlight0/brightness", "w"))) {
+		fprintf(f, "%d\n", bright_ladder[g_bright]);
+		fclose(f);
+	}
+#endif
 }
 
 /* The bar: shown 1.5s from the last press, so holding the keys keeps it up. */
@@ -1499,6 +1704,12 @@ static void levels_init(void)
 	DIR *d = opendir("/sys/class/backlight");
 	struct dirent *e;
 
+#if defined(DIATOM_PORT_RGDS)
+	/* Two panels: backlight1 is the top one, where the game is. */
+	if (d) closedir(d);
+	d = NULL;
+	snprintf(g_bl_path, sizeof g_bl_path, "/sys/class/backlight/backlight1/brightness");
+#endif
 	while (d && (e = readdir(d)))
 		if (e->d_name[0] != '.') {
 			snprintf(g_bl_path, sizeof g_bl_path,
@@ -1611,6 +1822,9 @@ void diatom_port_present_stop(diatom_park park)
 	 * unmaps: nothing is coming back. */
 	if (park == DIATOM_PARK_KEEP) return;
 	(void)park;
+#if defined(DIATOM_PORT_RGDS)
+	dual_hide();
+#endif
 	if (!g_window || g_hidden) return;
 	SDL_HideWindow(g_window);
 	SDL_PumpEvents();
