@@ -11,6 +11,7 @@
  * including a complete static zlib. RTLD_GLOBAL would let its crc32 answer for
  * everyone, silently.
  */
+#include <strings.h>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <link.h>
@@ -313,6 +314,12 @@ static void core_prefault(diatom_core *c)
 			}
 			if (fd < 0) continue;
 			if (pass == 1 && (fstat(fd, &st) != 0 || st.st_size > (off_t)PREFAULT_LIB_MAX)) continue;
+#ifdef DIATOM_NO_PREMAP
+			/* Nothing premapped here (the Flip), so a big core is cold on every launch: the first 16 MB of FBNeo's
+			 * 63 MB in address order is ~2 s of drivers the game never runs (TortOS plorpos-f1p.95.13: mvsc 6.4 ->
+			 * 4.5 s to the first frame, no more frames late). Its own pages fault in as the game touches them. */
+			if (pass == 0 && (fstat(fd, &st) != 0 || st.st_size > (off_t)PREFAULT_BUDGET)) continue;
+#endif
 			prefault_map(path, (uintptr_t)a, (uintptr_t)b, (off_t)off, fd, buf, bufsz);
 		}
 		if (fd >= 0) close(fd);
