@@ -1398,7 +1398,9 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * flight, drawing; fewer, or a refused pan, means single-buffered
 	 * drawing straight to glass: can tear, still works. */
 	g_vinfo.yoffset = 0;
-	if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &g_vinfo) != 0 || g_pages < 3) {
+	/* Two pages (the Zero 40's fb0, TortOS plorpos-auv.4) flip too: present
+	 * waits for the flip in flight instead (see diatom_port_present). */
+	if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &g_vinfo) != 0 || g_pages < 2) {
 		g_pan_broken = true;
 		diatom_port_log(DIATOM_LOG_WARN, "fb0 pan or pages unavailable; single-buffered");
 	} else if (pthread_create(&g_flip_thread, NULL, flip_worker, NULL) != 0) {
@@ -1950,12 +1952,20 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * thread has not started panning it, so overwriting it just replaces a
 	 * frame nobody saw with a newer one. Latest wins. */
 	pthread_mutex_lock(&g_flip_mx);
-	for (page = 0; page < g_pages; page++)
-		if (page != g_front && page != g_inflight && page != g_pending)
+	for (;;) {
+		for (page = 0; page < g_pages; page++)
+			if (page != g_front && page != g_inflight && page != g_pending)
+				break;
+		if (page < g_pages) break;
+		if (g_pending >= 0) {           /* latest wins: redraw the queued one */
+			page      = g_pending;
+			g_pending = -1;
 			break;
-	if (page == g_pages) {
-		page      = g_pending;
-		g_pending = -1;
+		}
+		/* Two pages, one on glass and one in flight: none to draw into until
+		 * the pan latches - at most a vblank. Never with three. */
+		if (!g_flip_running) { page = g_front; break; }
+		pthread_cond_wait(&g_flip_idle, &g_flip_mx);
 	}
 	pthread_mutex_unlock(&g_flip_mx);
 
@@ -2162,8 +2172,8 @@ static bool is_brick_pro(void)
  * (oakMOSS hardware-notes; Dedicated OS's table agrees). No right stick. */
 #define AXIS_LX 1
 #define AXIS_LY 0
-#define AXIS_RX (-2)
-#define AXIS_RY (-3)
+#define AXIS_RX 252        /* none: an axis number SDL never sends */
+#define AXIS_RY 253
 #else
 #define AXIS_LX 0
 #define AXIS_LY 1
@@ -2199,8 +2209,8 @@ static void stick_axis(int value, int neg_btn, int pos_btn)
 }
 
 #ifdef DIATOM_PORT_ZERO40
-#define AXIS_L2 (-1)       /* buttons 6 and 7 there */
-#define AXIS_R2 (-1)
+#define AXIS_L2 250        /* buttons 6 and 7 there */
+#define AXIS_R2 251
 #else
 #define AXIS_L2 2
 #define AXIS_R2 5
@@ -2317,8 +2327,15 @@ static void debug_event(const char *what, int a, int b)
 	diatom_port_log(DIATOM_LOG_DEBUG, msg);
 }
 
+#ifdef DIATOM_PORT_ZERO40
+static void ts_read(void);   /* the touch panel, below with the pointer */
+#endif
+
 void diatom_port_input_poll(void)
 {
+#ifdef DIATOM_PORT_ZERO40
+	ts_read();
+#endif
 	SDL_Event ev;
 	size_t i;
 
@@ -2602,7 +2619,87 @@ int  diatom_port_take_skip(void)
 
 /* No DS layouts or touch panel here (TortOS plorpos-3yv.47). */
 void diatom_port_split(bool on, diatom_rect top, diatom_rect bot) { (void)on; (void)top; (void)bot; }
+#ifdef DIATOM_PORT_ZERO40
+/* The Zero 40's touch panel (axs_ts, five type-B slots in panel pixels) as the
+ * libretro pointer: the first finger, over the picture as drawn - for the DS
+ * frame shown whole (Even Split there), the bottom screen is its lower half,
+ * which reads 0..0x7fff down, as the split ports' bottom screen does. The
+ * firmware SDL delivers no fingers, so evdev directly (TortOS plorpos-auv.4). */
+#define TS_SLOTS 5
+static int  g_ts_fd = -1;
+static uint64_t g_ts_tried;
+static int  g_ts_slot, g_ts_max_x = 480, g_ts_max_y = 800;
+static struct { bool down, was, moved; int x, y; } g_ts[TS_SLOTS];
+
+static void ts_open(void)
+{
+	char path[32], name[64];
+	uint64_t now = diatom_port_now_us();
+	int i, fd;
+
+	if (g_ts_fd >= 0 || (g_ts_tried && now - g_ts_tried < 1000000ull)) return;
+	g_ts_tried = now | 1;
+	for (i = 0; i < 16; i++) {
+		snprintf(path, sizeof path, "/dev/input/event%d", i);
+		if ((fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)) < 0) continue;
+		name[0] = '\0';
+		if (ioctl(fd, EVIOCGNAME(sizeof name), name) >= 0 && !strcmp(name, "axs_ts")) {
+			struct input_absinfo a;
+
+			if (ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &a) == 0 && a.maximum > 0) g_ts_max_x = a.maximum;
+			if (ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &a) == 0 && a.maximum > 0) g_ts_max_y = a.maximum;
+			g_ts_fd = fd;
+			return;
+		}
+		close(fd);
+	}
+}
+
+static void ts_read(void)
+{
+	struct input_event ev;
+
+	ts_open();
+	while (g_ts_fd >= 0 && read(g_ts_fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
+		if (ev.type == EV_ABS) {
+			if (ev.code == ABS_MT_SLOT) g_ts_slot = ev.value >= 0 && ev.value < TS_SLOTS ? ev.value : 0;
+			else if (ev.code == ABS_MT_TRACKING_ID) g_ts[g_ts_slot].down = ev.value >= 0;
+			else if (ev.code == ABS_MT_POSITION_X) { g_ts[g_ts_slot].x = ev.value; g_ts[g_ts_slot].moved = true; }
+			else if (ev.code == ABS_MT_POSITION_Y) { g_ts[g_ts_slot].y = ev.value; g_ts[g_ts_slot].moved = true; }
+		} else if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
+			/* A finger on the last one's column or row brings no position of
+			 * its own (the kernel drops repeats): the slot's, asked. */
+			if (g_ts[g_ts_slot].down && !g_ts[g_ts_slot].was && !g_ts[g_ts_slot].moved) {
+				struct { __u32 code; __s32 v[TS_SLOTS]; } q;
+
+				q.code = ABS_MT_POSITION_X;
+				if (ioctl(g_ts_fd, EVIOCGMTSLOTS(sizeof q), &q) == 0) g_ts[g_ts_slot].x = q.v[g_ts_slot];
+				q.code = ABS_MT_POSITION_Y;
+				if (ioctl(g_ts_fd, EVIOCGMTSLOTS(sizeof q), &q) == 0) g_ts[g_ts_slot].y = q.v[g_ts_slot];
+			}
+			for (int i = 0; i < TS_SLOTS; i++) { g_ts[i].was = g_ts[i].down; g_ts[i].moved = false; }
+		}
+	}
+}
+
+bool diatom_port_pointer(int16_t *x, int16_t *y)
+{
+	const diatom_rect d = g_map_dst;
+	float px, py, fx, fy;
+
+	if (!g_ts[0].down || !g_map_valid || d.w <= 0 || d.h <= 0) return false;
+	px = (float)g_ts[0].x * (float)g_vinfo.xres / (float)g_ts_max_x;
+	py = (float)g_ts[0].y * (float)g_vinfo.yres / (float)g_ts_max_y;
+	fx = (px - d.x) / d.w;
+	fy = (py - d.y) / d.h;
+	if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return false;
+	*x = (int16_t)((fx * 2 - 1) * 0x7fff);
+	*y = (int16_t)((fy * 2 - 1) * 0x7fff);
+	return true;
+}
+#else
 bool diatom_port_pointer(int16_t *x, int16_t *y) { (void)x; (void)y; return false; }
+#endif
 void diatom_port_stylus(bool down) { (void)down; }
 
 /* No microphone on this port (diatom_port.h). */
