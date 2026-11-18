@@ -29,6 +29,7 @@
  *
  * No SDL, no port header - deliberately, so a test can link this with a fake
  * diatom_core and no display (test/rewind_test.c). */
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -158,6 +159,36 @@ static bool overlaps(size_t off, size_t n)
 	return false;
 }
 
+/* The arena's free stretches go back to the kernel. History held to its depth is often far
+ * smaller than the budget (mvsc on the Flip: 2-3 MB of 8), but entries are written on through
+ * the whole budget before wrapping, so every page of it ended up touched: 5 MB more than history
+ * needs, where an arcade game has a few MB to spare (TortOS plorpos-f1p.95.5). Only whole pages
+ * that no held entry touches; the next write there faults in a zero page. Placement unchanged.
+ * Fresh pages are mapped over the range rather than madvise'd: the Flip's kernel has no
+ * madvise (ENOSYS). So the arena is its own mapping, not malloc's. */
+static void ring_release(size_t a, size_t b)
+{
+	const uintptr_t pg = 4096;
+	uintptr_t lo = ((uintptr_t)g_ring + a + pg - 1) & ~(pg - 1), hi = ((uintptr_t)g_ring + b) & ~(pg - 1);
+
+	if (hi > lo)
+		mmap((void *)lo, hi - lo, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+}
+
+static void ring_trim(void)
+{
+	size_t t;
+
+	if (!g_count) { ring_release(0, DIATOM_REWIND_BUDGET_BYTES); return; }
+	t = g_ent[g_ent_tail].off;
+	if (t < g_whead) {   /* one run, [t, whead) */
+		ring_release(0, t);
+		ring_release(g_whead, DIATOM_REWIND_BUDGET_BYTES);
+	} else {             /* wrapped: [0, whead) and [t, ...) */
+		ring_release(g_whead, t);
+	}
+}
+
 /* Entries sit end to end, wrapping to offset 0 when the next one would run
  * past the end. History can only lose its oldest end, so the oldest entry
  * goes until nothing still held lies where this one is written. */
@@ -174,6 +205,7 @@ static bool ring_put(const uint8_t *src, size_t n)
 	g_ent[(g_ent_tail + g_count) % DIATOM_REWIND_MAX_DEPTH] = (entry){ off, n };
 	g_count++;
 	g_whead = off + n;
+	ring_trim();
 	return true;
 }
 
@@ -308,7 +340,7 @@ static void free_all(void)
 	size_buffers_locked(0);
 	pthread_mutex_unlock(&g_qmx);
 	pthread_mutex_lock(&g_rmx);
-	free(g_ring);
+	if (g_ring) munmap(g_ring, DIATOM_REWIND_BUDGET_BYTES);
 	g_ring = NULL;
 	pthread_mutex_unlock(&g_rmx);
 	g_tick = 0;
@@ -431,7 +463,9 @@ void diatom_rewind_capture(diatom_core *c)
 	}
 	if (!g_ring) {
 		pthread_mutex_lock(&g_rmx);
-		g_ring = malloc(DIATOM_REWIND_BUDGET_BYTES);
+		g_ring = mmap(NULL, DIATOM_REWIND_BUDGET_BYTES, PROT_READ | PROT_WRITE,
+		             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (g_ring == MAP_FAILED) g_ring = NULL;
 		pthread_mutex_unlock(&g_rmx);
 		if (!g_ring) goto drop;
 	}
