@@ -2067,6 +2067,36 @@ size_t diatom_port_audio_queued(void)
  * The dpad is ABS_HAT0 - hat values are semantic, no attribution needed.
  * THUMBL/THUMBR/F1/F2 exist in the mask because the same driver serves
  * stick-bearing siblings; volume is the host OS's business. All unmapped. */
+#ifdef DIATOM_PORT_ZERO40
+/* The MagicX Zero 40's "magicx-input" (oakMOSS simplepad), measured on the
+ * device 2026-11-17 by pairing raw codes with SDL's indices (TortOS
+ * plorpos-auv.1):
+ *
+ *   0 304 B (bottom)   4 310 L1   8 314 SELECT   12 105 LEFT    16 115 VOL_UP
+ *   1 305 A (right)    5 311 R1   9 315 START    13 106 RIGHT   17 158 MENU
+ *   2 307 Y (left)     6 312 L2  10 317 L3       14 108 DOWN
+ *   3 308 X (top)      7 313 R2  11 103 UP       15 114 VOL_DN
+ *
+ * The d-pad and L2/R2 are buttons here, not a hat and axes; MENU is KEY_BACK
+ * on this kernel. L3 is a hotkey choice, never a core input (ADR-0044). */
+static const struct { int idx; int btn; } joymap[] = {
+	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
+	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
+	{ 4, DIATOM_BTN_L1 },     { 5, DIATOM_BTN_R1 },
+	{ 6, DIATOM_BTN_L2 },     { 7, DIATOM_BTN_R2 },
+	{ 8, DIATOM_BTN_SELECT }, { 9, DIATOM_BTN_START },
+	{ 10, DIATOM_BTN_L3 },
+	{ 11, DIATOM_BTN_UP },    { 12, DIATOM_BTN_LEFT },
+	{ 13, DIATOM_BTN_RIGHT }, { 14, DIATOM_BTN_DOWN },
+	{ 17, DIATOM_BTN_MENU },
+};
+#define JOY_VOL_DN 15
+#define JOY_VOL_UP 16
+#define JOY_FN_L   (-1)    /* no function keys */
+#define JOY_FN_R   (-1)
+#define JOY_PRO_FN_L (-1)
+#define JOY_PRO_FN_R (-1)
+#else
 static const struct { int idx; int btn; } joymap[] = {
 	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
 	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
@@ -2100,10 +2130,14 @@ static const struct { int idx; int btn; } joymap[] = {
  * on the device 2026-09-28. */
 #define JOY_PRO_FN_L 11
 #define JOY_PRO_FN_R 12
+#endif
 
 /* Which one, from cpuinfo's hwserial - the line the boot script checks. */
 static bool is_brick_pro(void)
 {
+#ifdef DIATOM_PORT_ZERO40
+	return false;
+#endif
 	static int pro = -1;
 	if (pro < 0) {
 		char line[256];
@@ -2123,10 +2157,19 @@ static bool is_brick_pro(void)
  * stick's four bits are hotkeys only and fold onto nothing (ADR-0044). Half
  * travel to press, a third to let go, so a stick resting near the line cannot
  * chatter. */
+#ifdef DIATOM_PORT_ZERO40
+/* Its one stick: the vertical on axis 0, the horizontal on axis 1 negated
+ * (oakMOSS hardware-notes; Dedicated OS's table agrees). No right stick. */
+#define AXIS_LX 1
+#define AXIS_LY 0
+#define AXIS_RX (-2)
+#define AXIS_RY (-3)
+#else
 #define AXIS_LX 0
 #define AXIS_LY 1
 #define AXIS_RX 3
 #define AXIS_RY 4
+#endif
 #define STICK_PRESS   16384
 #define STICK_RELEASE 10923
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
@@ -2155,8 +2198,13 @@ static void stick_axis(int value, int neg_btn, int pos_btn)
 	g_stick_bits = (g_stick_bits & ~(neg | pos)) | (n ? neg : 0) | (p ? pos : 0);
 }
 
+#ifdef DIATOM_PORT_ZERO40
+#define AXIS_L2 (-1)       /* buttons 6 and 7 there */
+#define AXIS_R2 (-1)
+#else
 #define AXIS_L2 2
 #define AXIS_R2 5
+#endif
 #define AXIS_PRESSED 16384
 
 /* The four level buttons, and holding one repeats it at the launcher's pace -
@@ -2341,6 +2389,10 @@ void diatom_port_input_poll(void)
 		case SDL_JOYAXISMOTION: {
 			bool pressed = ev.jaxis.value > AXIS_PRESSED;
 			debug_event("joy axis", ev.jaxis.axis, ev.jaxis.value);
+#ifdef DIATOM_PORT_ZERO40
+			if (ev.jaxis.axis == AXIS_LX)   /* negated, and -32768 has no int16 opposite */
+				ev.jaxis.value = ev.jaxis.value == -32768 ? 32767 : (Sint16)-ev.jaxis.value;
+#endif
 			if (ev.jaxis.axis == AXIS_L2) {
 				if (pressed) g_buttons |=  DIATOM_BIT(DIATOM_BTN_L2);
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_L2);
