@@ -488,13 +488,29 @@ static struct fb_var_screeninfo g_var;
 static struct fb_fix_screeninfo g_fix;
 static int      g_page;             /* the page on glass */
 static diatom_rect g_last_dst[3];
+/* MI_GFX blits still in flight (TortOS plorpos-f1p.95.1): present queues its blit and returns; the
+ * flip thread waits a page's blits before the pan, the game thread before it writes the page with the
+ * CPU. Waiting in present cost ~5 ms a frame on the game thread for a ~0.5 ms blit, and CPS1/CPS2 on
+ * FBNeo then missed full speed. At most two blits per frame (scanlines). */
+typedef struct { unsigned short f[2]; int n; } gfx_fences;
+static gfx_fences g_pfence[3];
+static int (*g_gfx_wait_fn)(unsigned char, unsigned short);
+static unsigned g_gfx_err;          /* filter blits or waits that returned an error, shown in the game-end line */
+
+static void fences_wait(gfx_fences *fs)
+{
+	for (int i = 0; i < fs->n; i++)
+		if (g_gfx_wait_fn(0, fs->f[i]) != 0) g_gfx_err++;
+	fs->n = 0;
+}
+
+static void page_fence_wait(int page) { fences_wait(&g_pfence[page]); }
 static uint32_t g_xmap[2048];
 /* The Flip's display filter (plorpos-f1p.75), picked through the shader chain the launcher sends: a chain
  * naming flipfx-scanlines is FX_SCAN, none is FX_OFF. It needs the game at 2x or more; below that it
  * draws plainly. */
 enum { FX_OFF, FX_SCAN };
 static int g_fx;
-static unsigned g_gfx_err;          /* filter blits or waits that returned an error, shown in the game-end line */
 
 static uint32_t *page_px(int page)
 {
@@ -662,8 +678,11 @@ static void *flipper(void *arg)
 		g_pending = -1;
 		g_inflight = page;
 		g_flipping = true;
+		gfx_fences fs = g_pfence[page];
+		g_pfence[page].n = 0;
 		pthread_cond_broadcast(&g_flip_cond);   /* the vsync lock waits for this take */
 		pthread_mutex_unlock(&g_flip_lock);
+		fences_wait(&fs);   /* the page's blit lands before it goes on glass */
 		pan_to(page);
 		{
 			/* The panel's own period: gaps of one vsync each (a frame that came
@@ -982,9 +1001,20 @@ void diatom_port_content_fps(double fps)
  * converts it to xRGB and turns it 180 degrees into fb0's back page. G2
  * measured the CPU path at 29.6 ms a frame (TortOS plorpos-f1p.6). */
 static bool g_gfx;
-static unsigned long long g_src_phy;
-static void *g_src_virt;
+static unsigned long long g_src_phys[2];
+static void *g_src_virts[2];
+static gfx_fences g_src_fence[2];   /* blits still reading each source buffer */
+static int g_src_i;                 /* the buffer the next present fills; two so it never waits on the last blit */
 static unsigned g_src_size;
+
+static void src_free(void)
+{
+	for (int i = 0; i < 2; i++) {
+		fences_wait(&g_src_fence[i]);
+		if (g_src_virts[i]) { mi.munmap(g_src_virts[i], g_src_size); mi.mma_free(g_src_phys[i]); g_src_virts[i] = NULL; }
+	}
+	g_src_size = 0;
+}
 
 /* A diatom that is killed (SIGKILL, the OOM killer, a crash, a deploy) cannot free
  * its MI_SYS video buffer, and the kernel does not: the chunk stays "app-mmaAlloc"
@@ -1047,11 +1077,18 @@ static bool gfx_init(void)
 static bool gfx_src(unsigned size)
 {
 	if (size <= g_src_size) return true;
-	if (g_src_virt) { mi.munmap(g_src_virt, g_src_size); mi.mma_free(g_src_phy); g_src_virt = NULL; g_src_size = 0; }
+	src_free();
 	size = (size + 65535) & ~65535u;
-	if (mi.mma_alloc(NULL, size, &g_src_phy) != 0) return false;
-	if (mi.mmap(g_src_phy, size, &g_src_virt, 1) != 0) { mi.mma_free(g_src_phy); return false; }
 	g_src_size = size;
+	for (int i = 0; i < 2; i++) {
+		if (mi.mma_alloc(NULL, size, &g_src_phys[i]) != 0) { src_free(); return false; }
+		if (mi.mmap(g_src_phys[i], size, &g_src_virts[i], 1) != 0) {
+			mi.mma_free(g_src_phys[i]);
+			g_src_virts[i] = NULL;
+			src_free();
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -1065,10 +1102,16 @@ static bool gfx_present(const void *src, int w, int h, size_t pitch, diatom_pixf
 	unsigned short fence = 0;
 
 	if (!gfx_src(row * (unsigned)h)) return false;
+	int si = g_src_i;
+	uint8_t *sv = g_src_virts[si];
+	gfx_fences *fs = &g_pfence[page];
+
+	g_src_i ^= 1;
+	fences_wait(&g_src_fence[si]);   /* two presents ago: long landed, but never write under a blit */
 	for (int y = 0; y < h; y++)
-		memcpy((uint8_t *)g_src_virt + (size_t)y * row, (const uint8_t *)src + (size_t)y * pitch, row);
-	mi.flush(g_src_virt, row * (unsigned)h);
-	ss = (mi_gfx_surface){ g_src_phy, bpp == 2 ? MI_GFX_RGB565 : MI_GFX_ARGB8888,
+		memcpy(sv + (size_t)y * row, (const uint8_t *)src + (size_t)y * pitch, row);
+	mi.flush(sv, row * (unsigned)h);
+	ss = (mi_gfx_surface){ g_src_phys[si], bpp == 2 ? MI_GFX_RGB565 : MI_GFX_ARGB8888,
 	                       (unsigned)w, (unsigned)h, row };
 	ds = (mi_gfx_surface){ g_fix.smem_start + (unsigned long long)page * g_var.yres * g_fix.line_length,
 	                       MI_GFX_ARGB8888, g_var.xres, g_var.yres, g_fix.line_length };
@@ -1100,8 +1143,9 @@ static bool gfx_present(const void *src, int w, int h, size_t pitch, diatom_pixf
 			o.dst_bld = 0;
 			o.rotate = MI_GFX_ROT180;
 			if (mi.gfx_blit(&ss, &sr, &dk, &rk, &o, &fence) != 0) return false;
-			if (mi.gfx_wait(0, fence) != 0) g_gfx_err++;
+			fs->f[fs->n++] = fence;
 		}
+		g_src_fence[si] = *fs;
 		return true;
 	}
 	memset(&o, 0, sizeof o);
@@ -1110,7 +1154,8 @@ static bool gfx_present(const void *src, int w, int h, size_t pitch, diatom_pixf
 	o.dst_bld = 0;                  /* ZERO: a copy, no blending */
 	o.rotate = MI_GFX_ROT180;
 	if (mi.gfx_blit(&ss, &sr, &ds, &dr, &o, &fence) != 0) return false;
-	mi.gfx_wait(0, fence);
+	fs->f[fs->n++] = fence;
+	g_src_fence[si] = *fs;
 	return true;
 }
 
@@ -1124,6 +1169,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 
 	if (!g_fbmem || !src || w <= 0 || h <= 0) return;
 	px = page_px(back);
+	page_fence_wait(back);   /* a replaced frame's blit may still be writing this page */
 	/* The rect moved, or an overlay was on this page: clear the borders. */
 	if (memcmp(&g_last_dst[back], &dst, sizeof dst) != 0 || g_ov_drawn[back].w) {
 		clear_page(back);
@@ -1132,9 +1178,13 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	}
 	uint64_t t0 = diatom_port_now_us(), t1, t2;
 
-	if (!g_gfx || !gfx_present(src, w, h, pitch, fmt, dst, back))
+	if (!g_gfx || !gfx_present(src, w, h, pitch, fmt, dst, back)) {
+		page_fence_wait(back);   /* a blit that got queued before one failed */
 		scale(src, w, h, pitch, fmt, dst, px, pitch_px);
+	}
 	t1 = diatom_port_now_us();
+	if ((g_ov && diatom_port_now_us() < g_ov_until) || (g_bar_until && t1 < g_bar_until))
+		page_fence_wait(back);   /* the CPU draws over the blit: it must have landed */
 	if (g_ov && diatom_port_now_us() < g_ov_until) {
 		draw_overlay(px, pitch_px);
 		g_ov_drawn[back].w = 1;
@@ -1153,6 +1203,7 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 void diatom_port_present_stop(diatom_park park)
 {
 	flip_drain();
+	for (int p = 0; p < 3; p++) page_fence_wait(p);
 	pthread_mutex_lock(&g_lock);
 	g_rd = g_wr = 0;
 	pthread_mutex_unlock(&g_lock);
@@ -1225,6 +1276,7 @@ bool diatom_port_init(diatom_port_caps *out)
 	if (pthread_create(&g_flip_thr, NULL, flipper, NULL) != 0) return false;
 
 	g_gfx = gfx_init();
+	if (g_gfx) g_gfx_wait_fn = mi.gfx_wait;
 	g_pad = open("/dev/input/event0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 	if (g_pad < 0) fprintf(stderr, "[warn] input: event0: %s\n", strerror(errno));
 
@@ -1251,7 +1303,7 @@ void diatom_port_shutdown(void)
 	 * process: a buffer never freed here stays "app-mmaAlloc" until reboot. About
 	 * a hundred diatom launches filled it, and then every blit took a vblank
 	 * longer (5 ms -> 22 ms) until a power cycle (plorpos-f1p.31). */
-	if (g_src_virt) { mi.munmap(g_src_virt, g_src_size); mi.mma_free(g_src_phy); g_src_virt = NULL; g_src_size = 0; }
+	if (g_src_size) src_free();
 	audio_close();
 	if (g_pad >= 0) { close(g_pad); g_pad = -1; }
 	if (g_fbmem) { munmap(g_fbmem, g_fix.smem_len); g_fbmem = NULL; }
