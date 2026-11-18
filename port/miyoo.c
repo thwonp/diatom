@@ -731,7 +731,7 @@ static void flip_drain(void)
  *   since it locked) runs free for the rest of the game. RACE is the one seen: one
  *   retro_run sometimes emulates two frames, so holding the loop does not hold the
  *   game (60.56 fps locked against its 60.25, 7188 audio frames dropped in 73 s).
- * Forced off by DIATOM_VSYNC=0 or TortOS/diatom.novsync. */
+ * Forced off by DIATOM_VSYNC=0 or plorpOS/diatom.novsync. */
 uint64_t diatom_audio_dropped(void);   /* src/audio.c: frames the sink would not take */
 static bool     g_lk_audio_off;        /* this game overflowed audio locked: free until it ends */
 static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600, g_lk_grace;
@@ -765,7 +765,7 @@ bool diatom_port_vsync_lock(bool want)
 
 	if (!(calls++ & 63) || on < 0) {
 		const char *e = getenv("DIATOM_VSYNC");
-		on = !((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.novsync", F_OK) == 0);
+		on = !((e && *e == '0') || access("/mnt/SDCARD/plorpOS/diatom.novsync", F_OK) == 0);
 	}
 	if (g_lk_off) { g_lk_off--; want = false; g_lk_last = 0; g_lk_frames = g_lk_miss = 0; }
 	g_vlock = on > 0 && want && !g_lk_audio_off && g_fbmem && g_panel_us > 0;
@@ -846,7 +846,7 @@ void diatom_port_vsync_wait(void)
  * 60.31 Hz. A rate that no setting reaches within 0.05 Hz keeps stock timing.
  * Stock at resident start too, so a killed game cannot leave its rate behind; the
  * launcher and Muse run at stock. No suspend on the Flip, so nothing to redo at a
- * wake. Forced off by DIATOM_RETIME=0 or TortOS/diatom.noretime. */
+ * wake. Forced off by DIATOM_RETIME=0 or plorpOS/diatom.noretime. */
 #define RT_TGEN_PG  0x1f225000u  /* bank 0x1129: vtotal = reg 0x12, 16-bit (bits 12:0) */
 #define RT_TGEN_VTT 0x248
 #define RT_DSI_PG   0x1f345000u  /* DSI host: 32-bit access only */
@@ -948,7 +948,7 @@ void diatom_port_content_fps(double fps)
 		const char *e = getenv("DIATOM_RETIME");
 		double best = 1e9;
 
-		if ((e && *e == '0') || access("/mnt/SDCARD/TortOS/diatom.noretime", F_OK) == 0) {
+		if ((e && *e == '0') || access("/mnt/SDCARD/plorpOS/diatom.noretime", F_OK) == 0) {
 			fprintf(stderr, "panel: retime off, stock for a %.4f fps core\n", fps);
 			fps = 0;
 		}
