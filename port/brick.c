@@ -263,6 +263,14 @@ static bool g_muted;
  * Not inverted, unlike the mixer: 0 is dark, 255 is full. */
 #define DISP_LCD_SET_BRIGHTNESS 0x102
 #define DISP_LCD_GET_BRIGHTNESS 0x103
+/* The Zero 40's panel runs its backlight the other way: a higher raw value is
+ * darker (oakMOSS hardware-notes, "Backlight polarity"; TortOS plorpos-auv.15).
+ * Every raw value to and from the driver goes through this, as the launcher's. */
+#ifdef DIATOM_PORT_ZERO40
+#define BL_RAW(v) (255 - (v))
+#else
+#define BL_RAW(v) (v)
+#endif
 
 /* Brightness is perceived proportionally, not linearly. Measured 2026-08-26:
  * eight successive halvings of duty were all still visible, so equal *ratios*
@@ -528,6 +536,7 @@ static void bright_ensure(void)
 	if (g_bright >= 0 || g_disp_fd < 0) return;
 	raw = ioctl(g_disp_fd, DISP_LCD_GET_BRIGHTNESS, a);
 	if (raw < 0) return;
+	raw = BL_RAW(raw);
 
 	/* Nearest rung, so the first press moves one step from where the launcher
 	 * left the panel rather than jumping. Exact for every level the launcher
@@ -542,7 +551,7 @@ static void bright_apply(void)
 {
 	unsigned long a[4] = { 0, 0, 0, 0 };
 
-	a[1] = bright_ladder[g_bright];
+	a[1] = BL_RAW(bright_ladder[g_bright]);
 	ioctl(g_disp_fd, DISP_LCD_SET_BRIGHTNESS, a);
 }
 
