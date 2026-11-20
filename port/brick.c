@@ -263,6 +263,14 @@ static bool g_muted;
  * Not inverted, unlike the mixer: 0 is dark, 255 is full. */
 #define DISP_LCD_SET_BRIGHTNESS 0x102
 #define DISP_LCD_GET_BRIGHTNESS 0x103
+/* The Zero 40's panel runs its backlight the other way: a higher raw value is
+ * darker (oakMOSS hardware-notes, "Backlight polarity"; TortOS plorpos-auv.15).
+ * Every raw value to and from the driver goes through this, as the launcher's. */
+#ifdef DIATOM_PORT_ZERO40
+#define BL_RAW(v) (255 - (v))
+#else
+#define BL_RAW(v) (v)
+#endif
 
 /* Brightness is perceived proportionally, not linearly. Measured 2026-08-26:
  * eight successive halvings of duty were all still visible, so equal *ratios*
@@ -528,6 +536,7 @@ static void bright_ensure(void)
 	if (g_bright >= 0 || g_disp_fd < 0) return;
 	raw = ioctl(g_disp_fd, DISP_LCD_GET_BRIGHTNESS, a);
 	if (raw < 0) return;
+	raw = BL_RAW(raw);
 
 	/* Nearest rung, so the first press moves one step from where the launcher
 	 * left the panel rather than jumping. Exact for every level the launcher
@@ -542,7 +551,7 @@ static void bright_apply(void)
 {
 	unsigned long a[4] = { 0, 0, 0, 0 };
 
-	a[1] = bright_ladder[g_bright];
+	a[1] = BL_RAW(bright_ladder[g_bright]);
 	ioctl(g_disp_fd, DISP_LCD_SET_BRIGHTNESS, a);
 }
 
@@ -1398,7 +1407,9 @@ bool diatom_port_init(diatom_port_caps *out)
 	 * flight, drawing; fewer, or a refused pan, means single-buffered
 	 * drawing straight to glass: can tear, still works. */
 	g_vinfo.yoffset = 0;
-	if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &g_vinfo) != 0 || g_pages < 3) {
+	/* Two pages (the Zero 40's fb0, TortOS plorpos-auv.4) flip too: present
+	 * waits for the flip in flight instead (see diatom_port_present). */
+	if (ioctl(g_fb_fd, FBIOPAN_DISPLAY, &g_vinfo) != 0 || g_pages < 2) {
 		g_pan_broken = true;
 		diatom_port_log(DIATOM_LOG_WARN, "fb0 pan or pages unavailable; single-buffered");
 	} else if (pthread_create(&g_flip_thread, NULL, flip_worker, NULL) != 0) {
@@ -1950,12 +1961,20 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	 * thread has not started panning it, so overwriting it just replaces a
 	 * frame nobody saw with a newer one. Latest wins. */
 	pthread_mutex_lock(&g_flip_mx);
-	for (page = 0; page < g_pages; page++)
-		if (page != g_front && page != g_inflight && page != g_pending)
+	for (;;) {
+		for (page = 0; page < g_pages; page++)
+			if (page != g_front && page != g_inflight && page != g_pending)
+				break;
+		if (page < g_pages) break;
+		if (g_pending >= 0) {           /* latest wins: redraw the queued one */
+			page      = g_pending;
+			g_pending = -1;
 			break;
-	if (page == g_pages) {
-		page      = g_pending;
-		g_pending = -1;
+		}
+		/* Two pages, one on glass and one in flight: none to draw into until
+		 * the pan latches - at most a vblank. Never with three. */
+		if (!g_flip_running) { page = g_front; break; }
+		pthread_cond_wait(&g_flip_idle, &g_flip_mx);
 	}
 	pthread_mutex_unlock(&g_flip_mx);
 
@@ -2067,6 +2086,36 @@ size_t diatom_port_audio_queued(void)
  * The dpad is ABS_HAT0 - hat values are semantic, no attribution needed.
  * THUMBL/THUMBR/F1/F2 exist in the mask because the same driver serves
  * stick-bearing siblings; volume is the host OS's business. All unmapped. */
+#ifdef DIATOM_PORT_ZERO40
+/* The MagicX Zero 40's "magicx-input" (oakMOSS simplepad), measured on the
+ * device 2026-11-17 by pairing raw codes with SDL's indices (TortOS
+ * plorpos-auv.1):
+ *
+ *   0 304 B (bottom)   4 310 L1   8 314 SELECT   12 105 LEFT    16 115 VOL_UP
+ *   1 305 A (right)    5 311 R1   9 315 START    13 106 RIGHT   17 158 MENU
+ *   2 307 Y (left)     6 312 L2  10 317 L3       14 108 DOWN
+ *   3 308 X (top)      7 313 R2  11 103 UP       15 114 VOL_DN
+ *
+ * The d-pad and L2/R2 are buttons here, not a hat and axes; MENU is KEY_BACK
+ * on this kernel. L3 is a hotkey choice, never a core input (ADR-0044). */
+static const struct { int idx; int btn; } joymap[] = {
+	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
+	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
+	{ 4, DIATOM_BTN_L1 },     { 5, DIATOM_BTN_R1 },
+	{ 6, DIATOM_BTN_L2 },     { 7, DIATOM_BTN_R2 },
+	{ 8, DIATOM_BTN_SELECT }, { 9, DIATOM_BTN_START },
+	{ 10, DIATOM_BTN_L3 },
+	{ 11, DIATOM_BTN_UP },    { 12, DIATOM_BTN_LEFT },
+	{ 13, DIATOM_BTN_RIGHT }, { 14, DIATOM_BTN_DOWN },
+	{ 17, DIATOM_BTN_MENU },
+};
+#define JOY_VOL_DN 15
+#define JOY_VOL_UP 16
+#define JOY_FN_L   (-1)    /* no function keys */
+#define JOY_FN_R   (-1)
+#define JOY_PRO_FN_L (-1)
+#define JOY_PRO_FN_R (-1)
+#else
 static const struct { int idx; int btn; } joymap[] = {
 	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
 	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
@@ -2100,10 +2149,14 @@ static const struct { int idx; int btn; } joymap[] = {
  * on the device 2026-09-28. */
 #define JOY_PRO_FN_L 11
 #define JOY_PRO_FN_R 12
+#endif
 
 /* Which one, from cpuinfo's hwserial - the line the boot script checks. */
 static bool is_brick_pro(void)
 {
+#ifdef DIATOM_PORT_ZERO40
+	return false;
+#endif
 	static int pro = -1;
 	if (pro < 0) {
 		char line[256];
@@ -2123,10 +2176,19 @@ static bool is_brick_pro(void)
  * stick's four bits are hotkeys only and fold onto nothing (ADR-0044). Half
  * travel to press, a third to let go, so a stick resting near the line cannot
  * chatter. */
+#ifdef DIATOM_PORT_ZERO40
+/* Its one stick: the vertical on axis 0, the horizontal on axis 1 negated
+ * (oakMOSS hardware-notes; Dedicated OS's table agrees). No right stick. */
+#define AXIS_LX 1
+#define AXIS_LY 0
+#define AXIS_RX 252        /* none: an axis number SDL never sends */
+#define AXIS_RY 253
+#else
 #define AXIS_LX 0
 #define AXIS_LY 1
 #define AXIS_RX 3
 #define AXIS_RY 4
+#endif
 #define STICK_PRESS   16384
 #define STICK_RELEASE 10923
 #define DPAD_BITS (DIATOM_BIT(DIATOM_BTN_UP) | DIATOM_BIT(DIATOM_BTN_DOWN) \
@@ -2155,8 +2217,13 @@ static void stick_axis(int value, int neg_btn, int pos_btn)
 	g_stick_bits = (g_stick_bits & ~(neg | pos)) | (n ? neg : 0) | (p ? pos : 0);
 }
 
+#ifdef DIATOM_PORT_ZERO40
+#define AXIS_L2 250        /* buttons 6 and 7 there */
+#define AXIS_R2 251
+#else
 #define AXIS_L2 2
 #define AXIS_R2 5
+#endif
 #define AXIS_PRESSED 16384
 
 /* The four level buttons, and holding one repeats it at the launcher's pace -
@@ -2269,8 +2336,15 @@ static void debug_event(const char *what, int a, int b)
 	diatom_port_log(DIATOM_LOG_DEBUG, msg);
 }
 
+#ifdef DIATOM_PORT_ZERO40
+static void ts_read(void);   /* the touch panel, below with the pointer */
+#endif
+
 void diatom_port_input_poll(void)
 {
+#ifdef DIATOM_PORT_ZERO40
+	ts_read();
+#endif
 	SDL_Event ev;
 	size_t i;
 
@@ -2341,6 +2415,10 @@ void diatom_port_input_poll(void)
 		case SDL_JOYAXISMOTION: {
 			bool pressed = ev.jaxis.value > AXIS_PRESSED;
 			debug_event("joy axis", ev.jaxis.axis, ev.jaxis.value);
+#ifdef DIATOM_PORT_ZERO40
+			if (ev.jaxis.axis == AXIS_LX)   /* negated, and -32768 has no int16 opposite */
+				ev.jaxis.value = ev.jaxis.value == -32768 ? 32767 : (Sint16)-ev.jaxis.value;
+#endif
 			if (ev.jaxis.axis == AXIS_L2) {
 				if (pressed) g_buttons |=  DIATOM_BIT(DIATOM_BTN_L2);
 				else         g_buttons &= ~DIATOM_BIT(DIATOM_BTN_L2);
@@ -2550,7 +2628,87 @@ int  diatom_port_take_skip(void)
 
 /* No DS layouts or touch panel here (TortOS plorpos-3yv.47). */
 void diatom_port_split(bool on, diatom_rect top, diatom_rect bot) { (void)on; (void)top; (void)bot; }
+#ifdef DIATOM_PORT_ZERO40
+/* The Zero 40's touch panel (axs_ts, five type-B slots in panel pixels) as the
+ * libretro pointer: the first finger, over the picture as drawn - for the DS
+ * frame shown whole (Even Split there), the bottom screen is its lower half,
+ * which reads 0..0x7fff down, as the split ports' bottom screen does. The
+ * firmware SDL delivers no fingers, so evdev directly (TortOS plorpos-auv.4). */
+#define TS_SLOTS 5
+static int  g_ts_fd = -1;
+static uint64_t g_ts_tried;
+static int  g_ts_slot, g_ts_max_x = 480, g_ts_max_y = 800;
+static struct { bool down, was, moved; int x, y; } g_ts[TS_SLOTS];
+
+static void ts_open(void)
+{
+	char path[32], name[64];
+	uint64_t now = diatom_port_now_us();
+	int i, fd;
+
+	if (g_ts_fd >= 0 || (g_ts_tried && now - g_ts_tried < 1000000ull)) return;
+	g_ts_tried = now | 1;
+	for (i = 0; i < 16; i++) {
+		snprintf(path, sizeof path, "/dev/input/event%d", i);
+		if ((fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)) < 0) continue;
+		name[0] = '\0';
+		if (ioctl(fd, EVIOCGNAME(sizeof name), name) >= 0 && !strcmp(name, "axs_ts")) {
+			struct input_absinfo a;
+
+			if (ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &a) == 0 && a.maximum > 0) g_ts_max_x = a.maximum;
+			if (ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &a) == 0 && a.maximum > 0) g_ts_max_y = a.maximum;
+			g_ts_fd = fd;
+			return;
+		}
+		close(fd);
+	}
+}
+
+static void ts_read(void)
+{
+	struct input_event ev;
+
+	ts_open();
+	while (g_ts_fd >= 0 && read(g_ts_fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
+		if (ev.type == EV_ABS) {
+			if (ev.code == ABS_MT_SLOT) g_ts_slot = ev.value >= 0 && ev.value < TS_SLOTS ? ev.value : 0;
+			else if (ev.code == ABS_MT_TRACKING_ID) g_ts[g_ts_slot].down = ev.value >= 0;
+			else if (ev.code == ABS_MT_POSITION_X) { g_ts[g_ts_slot].x = ev.value; g_ts[g_ts_slot].moved = true; }
+			else if (ev.code == ABS_MT_POSITION_Y) { g_ts[g_ts_slot].y = ev.value; g_ts[g_ts_slot].moved = true; }
+		} else if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
+			/* A finger on the last one's column or row brings no position of
+			 * its own (the kernel drops repeats): the slot's, asked. */
+			if (g_ts[g_ts_slot].down && !g_ts[g_ts_slot].was && !g_ts[g_ts_slot].moved) {
+				struct { __u32 code; __s32 v[TS_SLOTS]; } q;
+
+				q.code = ABS_MT_POSITION_X;
+				if (ioctl(g_ts_fd, EVIOCGMTSLOTS(sizeof q), &q) == 0) g_ts[g_ts_slot].x = q.v[g_ts_slot];
+				q.code = ABS_MT_POSITION_Y;
+				if (ioctl(g_ts_fd, EVIOCGMTSLOTS(sizeof q), &q) == 0) g_ts[g_ts_slot].y = q.v[g_ts_slot];
+			}
+			for (int i = 0; i < TS_SLOTS; i++) { g_ts[i].was = g_ts[i].down; g_ts[i].moved = false; }
+		}
+	}
+}
+
+bool diatom_port_pointer(int16_t *x, int16_t *y)
+{
+	const diatom_rect d = g_map_dst;
+	float px, py, fx, fy;
+
+	if (!g_ts[0].down || !g_map_valid || d.w <= 0 || d.h <= 0) return false;
+	px = (float)g_ts[0].x * (float)g_vinfo.xres / (float)g_ts_max_x;
+	py = (float)g_ts[0].y * (float)g_vinfo.yres / (float)g_ts_max_y;
+	fx = (px - d.x) / d.w;
+	fy = (py - d.y) / d.h;
+	if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return false;
+	*x = (int16_t)((fx * 2 - 1) * 0x7fff);
+	*y = (int16_t)((fy * 2 - 1) * 0x7fff);
+	return true;
+}
+#else
 bool diatom_port_pointer(int16_t *x, int16_t *y) { (void)x; (void)y; return false; }
+#endif
 void diatom_port_stylus(bool down) { (void)down; }
 
 /* No microphone on this port (diatom_port.h). */

@@ -597,7 +597,15 @@ static const char *filter_name(diatom_filter f)
 static const char *const DS_PAIRS[][4][2] = {
 	{ { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-a", "ds-a-swap" }, { "ds-b", "ds-b" }, { "ds-top", "ds-bottom" } },
 	{ { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-top", "ds-bottom" }, { "ds-topfocus", "ds-bottomfocus" }, { NULL, NULL } },
+	/* The Zero 40's 480x800 (TortOS plorpos-auv.4): Even Split first - with no split to draw, the DS frame whole,
+	 * top screen over bottom, 480x720 - then the Brick's three. */
+	{ { "ds-b", "ds-b" }, { "ds-topoverlay", "ds-bottomoverlay" }, { "ds-top", "ds-bottom" }, { "ds-topfocus", "ds-bottomfocus" } },
 };
+#ifdef DIATOM_PORT_ZERO40
+#define DS_PAIRS_ROW (g_caps.split ? 0 : 2)
+#else
+#define DS_PAIRS_ROW (g_caps.split ? 0 : 1)
+#endif
 static bool g_ds_bottom_big;   /* the side a layout change keeps, across Even Split, which has none */
 
 static int mode_index(const char *name)
@@ -610,7 +618,7 @@ static int mode_index(const char *name)
 /* Where the current mode sits in this port's pairs: false when it is not a DS layout here. */
 static bool ds_pair_of(int *pair, int *side, int *n)
 {
-	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	const char *const (*p)[2] = DS_PAIRS[DS_PAIRS_ROW];
 	const char *cur = diatom_modes[g_mode].name;
 
 	for (*n = 0; *n < 4 && p[*n][0]; (*n)++) ;
@@ -622,7 +630,7 @@ static bool ds_pair_of(int *pair, int *side, int *n)
 
 static void layout_step(int dir)
 {
-	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	const char *const (*p)[2] = DS_PAIRS[DS_PAIRS_ROW];
 	int pair, side, n, m;
 
 	if (!ds_pair_of(&pair, &side, &n)) return;
@@ -633,7 +641,7 @@ static void layout_step(int dir)
 
 static void swap_screens(void)
 {
-	const char *const (*p)[2] = DS_PAIRS[g_caps.split ? 0 : 1];
+	const char *const (*p)[2] = DS_PAIRS[DS_PAIRS_ROW];
 	int pair, side, n, m;
 
 	if (!ds_pair_of(&pair, &side, &n) || !strcmp(p[pair][0], p[pair][1])) return;
