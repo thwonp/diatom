@@ -151,6 +151,9 @@ bool diatom_env_new_geometry(int *w, int *h, double *aspect);   /* consumes the 
 void diatom_env_suppress(uint32_t mask);
 /* The Blow hotkey held: the mic reads loud noise (env.c, TortOS plorpos-6ei.3). */
 void diatom_env_mic_blow(bool on);
+void diatom_env_rumble_enable(bool on);   /* SETRUMBLE */
+void diatom_env_rumble_hold(bool held);   /* paused under the launcher's menu, and back */
+void diatom_env_rumble_end(void);         /* the run is over: motor off, nothing wanted */
 
 /* Silence a core's DEBUG/INFO chatter once a game is running. See core_log in
  * env.c for the measurement that made this necessary. */
@@ -228,6 +231,7 @@ typedef enum {
 	DIATOM_MSG_SETMUTE,    /* hold it off, or release it: `on` = 1 | 0 */
 	DIATOM_MSG_QUIET,      /* report whether the game's own sound is held silent */
 	DIATOM_MSG_SETQUIET,   /* hold it silent, or let it play: `on` = 1 | 0 */
+	DIATOM_MSG_SETRUMBLE,  /* Rumble Enabled: `index` 0 off, else on (TortOS plorpos-5tm.5) */
 	DIATOM_MSG_SETSKIP,    /* which volume holds skip while quiet: `index` = bit 0 Vol+, bit 1 Vol- */
 	/* Fast-forward and rewind. The verbs are this repo's (MIT), a plain
 	 * extension of the state plane; what they drive is ported from NextUI's

@@ -49,6 +49,7 @@
 #include "diatom_port.h"
 #include "gkd_gl.h"
 #include "port_clock.h"
+#include "port_ff.h"     /* the vibration motor (TortOS plorpos-5tm.4) */
 
 #define AUDIO_RATE 48000
 /* Capacity in FRAMES (one frame = two int16 samples). 4096 at 48kHz is ~85ms,

@@ -24,6 +24,16 @@ static bool g_video_shown = true;               /* diatom_env_set_video's, for G
 
 static void capture_descriptors(const struct retro_input_descriptor *d);
 static bool cb_set_rumble(unsigned port, enum retro_rumble_effect effect, uint16_t strength);
+/* SETRUMBLE: the launcher's Rumble Enabled (TortOS plorpos-5tm.5). Off, a
+ * core is told there is no motor. */
+static bool     g_rumble_on = true;
+static bool     g_rumble_held;          /* paused: the motor rests */
+static uint16_t g_rumble_want[2];       /* strong, weak: what the core asked */
+static unsigned g_rumble_starts;        /* this run's, for its one summary line */
+static uint16_t rumble_want(void)
+{
+	return g_rumble_want[0] > g_rumble_want[1] ? g_rumble_want[0] : g_rumble_want[1];
+}
 
 static diatom_policy    *g_policy;
 static diatom_core      *g_bound;   /* the core this callback is answering */
@@ -316,7 +326,10 @@ static bool env_cb(unsigned cmd, void *data)
 	case MASK(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE):
 		/* Only where the device has a motor: a core that adds a rumble
 		 * accessory (DSperate's Rumble Pak) does so on this answer. */
-		if (!diatom_port_has_rumble()) return false;
+		/* Once a game, and only for a core that asks: which way it went. */
+		printf("diatom: rumble asked for: %s\n", !g_rumble_on ? "off in Game Settings"
+		       : diatom_port_has_rumble() ? "the motor is the core's" : "no motor");
+		if (!g_rumble_on || !diatom_port_has_rumble()) return false;
 		((struct retro_rumble_interface *)data)->set_rumble_state = cb_set_rumble;
 		return true;
 	case MASK(RETRO_ENVIRONMENT_SHUTDOWN):
@@ -870,12 +883,38 @@ __attribute__((weak)) bool diatom_port_sticks(int16_t *lx, int16_t *ly, int16_t 
 __attribute__((weak)) bool diatom_port_has_rumble(void) { return false; }
 __attribute__((weak)) void diatom_port_rumble(uint16_t strength) { (void)strength; }
 
+/* A core sets the strong and the weak motor apart; there is one here, so the
+ * stronger of the two last asked for is what it runs at. */
 static bool cb_set_rumble(unsigned port, enum retro_rumble_effect effect, uint16_t strength)
 {
-	(void)effect;
-	if (port != 0 || !diatom_port_has_rumble()) return false;
-	diatom_port_rumble(strength);
+	if (port != 0 || !g_rumble_on || !diatom_port_has_rumble()) return false;
+	if (strength && !rumble_want()) g_rumble_starts++;
+	g_rumble_want[effect == RETRO_RUMBLE_WEAK] = strength;
+	if (!g_rumble_held) diatom_port_rumble(rumble_want());
 	return true;
+}
+
+void diatom_env_rumble_enable(bool on)
+{
+	g_rumble_on = on;
+	if (!on) diatom_env_rumble_end();
+}
+
+/* Paused under the launcher's menu the motor rests, and takes up again what
+ * the core last asked for: a core says only when that changes. */
+void diatom_env_rumble_hold(bool held)
+{
+	g_rumble_held = held;
+	if (diatom_port_has_rumble()) diatom_port_rumble(held ? 0 : rumble_want());
+}
+
+void diatom_env_rumble_end(void)
+{
+	if (g_rumble_starts) printf("diatom: rumble started %u time(s)\n", g_rumble_starts);
+	g_rumble_starts = 0;
+	g_rumble_want[0] = g_rumble_want[1] = 0;
+	g_rumble_held = false;
+	if (diatom_port_has_rumble()) diatom_port_rumble(0);
 }
 
 static int16_t cb_input_state(unsigned port, unsigned device,

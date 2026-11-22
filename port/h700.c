@@ -35,6 +35,7 @@
 #include "diatom_port.h"
 #include "gkd_gl.h"
 #include "port_clock.h"
+#include "port_ff.h"     /* the vibration motor (TortOS plorpos-5tm.4) */
 #include "port_signals.h"
 
 /* SDL numbers a pad's buttons by evdev code: BTN_JOYSTICK up first, then
