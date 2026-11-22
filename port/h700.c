@@ -2491,7 +2491,7 @@ void diatom_port_input_poll(void)
 					break;
 				}
 				g_level_bright[k]  = g_menu_down;
-				g_level_skip[k]    = !g_menu_down && diatom_audio_quiet_get();
+				g_level_skip[k]    = !g_menu_down && diatom_skip_hold_get(k);
 				g_level_next_us[k] = diatom_port_now_us() +
 				                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US);
 				{

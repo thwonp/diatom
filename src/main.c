@@ -1781,6 +1781,7 @@ static bool state_plane_msg(const diatom_msg *m)
 	case DIATOM_MSG_SETMUTE:  mute_set(m);       return true;
 	case DIATOM_MSG_QUIET:    quiet_emit();      return true;
 	case DIATOM_MSG_SETQUIET: quiet_set(m);      return true;
+	case DIATOM_MSG_SETSKIP:  diatom_skip_keys(m->index); return true;
 	case DIATOM_MSG_DISPLAY:
 		/* apply_display is what emits, so ask it to restate the current one
 		 * rather than growing a second path that could disagree with it. */

@@ -228,6 +228,7 @@ typedef enum {
 	DIATOM_MSG_SETMUTE,    /* hold it off, or release it: `on` = 1 | 0 */
 	DIATOM_MSG_QUIET,      /* report whether the game's own sound is held silent */
 	DIATOM_MSG_SETQUIET,   /* hold it silent, or let it play: `on` = 1 | 0 */
+	DIATOM_MSG_SETSKIP,    /* which volume holds skip while quiet: `index` = bit 0 Vol+, bit 1 Vol- */
 	/* Fast-forward and rewind. The verbs are this repo's (MIT), a plain
 	 * extension of the state plane; what they drive is ported from NextUI's
 	 * frontend-side approach (ma_runframe.c / ma_rewind.c), not libretro's
@@ -488,6 +489,7 @@ uint64_t diatom_audio_samples(void);
  * launcher's situation rather than the game: a session starts at whatever it
  * is set to, with no fade. */
 void     diatom_audio_quiet(bool on);
+void     diatom_skip_keys(int mask);   /* SETSKIP: bit 0 Vol+, bit 1 Vol- (see diatom_port.h) */
 bool     diatom_audio_quiet_get(void);
 /* Output frames this session that went out quiet, fades included - so a silent
  * OUT line above can be told from a silent game. */

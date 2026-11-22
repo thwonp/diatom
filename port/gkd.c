@@ -1147,7 +1147,7 @@ static void keys_read(void)
 				continue;
 			}
 			g_level_bright[k]  = g_home;
-			g_level_skip[k]    = !g_home && diatom_audio_quiet_get();
+			g_level_skip[k]    = !g_home && diatom_skip_hold_get(k);
 			g_level_next_us[k] = diatom_port_now_us() +
 			                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US);
 			{
