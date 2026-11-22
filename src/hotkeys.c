@@ -84,6 +84,7 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "swapscreens") || !strcmp(s, "swapback")) return HK_SWAPSCREENS;
 	if (!strcmp(s, "blow"))      return HK_BLOW;
 	if (!strcmp(s, "fftoggle"))  return HK_FFTOGGLE;
+	if (!strcmp(s, "savequit"))  return HK_SAVEQUIT;
 	return HK_NONE;
 }
 
