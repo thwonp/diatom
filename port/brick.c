@@ -1027,6 +1027,14 @@ void diatom_port_present_stop(diatom_park park_mode)
 	bool was_presenting;
 
 	if (!g_fb) return;
+	/* The run is over, and the launcher draws its shelf into these pages
+	 * next. A game that then starts at the rect the last one had saw no
+	 * change and wiped nothing: the shelf stayed on the letterbox bars of
+	 * two pages of three and flickered there, and opening the menu copied
+	 * it to the third (TortOS plorpos-5tm.1). So the next run's first frame
+	 * wipes, as a mode change does. Before the early returns below: a quit
+	 * from the launcher's menu takes that way out. */
+	if (park_mode == DIATOM_PARK_BLANK) g_map_valid = false;
 	if (g_win && g_presented) gl_quiesce();   /* else not ours on glass */
 	front = flip_drain();
 
