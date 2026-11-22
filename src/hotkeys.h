@@ -30,10 +30,11 @@ typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCR
                HK_SWAPSCREENS /* DS Swap Screens: the other screen of the layout's pair big (TortOS plorpos-jcj);
                                * "swapback", Screen Layout <- until then, names it too so a key bound to that keeps working */,
                HK_BLOW  /* held: noise into the mic, a breath (TortOS plorpos-6ei.3) */,
-               HK_FFTOGGLE /* Fast Forward (Toggle): a press turns FF on, the next off; HK_FF is the held one (TortOS plorpos-73b) */ } hk_action;
+               HK_FFTOGGLE /* Fast Forward (Toggle): a press turns FF on, the next off; HK_FF is the held one (TortOS plorpos-73b) */,
+               HK_SAVEQUIT /* Save and Quit: the game ends as a launcher's STOP ends it, exit state written (TortOS plorpos-5tm.3) */ } hk_action;
 
-/* Bindings in one spec: a DS shelf can bind every action (12 with HK_FFTOGGLE). */
-#define HK_MAX 12
+/* Bindings in one spec: a DS shelf can bind every action (13 with HK_SAVEQUIT). */
+#define HK_MAX 13
 
 /* Whole-string validate-then-apply, the same shape as diatom_input_set_map:
  * a spec that is half garbage is refused whole rather than applying the good

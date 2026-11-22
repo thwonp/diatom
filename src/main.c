@@ -234,6 +234,7 @@ static volatile sig_atomic_t g_terminate;
  * leave the exit state to a thread. Never set by power, sleep, a signal or any
  * other way out: those save in line, as before (plorpos-2wl.12). */
 static bool g_stop_lazy;
+static bool g_hk_quit;         /* the Save and Quit hotkey was pressed this frame */
 static bool g_quit_requested;   /* launcher said QUIT */
 /* --host-menu: something outside Diatom owns MENU (TortOS's PortMaster
  * RetroArch stand-in, plorpos-3yv.86.6, runs it one-shot under a launcher
@@ -1313,6 +1314,7 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_STYLUS: if (buttons & bit) stylus_held = true; break;
 		case HK_BLOW:   if (buttons & bit) blow_held = true;   break;
 		case HK_FFTOGGLE: if (pressed & bit) g_ff_toggled = !g_ff_toggled; break;
+		case HK_SAVEQUIT: if (pressed & bit) g_hk_quit = true; break;
 		case HK_STYLUSMODE: if (pressed & bit) sty_toggle(); break;
 		case HK_SAVESTATE:
 			if ((pressed & bit) && sn->state_exit)
@@ -2345,6 +2347,9 @@ static int run_session_inner(const diatom_session *sn)
 		 * So the host reads the pad itself whenever the core did not. */
 		if (!diatom_env_polled()) diatom_port_input_poll();
 		if (diatom_env_shutdown()) stop = true;
+		/* Save and Quit, the hotkey: the menu's Quit without the menu, so
+		 * the exit state goes the same lazy way (TortOS plorpos-5tm.3). */
+		if (g_hk_quit) { g_hk_quit = false; stop = true; g_stop_lazy = diatom_proto_active(); }
 		frames++;
 		if (!(frames & 63)) log_guard_check();
 
