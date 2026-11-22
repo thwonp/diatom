@@ -1784,6 +1784,7 @@ static bool state_plane_msg(const diatom_msg *m)
 	case DIATOM_MSG_QUIET:    quiet_emit();      return true;
 	case DIATOM_MSG_SETQUIET: quiet_set(m);      return true;
 	case DIATOM_MSG_SETSKIP:  diatom_skip_keys(m->index); return true;
+	case DIATOM_MSG_SETRUMBLE: diatom_env_rumble_enable(m->index != 0); return true;
 	case DIATOM_MSG_DISPLAY:
 		/* apply_display is what emits, so ask it to restate the current one
 		 * rather than growing a second path that could disagree with it. */
@@ -2611,7 +2612,11 @@ static int run_session_inner(const diatom_session *sn)
 				if (!g_host_menu) stop = true;
 			} else {
 				uint64_t pause_t0 = diatom_port_now_us();
-				bool resumed = menu_pause(sn, switcher_now && !menu_now);
+				bool resumed;
+
+				diatom_env_rumble_hold(true);   /* no buzz under the menu */
+				resumed = menu_pause(sn, switcher_now && !menu_now);
+				if (resumed) diatom_env_rumble_hold(false);
 
 				/* The summary line divides frames by wall clock, and an open
 				 * menu produces no frames, so without this a long menu reads
@@ -2840,6 +2845,7 @@ static int run_session_inner(const diatom_session *sn)
 
 	/* Both paths, and in this order: the game's own save first, because losing
 	 * it is a defect, then the state, which is a convenience. */
+	diatom_env_rumble_end();
 	diatom_save_shutdown();
 	if (sn->state_exit) {
 		if (g_stop_lazy && !g_terminate) diatom_state_save_lazy(g_core, sn->state_exit);

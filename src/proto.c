@@ -193,6 +193,7 @@ static void parse_line(char *line, diatom_msg *out)
 	else if (!strcmp(field, "QUIET"))      out->kind = DIATOM_MSG_QUIET;
 	else if (!strcmp(field, "SETQUIET"))   out->kind = DIATOM_MSG_SETQUIET;
 	else if (!strcmp(field, "SETSKIP"))    out->kind = DIATOM_MSG_SETSKIP;
+	else if (!strcmp(field, "SETRUMBLE"))  out->kind = DIATOM_MSG_SETRUMBLE;
 	else if (!strcmp(field, "SPEED"))      out->kind = DIATOM_MSG_SPEED;
 	else if (!strcmp(field, "SETSPEED"))   out->kind = DIATOM_MSG_SETSPEED;
 	else if (!strcmp(field, "REWIND"))     out->kind = DIATOM_MSG_REWIND;
