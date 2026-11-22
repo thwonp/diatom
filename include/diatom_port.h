@@ -413,6 +413,9 @@ bool diatom_port_take_switcher(void);
 #define DIATOM_SKIP_TOGGLE 2
 int  diatom_port_take_skip(void);
 bool diatom_audio_quiet_get(void);
+/* Whether a hold of volume key `key` (0 Vol+, 1 Vol-) is a skip now: quiet,
+ * and the launcher has not given that hold back to the volume (SETSKIP). */
+bool diatom_skip_hold_get(int key);
 
 /* What was last presented, as pixels: no domain nouns, and every backend
  * wants it - on desktop to see what happened, on device because a screenshot

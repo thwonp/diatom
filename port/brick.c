@@ -2289,7 +2289,7 @@ static bool level_button(int button, bool down)
 			g_skip_pending = DIATOM_SKIP_TOGGLE;
 			return true;
 		}
-		g_level_skip[k]    = down && !g_level_bright[k] && diatom_audio_quiet_get();
+		g_level_skip[k]    = down && !g_level_bright[k] && diatom_skip_hold_get((int)k);
 		g_level_next_us[k] = down ? diatom_port_now_us() +
 		                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US) : 0;
 		level_chord();

@@ -130,6 +130,13 @@ static int16_t  g_quiet_buf[OUT_CHUNK * 2];
 
 void diatom_audio_quiet(bool on)  { g_quiet = on; }
 bool diatom_audio_quiet_get(void) { return g_quiet; }
+
+/* Which volume keys' holds are the launcher's skip while quiet: bit 0 Vol+,
+ * bit 1 Vol-. Both until the launcher says otherwise (SETSKIP): a hold its
+ * Hotkeys set to None keeps the volume's repeat (plorpos-5eq.14). */
+static int g_skip_keys = 3;
+void diatom_skip_keys(int mask) { g_skip_keys = mask & 3; }
+bool diatom_skip_hold_get(int key) { return g_quiet && (g_skip_keys >> key & 1); }
 uint64_t diatom_audio_quiet_frames(void) { return g_quiet_frames; }
 
 /* `n` frames of `in`, scaled by the quiet gain into g_quiet_buf, the gain
