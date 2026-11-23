@@ -2259,6 +2259,7 @@ static int run_session_inner(const diatom_session *sn)
 	double   lk_owed = 0;     /* us the locked loop is behind that clock: a catch-up run per whole period */
 	bool     lk_extra = false; /* this iteration ran the core a second time (catch-up): two periods' worth */
 	bool     lk_dupe = false;  /* the previous locked iteration had no new picture */
+	(void)lk_dupe;
 	bool     catch_up = false; /* a whole panel period is owed: run the core once more next iteration */
 #ifdef DIATOM_PORT_PACED
 	uint64_t pc_last = 0;      /* paced: when the previous iteration ended (0 = not paced) */
@@ -2743,12 +2744,15 @@ static int run_session_inner(const diatom_session *sn)
 
 						lk_owed -= pay;
 						lk_grid -= pay;
+#ifndef DIATOM_PORT_DUPE_VSYNC   /* the Flip's port waits a vsync for a dupe as for a picture: no sleep (plorpos-f1p.96) */
 						if (!g_frame_fresh || lk_dupe) {
 							double d = lk_grid - (double)now;
 							struct timespec ts = { (time_t)(d / 1e6), (long)(fmod(d, 1e6) * 1000.0) };
 
 							nanosleep(&ts, NULL);
-						} else if (lk_grid > (double)now + pu) {
+						} else
+#endif
+						if (lk_grid > (double)now + pu) {
 							lk_grid = (double)now + pu;
 						}
 					}

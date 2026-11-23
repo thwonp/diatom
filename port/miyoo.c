@@ -664,9 +664,14 @@ static unsigned g_presents, g_lk_downs, g_lk_down_miss;
 static double   g_lk_down_fps;
 static bool     g_gfx;               /* defined with MI_GFX below */
 
+static bool     g_lk_slack;          /* the frame just presented followed a dupe: it has a vsync to spare */
+static unsigned g_made[5];           /* locked: frames from one new picture of the core to the next */
+static unsigned g_up[2][5];          /* [locked, free][vsyncs a picture stayed on glass: 1, 2, 3, 4 or more] */
+
 static void *flipper(void *arg)
 {
-	uint64_t flast = 0;
+	uint64_t flast = 0, since = 0;
+	int shown = -1;
 	(void)arg;
 
 	pthread_mutex_lock(&g_flip_lock);
@@ -693,6 +698,16 @@ static void *flipper(void *arg)
 			if (g > 15000 && g < 21000)   /* 60.3 .. 50 Hz (retimed, plorpos-f1p.68) */
 				g_panel_us = g_panel_us > 0 ? g_panel_us + (g - g_panel_us) / 256.0 : g;
 			flast = t;
+			/* How long each picture stayed up, for the game-end line: a 60 fps game is all 1s, a 30 fps game
+			 * all 2s; anything else was a picture a vsync short or long (plorpos-f1p.96). */
+			if (page != shown) {
+				if (since && g_panel_us > 0) {
+					unsigned n = (unsigned)((double)(t - since) / g_panel_us + 0.5);
+					g_up[g_vlock ? 0 : 1][n < 1 ? 1 : n > 4 ? 4 : n]++;
+				}
+				shown = page;
+				since = t;
+			}
 		}
 		pthread_mutex_lock(&g_flip_lock);
 		g_flipping = false;
@@ -714,6 +729,22 @@ static int free_page(void)
 		if (p != g_page && p != g_pending && p != g_inflight) break;
 	pthread_mutex_unlock(&g_flip_lock);
 	return p < g_npages ? p : (g_page == 0 ? 1 : 0);
+}
+
+/* A locked frame with no new picture (pcsx_rearmed: every other frame of a 30 fps game): the page going up is
+ * panned to once more, so this frame too waits for a vsync in diatom_port_vsync_wait and the loop keeps the
+ * panel's time with no timer. It used to sleep instead, and this kernel's sleeps end up to 10 ms late (no
+ * high-resolution timers: a 1.1 ms sleep measured 8.6 ms), so the next picture reached the flip thread at a
+ * random point of the period: one picture in four of Tony Hawk's Pro Skater 2 stayed up 1 or 3 vsyncs instead
+ * of 2, with CPU to spare, and the slip window read those sleeps as slips (plorpos-f1p.96). */
+static void flip_again(void)
+{
+	pthread_mutex_lock(&g_flip_lock);
+	if (g_pending < 0) {
+		g_pending = g_inflight >= 0 ? g_inflight : g_page;
+		pthread_cond_signal(&g_flip_cond);
+	}
+	pthread_mutex_unlock(&g_flip_lock);
 }
 
 static void flip_to(int page)
@@ -755,6 +786,7 @@ uint64_t diatom_audio_dropped(void);   /* src/audio.c: frames the sink would not
 static bool     g_lk_audio_off;        /* this game overflowed audio locked: free until it ends */
 static unsigned g_lk_frames, g_lk_miss, g_lk_backoff = 600, g_lk_grace;
 static uint64_t g_lk_last, g_lk_dropped, g_lk_win0;   /* g_lk_win0: when this 120-frame window began */
+static unsigned g_lk_warm;        /* frames left of a game's start, when slow windows do not count */
 static uint64_t g_lk_grace_dr;   /* audio frames dropped in the grace: forgiven, but reported with the exit */
 
 /* The core's library_name, once per game as it loads. */
@@ -764,11 +796,13 @@ void diatom_port_core_name(const char *name)
 	g_lk_off = 0;
 	g_lk_backoff = 600;
 	g_lk_frames = g_lk_miss = 0;
-	g_lk_grace = 30;
+	g_lk_grace = g_lk_warm = 300;   /* a game's first 5 s: a state loading, the dynarec filling, the card cold */
 	g_lk_grace_dr = 0;
 	g_lk_last = 0;
 	pthread_mutex_lock(&g_flip_lock);
 	g_pans = g_replaced = 0;
+	memset(g_up, 0, sizeof g_up);
+	memset(g_made, 0, sizeof g_made);
 	pthread_mutex_unlock(&g_flip_lock);
 	g_blit_us = g_hand_us = 0;
 	g_presents = g_lk_downs = 0;
@@ -813,7 +847,13 @@ void diatom_port_vsync_wait(void)
 		if (pthread_cond_timedwait(&g_flip_cond, &g_flip_lock, &to) != 0) break;
 	pthread_mutex_unlock(&g_flip_lock);
 	t = diatom_port_now_us();
-	if (!g_lk_last) { g_lk_frames = g_lk_miss = 0; g_lk_dropped = diatom_audio_dropped(); g_lk_win0 = t; }   /* a window starts */
+	if (!g_lk_last) {   /* a window starts */
+		g_lk_frames = g_lk_miss = 0; g_lk_dropped = diatom_audio_dropped(); g_lk_win0 = t;
+		/* Every time the lock comes back, not only as the game starts: the queue is full when fast-forward ends, so the
+		 * first locked frame after it overflowed and took the lock away for the rest of the game (the owner's Tony Hawk
+		 * run: "781 audio frames dropped after 0 frames locked", then free for 90 s; plorpos-f1p.96). */
+		if (g_lk_grace < 30) g_lk_grace = 30;
+	}
 	if (g_lk_last && g_panel_us > 0) {
 		uint64_t dr = diatom_audio_dropped();
 
@@ -830,7 +870,13 @@ void diatom_port_vsync_wait(void)
 			        (unsigned long long)(dr - g_lk_dropped), g_lk_frames, (unsigned long long)g_lk_grace_dr);
 			g_lk_audio_off = true;
 		}
-		if ((double)(t - g_lk_last) > g_panel_us * 1.5) g_lk_miss++;
+		/* A game's first seconds are slow for reasons that pass (53.8 fps over the first window after a PlayStation
+		 * state load) and standing down for them cost 10 s of free running: no window is judged yet. */
+		if (g_lk_warm) { g_lk_warm--; g_lk_frames = g_lk_miss = 0; g_lk_win0 = t; g_lk_last = t; return; }
+		/* A picture that follows a dupe goes up two vsyncs after the last one, so it makes its vsync when it is
+		 * handed over within two periods: Crash Bandicoot's 25-28 ms frames were counted as slips, the lock stood
+		 * down twice in 40 s, and every picture had been on time (plorpos-f1p.96). */
+		if ((double)(t - g_lk_last) > g_panel_us * (g_lk_slack ? 1.9 : 1.5)) g_lk_miss++;
 		if (++g_lk_frames >= 120) {
 			/* Slow without slipping: frames a little over one period each never
 			 * arrive 1.5 periods late, but 120 of them take longer than 120
@@ -960,6 +1006,10 @@ void diatom_port_content_fps(double fps)
 			fprintf(stderr, ", lock stood down %ux (last %u/120 slipped, %.1f fps)",
 			        g_lk_downs, g_lk_down_miss, g_lk_down_fps);
 		fputc('\n', stderr);
+		/* "made" is the game's own rhythm; where "up" differs from it, a picture was a vsync early or late. */
+		fprintf(stderr, "flip: pictures up for 1/2/3/4+ vsyncs: locked %u/%u/%u/%u (made every %u/%u/%u/%u), free %u/%u/%u/%u\n",
+		        g_up[0][1], g_up[0][2], g_up[0][3], g_up[0][4], g_made[1], g_made[2], g_made[3], g_made[4],
+		        g_up[1][1], g_up[1][2], g_up[1][3], g_up[1][4]);
 		g_presents = 0;
 	}
 	if (!g_rt_tgen) return;
@@ -1167,6 +1217,12 @@ void diatom_port_present(const void *src, int w, int h, size_t pitch,
 	size_t pitch_px = g_fix.line_length / 4;
 	(void)filter;
 
+	if (g_fbmem && g_vlock) {
+		static unsigned run;
+
+		if (src) { g_made[run > 3 ? 4 : run + 1]++; g_lk_slack = run > 0; run = 0; }
+		else     { run++; g_lk_slack = false; flip_again(); }
+	}
 	if (!g_fbmem || !src || w <= 0 || h <= 0) return;
 	px = page_px(back);
 	page_fence_wait(back);   /* a replaced frame's blit may still be writing this page */
