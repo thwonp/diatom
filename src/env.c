@@ -325,11 +325,15 @@ static bool env_cb(unsigned cmd, void *data)
 		return true;
 	case MASK(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE):
 		/* Only where the device has a motor: a core that adds a rumble
-		 * accessory (DSperate's Rumble Pak) does so on this answer. */
-		/* Once a game, and only for a core that asks: which way it went. */
-		printf("diatom: rumble asked for: %s\n", !g_rumble_on ? "off in Game Settings"
-		       : diatom_port_has_rumble() ? "the motor is the core's" : "no motor");
-		if (!g_rumble_on || !diatom_port_has_rumble()) return false;
+		 * accessory (DSperate's Rumble Pak, its own opt-in) does so on this
+		 * answer. Granted with Rumble Enabled off too: cb_set_rumble checks
+		 * the switch on every call, and a core may ask only once in the
+		 * resident's life (mGBA, from retro_init), so a refusal would stick
+		 * after the switch comes back on (TortOS plorpos-5tm.7). */
+		/* Once a game for most cores, once a resident for mGBA. */
+		printf("diatom: rumble asked for: %s\n", !diatom_port_has_rumble() ? "no motor"
+		       : g_rumble_on ? "the motor is the core's" : "the motor is the core's, off in Game Settings");
+		if (!diatom_port_has_rumble()) return false;
 		((struct retro_rumble_interface *)data)->set_rumble_state = cb_set_rumble;
 		return true;
 	case MASK(RETRO_ENVIRONMENT_SHUTDOWN):
