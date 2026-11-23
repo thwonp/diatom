@@ -141,6 +141,8 @@ ifeq ($(PORT),miyoo)
   CC       = $(CROSS)gcc
   CFLAGS  += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
   CFLAGS  += -DDIATOM_MAX_RESIDENT=16 -DDIATOM_NO_PREMAP
+  # plorpos-f1p.96: a locked frame with no new picture waits for a vsync in the port, not in a sleep.
+  CFLAGS  += -DDIATOM_PORT_DUPE_VSYNC
   # plorpos-f1p.45: re-exec the resident between games when it retains more
   # than this much anon (core .bss that malloc_trim cannot return).
   CFLAGS  += -DDIATOM_RECYCLE_ANON_KB=4096
