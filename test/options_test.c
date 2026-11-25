@@ -68,6 +68,24 @@ int main(void)
 	declare_then_free();             /* a second declaration reuses the slot */
 	CHECK(diatom_options_set("ds_opt", "a"), "a redeclared option still offers its values");
 
+	/* v1 definitions, as gpSP declares them: the default stands until a value is set, and only an offered one is taken. */
+	{
+		static const struct retro_core_option_definition v1[] = {
+			{ "v1_opt", "Version one", NULL, { { "enabled", NULL }, { "disabled", NULL } }, "disabled" },
+			{ NULL, NULL, NULL, { { NULL, NULL } }, NULL },
+		};
+
+		diatom_options_bind(&owners[2]);
+		diatom_options_set("v1_opt", "enabled");   /* sent before the core declares, as the launcher does */
+		diatom_options_define_v1(v1);
+		CHECK(diatom_options_count() == 1, "a v1 declaration is kept");
+		CHECK(!strcmp(diatom_options_get("v1_opt"), "enabled"), "a value sent before a v1 declaration applies");
+		CHECK(!diatom_options_set("v1_opt", "on"), "a v1 option refuses a value it does not offer");
+		diatom_options_clear_pending();
+		diatom_options_define_v1(v1);
+		CHECK(!strcmp(diatom_options_get("v1_opt"), "disabled"), "a v1 option starts at its default");
+	}
+
 	if (failures) { printf("%d check(s) failed\n", failures); return 1; }
 	printf("  ok   %d cores, %d tables\n", DIATOM_MAX_RESIDENT, DIATOM_MAX_RESIDENT);
 	return 0;

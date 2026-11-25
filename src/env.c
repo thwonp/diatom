@@ -419,11 +419,14 @@ static bool env_cb(unsigned cmd, void *data)
 		diatom_options_define_v2(data);
 		return true;
 	case MASK(RETRO_ENVIRONMENT_SET_CORE_OPTIONS):
+		diatom_options_define_v1(data);
+		return true;
 	case MASK(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL):
-		/* v1 carries retro_core_option_definition, which differs from v2 only
-		 * by the category fields we do not use. Not built: no core in the
-		 * matrix uses it, and untested code that silently mis-parses options
-		 * is worse than a core falling back to its own defaults. */
+		/* As SET_CORE_OPTIONS_V2_INTL: the English set, else the translation. */
+		if (data) {
+			const struct retro_core_options_intl *in = data;
+			diatom_options_define_v1(in->us ? in->us : in->local);
+		}
 		return true;
 	case MASK(RETRO_ENVIRONMENT_SET_VARIABLES):
 		diatom_options_define_vars(data);

@@ -182,6 +182,7 @@ bool diatom_env_shutdown(void);
  * and no way to ask, having no UI (ADR-0009). */
 void        diatom_options_bind(const void *owner);
 void        diatom_options_define_v2(const struct retro_core_options_v2 *v2);
+void        diatom_options_define_v1(const struct retro_core_option_definition *defs);
 void        diatom_options_define_vars(const struct retro_variable *vars);
 const char *diatom_options_get(const char *key);
 bool        diatom_options_set(const char *key, const char *value);
