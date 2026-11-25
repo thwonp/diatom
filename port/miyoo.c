@@ -1347,8 +1347,22 @@ bool diatom_port_init(diatom_port_caps *out)
 	return true;
 }
 
+/* The vibration motor (TortOS plorpos-5tm.6): GPIO 48, active LOW - stock
+ * /customer/main writes 1 to stop it "in case app crash". plorpOS's launch.sh
+ * exports it high (off) at boot; its supply is axp_test poweron, which stock
+ * main runs before the hook. Not variable in strength: above 0 is on. */
+#define MOTOR_PATH "/sys/class/gpio/gpio48/value"
+static int g_motor_fd = -1;
+bool diatom_port_has_rumble(void) { return access(MOTOR_PATH, W_OK) == 0; }
+void diatom_port_rumble(uint16_t strength)
+{
+	if (g_motor_fd < 0 && (g_motor_fd = open(MOTOR_PATH, O_WRONLY | O_CLOEXEC)) < 0) return;
+	if (write(g_motor_fd, strength ? "0" : "1", 1) < 0) { /* a motor that will not move is not worth a message */ }
+}
+
 void diatom_port_shutdown(void)
 {
+	if (g_motor_fd >= 0) diatom_port_rumble(0);
 	flip_drain();
 	pthread_mutex_lock(&g_flip_lock);
 	g_flip_stop = true;
