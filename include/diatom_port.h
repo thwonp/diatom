@@ -359,6 +359,10 @@ void diatom_port_rumble(uint16_t strength);
 typedef enum {
 	DIATOM_LEVEL_VOLUME = 0,
 	DIATOM_LEVEL_BRIGHTNESS,
+	/* A second panel's backlight, where a device has two that are set apart
+	 * (the RG DS's secondary screen, TortOS plorpos-rgds.27). BRIGHTNESS is
+	 * then the primary's. */
+	DIATOM_LEVEL_BRIGHTNESS2,
 	DIATOM_LEVEL_COUNT
 } diatom_level_kind;
 

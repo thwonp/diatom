@@ -96,6 +96,11 @@ static bool g_switcher;
  * virtual keyboard (home_read). The Anbernic key is the pad's BTN_MODE. */
 #define HOME_NAME "InputPlumber Keyboard"
 static int g_home_fd = -1;
+/* The Anbernic key (the pad's BTN_MODE) is Menu and, held, the top panel's
+ * brightness modifier with the volume keys (Home is the bottom's, TortOS
+ * plorpos-rgds.27) - so it is held back as on the Rotate: see pad_read. */
+static bool g_anb;
+static bool g_menu_sent, g_menu_spent, g_menu_pulse;
 #else
 #define PAD_NAME  "gkd_atom_joypad"
 #define KEYS_NAME "gpio-keys"
@@ -105,6 +110,8 @@ static int g_home_fd = -1;
 static int evdev_open(const char *want);
 static bool g_hidden;
 static void draw_osd(void);
+static void bright_apply(void);
+static void draw_osd_on(int win, int sw, int sh);
 static void draw_cursor(void);
 static void levels_init(void);
 
@@ -656,6 +663,7 @@ static bool dual_show(void)
 	}
 	dual_panel(true);
 	g_dual = true;
+	bright_apply();                      /* a dark secondary lit for the DS game */
 	{
 		char msg[64];
 		snprintf(msg, sizeof msg, "dual: bottom window %dx%d", g_w2, g_h2);
@@ -671,6 +679,7 @@ static void dual_hide(void)
 	SDL_PumpEvents();
 	dual_panel(false);
 	g_dual = false;
+	bright_apply();                      /* and its own level back */
 }
 
 /* The bottom screen, whole, on window 2; window 1's context back after. */
@@ -680,6 +689,7 @@ static void dual_present(bool linear)
 
 	if (SDL_GL_MakeCurrent(g_win2, g_gl) != 0) return;
 	gkdgl_draw_split(g_w2, g_h2, none, (diatom_rect){ 0, 0, g_w2, g_h2 }, linear);
+	draw_osd_on(2, g_w2, g_h2);          /* Home + volume: the bottom panel's level */
 	SDL_GL_SwapWindow(g_win2);
 	SDL_GL_MakeCurrent(g_window, g_gl);
 }
@@ -969,6 +979,11 @@ static void pad_resync(void)
 	g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
 	g_menu_sent = false;
 	g_menu_spent = g_home;
+#elif defined(DIATOM_PORT_RGDS)
+	g_anb = bit_set(keys, BTN_MODE);
+	g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
+	g_menu_sent = false;
+	g_menu_spent = g_anb;
 #endif
 	if (ioctl(g_pad_fd, EVIOCGABS(ABS_X), &abs) >= 0) g_stick_x = STICK_RAW(abs.value);
 	if (ioctl(g_pad_fd, EVIOCGABS(ABS_Y), &abs) >= 0) g_stick_y = STICK_RAW(abs.value);
@@ -1010,16 +1025,22 @@ static void pad_read(void)
 				continue;
 			}
 			if (ev[i].type != EV_KEY || ev[i].value == 2) continue;
-#if defined(DIATOM_PORT_ROTATE)
+#if defined(DIATOM_PORT_ROTATE) || defined(DIATOM_PORT_RGDS)
 			/* Menu goes down only with a game button (a hotkey chord), is
 			 * spent by a volume key, and is otherwise a one-poll tap on
 			 * release: port/h700.c's rule, for the same reason. */
 			if (ev[i].code == BTN_MODE) {
 				bool down = ev[i].value;
+#if defined(DIATOM_PORT_ROTATE)
 				g_home = down;
+#else
+				g_anb = down;
+#endif
 				if (down) {
 					g_menu_sent = g_menu_spent = false;
+#if defined(DIATOM_PORT_ROTATE)
 					g_menu_t0_us = diatom_port_now_us();
+#endif
 					continue;
 				}
 				if (g_menu_sent) g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU);
@@ -1030,7 +1051,11 @@ static void pad_read(void)
 				g_menu_sent = false;
 				continue;
 			}
+#if defined(DIATOM_PORT_ROTATE)
 			if (ev[i].value && g_home && !g_menu_sent && !g_menu_spent) {
+#else
+			if (ev[i].value && g_anb && !g_menu_sent && !g_menu_spent) {
+#endif
 				g_pad_buttons |= DIATOM_BIT(DIATOM_BTN_MENU);
 				g_menu_sent = true;
 			}
@@ -1047,7 +1072,7 @@ static void pad_read(void)
 }
 
 static void gain_nudge(int dir);
-static void bright_nudge(int dir);
+static void bright_nudge(int dir, bool top);
 
 /* Holding a volume key repeats it at the launcher's pace - TortOS's
  * REPEAT_DELAY_MS and REPEAT_RATE_MS, 300 and 90 - as on the Brick (upstream
@@ -1059,6 +1084,12 @@ static void bright_nudge(int dir);
 #define LEVEL_REPEAT_RATE_US   90000ull
 static uint64_t g_level_next_us[2];   /* when it next repeats; 0 is not held */
 static bool     g_level_bright[2];
+#if defined(DIATOM_PORT_RGDS)
+static bool     g_level_top[2];       /* brightness for the top panel (Anbernic held) */
+#define LEVEL_MOD (g_home || g_anb)
+#else
+#define LEVEL_MOD g_home
+#endif
 /* Quiet at the press (Muse plays) and not brightness: the hold is a track skip
  * at DIATOM_SKIP_HOLD_US, not a repeat. moved: the press's step changed the
  * level, so a skip can take it back (plorpos-7wu.3). */
@@ -1080,8 +1111,13 @@ static void level_step(int k)
 	if (g_level_bright[k]) {
 #if defined(DIATOM_PORT_ROTATE)
 		g_menu_spent = true;   /* brightness spends the Menu press */
+		bright_nudge(dir, true);
+#elif defined(DIATOM_PORT_RGDS)
+		if (g_level_top[k]) g_menu_spent = true;   /* it spends the Anbernic press */
+		bright_nudge(dir, g_level_top[k]);
+#else
+		bright_nudge(dir, true);
 #endif
-		bright_nudge(dir);
 	} else
 		gain_nudge(dir);
 }
@@ -1139,7 +1175,7 @@ static void keys_read(void)
 			else if (ev[i].code == KEY_VOLUMEDOWN) k = 1;
 			else continue;
 			if (!ev[i].value) { g_level_next_us[k] = 0; continue; }
-			if (!g_home && g_level_next_us[1 - k] && !g_level_bright[1 - k]) {
+			if (!LEVEL_MOD && g_level_next_us[1 - k] && !g_level_bright[1 - k]) {
 				/* The other key is held: both are Muse's pause/play. */
 				if (g_level_moved[1 - k]) gain_nudge(k == 0 ? +1 : -1);
 				g_level_next_us[0] = g_level_next_us[1] = 0;
@@ -1147,8 +1183,11 @@ static void keys_read(void)
 				g_skip_pending = DIATOM_SKIP_TOGGLE;
 				continue;
 			}
-			g_level_bright[k]  = g_home;
-			g_level_skip[k]    = !g_home && diatom_skip_hold_get(k);
+			g_level_bright[k]  = LEVEL_MOD;
+#if defined(DIATOM_PORT_RGDS)
+			g_level_top[k]     = g_anb;
+#endif
+			g_level_skip[k]    = !LEVEL_MOD && diatom_skip_hold_get(k);
 			g_level_next_us[k] = diatom_port_now_us() +
 			                     (g_level_skip[k] ? DIATOM_SKIP_HOLD_US : LEVEL_REPEAT_DELAY_US);
 			{
@@ -1401,7 +1440,7 @@ void diatom_port_input_poll(void)
 	SDL_Event ev;
 	uint32_t s;
 
-#if defined(DIATOM_PORT_ROTATE)
+#if defined(DIATOM_PORT_ROTATE) || defined(DIATOM_PORT_RGDS)
 	if (g_menu_pulse) { g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_MENU); g_menu_pulse = false; }
 #endif
 	while (SDL_PollEvent(&ev)) {
@@ -1528,10 +1567,12 @@ static const unsigned short bright_ladder[] = {
 	100, 200, 270, 360, 470, 600, 760, 960, 1250, 1570, 1880, 2499
 };
 #elif defined(DIATOM_PORT_RGDS)
-/* The RG DS's backlights run 0..1666: the GKD's rungs, scaled. TortOS
- * src/platform_gkd.c's RG DS ladder, which must match. */
+/* The RG DS's backlights run 0..1666: the GKD's rungs, scaled, under an
+ * off rung 0 - the secondary panel's dark (TortOS plorpos-rgds.27; the
+ * primary never goes below 1). TortOS src/platform_gkd.c's RG DS ladder,
+ * which must match. */
 static const unsigned short bright_ladder[] = {
-	261, 392, 516, 647, 771, 902, 1026, 1156, 1281, 1411, 1535, 1666
+	0, 261, 392, 516, 647, 771, 902, 1026, 1156, 1281, 1411, 1535, 1666
 };
 #else
 static const unsigned char bright_ladder[] = {
@@ -1543,6 +1584,44 @@ static const unsigned char bright_ladder[] = {
 static int  g_level  = -1;      /* 0..GAIN_LEVELS, -1 unread */
 static int  g_bright = -1;      /* index into bright_ladder, -1 unread */
 static char g_bl_path[300];     /* .../brightness, empty if none */
+#if defined(DIATOM_PORT_RGDS)
+/* Two panels, two levels, kept by role as TortOS keeps them: g_bright is the
+ * primary's (where a one-screen game is), g_bright2 the secondary's. Which
+ * panel is primary the launcher writes to RGDS_PRIMARY before each game. A
+ * DS game uses both panels, so then neither goes below rung 1. */
+#define RGDS_PRIMARY "/run/plorpos-primary"
+#define RGDS_BL_TOP  "/sys/class/backlight/backlight1/brightness"
+#define RGDS_BL_BOT  "/sys/class/backlight/backlight0/brightness"
+static int  g_bright2 = -1;
+static bool rgds_prim_bottom(void)
+{
+	char s[16] = { 0 };
+	FILE *f = fopen(RGDS_PRIMARY, "r");
+
+	if (!f) return false;
+	if (!fgets(s, sizeof s, f)) s[0] = 0;
+	fclose(f);
+	return !strncmp(s, "bottom", 6);
+}
+static int bl_read(const char *path)
+{
+	FILE *f = fopen(path, "r");
+	int raw = -1;
+
+	if (!f) return -1;
+	if (fscanf(f, "%d", &raw) != 1) raw = -1;
+	fclose(f);
+	return raw;
+}
+static void bl_write(const char *path, int raw)
+{
+	FILE *f = fopen(path, "w");
+
+	if (!f) return;
+	fprintf(f, "%d\n", raw);
+	fclose(f);
+}
+#endif
 
 /* wpctl is a process, ~tens of ms: far too slow for the frame loop, so sets go
  * to a worker. Latest wins - a burst of presses is one write of where they
@@ -1607,39 +1686,61 @@ static void gain_apply(void)
 	pthread_mutex_unlock(&g_vol_mu);
 }
 
+static int bright_nearest(int raw)
+{
+	int i, b = 0;
+
+	for (i = 1; i <= BRIGHT_LEVELS; i++)
+		if (abs(bright_ladder[i] - raw) < abs(bright_ladder[b] - raw)) b = i;
+	return b;
+}
+
 static void bright_ensure(void)
 {
+	int raw;
+
+#if defined(DIATOM_PORT_RGDS)
+	/* From the panels as the launcher left them, by role. */
+	if (g_bright < 0 && (raw = bl_read(rgds_prim_bottom() ? RGDS_BL_BOT : RGDS_BL_TOP)) >= 0) {
+		g_bright = bright_nearest(raw);
+		if (g_bright < 1) g_bright = 1;
+	}
+	if (g_bright2 < 0 && (raw = bl_read(rgds_prim_bottom() ? RGDS_BL_TOP : RGDS_BL_BOT)) >= 0)
+		g_bright2 = bright_nearest(raw);
+#else
 	FILE *f;
-	int raw, i;
 
 	if (g_bright >= 0 || !g_bl_path[0]) return;
 	f = fopen(g_bl_path, "r");
 	if (!f) return;
-	if (fscanf(f, "%d", &raw) == 1) {
-		/* Nearest rung, so the first press steps from where the launcher
-		 * left the panel rather than jumping. */
-		g_bright = 0;
-		for (i = 1; i <= BRIGHT_LEVELS; i++)
-			if (abs(bright_ladder[i] - raw) < abs(bright_ladder[g_bright] - raw))
-				g_bright = i;
-	}
+	/* Nearest rung, so the first press steps from where the launcher left
+	 * the panel rather than jumping. */
+	if (fscanf(f, "%d", &raw) == 1) g_bright = bright_nearest(raw);
 	fclose(f);
+#endif
 }
 
 static void bright_apply(void)
 {
+#if defined(DIATOM_PORT_RGDS)
+	/* Each panel its own level (TortOS plorpos-rgds.27). The primary never
+	 * below rung 1, and in a DS game the secondary neither - kept as set,
+	 * only lit higher, so it is dark again after the game. */
+	bool pb = rgds_prim_bottom();
+	int p, q;
+
+	if (g_bright < 0) return;
+	p = g_bright < 1 ? 1 : g_bright;
+	q = g_bright2 < 0 ? p : g_bright2;
+	if (g_dual && q < 1) q = 1;
+	bl_write(pb ? RGDS_BL_BOT : RGDS_BL_TOP, bright_ladder[p]);
+	bl_write(pb ? RGDS_BL_TOP : RGDS_BL_BOT, bright_ladder[q]);
+#else
 	FILE *f = fopen(g_bl_path, "w");
 
 	if (!f) return;
 	fprintf(f, "%d\n", bright_ladder[g_bright]);
 	fclose(f);
-#if defined(DIATOM_PORT_RGDS)
-	/* The bottom panel at the same level: one brightness for both
-	 * (TortOS plorpos-rgds.23). */
-	if ((f = fopen("/sys/class/backlight/backlight0/brightness", "w"))) {
-		fprintf(f, "%d\n", bright_ladder[g_bright]);
-		fclose(f);
-	}
 #endif
 }
 
@@ -1647,9 +1748,14 @@ static void bright_apply(void)
 static uint64_t g_osd_until;
 static int      g_osd_kind;     /* 0 volume, 1 brightness */
 static int      g_osd_level, g_osd_max;
+/* Which window shows it: 1 the game's, 2 a DS game's bottom one, 0 none -
+ * the RG DS's secondary beside a one-screen game is the launcher's, which
+ * draws its own when it hears the level (plorpos-rgds.27). */
+static int      g_osd_win = 1;
 
 static void osd_show(int kind, int level, int max)
 {
+	g_osd_win   = 1;
 	g_osd_kind  = kind;
 	g_osd_level = level;
 	g_osd_max   = max;
@@ -1667,8 +1773,29 @@ static void gain_nudge(int dir)
 	osd_show(0, g_level, GAIN_LEVELS);
 }
 
-static void bright_nudge(int dir)
+static void bright_nudge(int dir, bool top)
 {
+#if defined(DIATOM_PORT_RGDS)
+	/* Anbernic + volume is the top panel, Home + volume the bottom. A DS game
+	 * has the top screen on top whatever the primary; otherwise the game is
+	 * on the primary. */
+	bool pb = rgds_prim_bottom(), prim = top != pb;
+	int *lv, lo;
+
+	bright_ensure();
+	if (g_bright < 0 || g_bright2 < 0) return;
+	lv = prim ? &g_bright : &g_bright2;
+	/* The secondary's level goes down to dark even in a DS game: there it
+	 * is only shown at rung 1 (bright_apply), and dark again after. */
+	lo = prim ? 1 : 0;
+	*lv += dir;
+	if (*lv < lo)            *lv = lo;
+	if (*lv > BRIGHT_LEVELS) *lv = BRIGHT_LEVELS;
+	bright_apply();
+	osd_show(1, *lv, BRIGHT_LEVELS);
+	g_osd_win = g_dual ? (top ? 1 : 2) : (prim ? 1 : 0);
+#else
+	(void)top;
 	bright_ensure();
 	if (g_bright < 0) return;
 	g_bright += dir;
@@ -1676,17 +1803,18 @@ static void bright_nudge(int dir)
 	if (g_bright > BRIGHT_LEVELS) g_bright = BRIGHT_LEVELS;
 	bright_apply();
 	osd_show(1, g_bright, BRIGHT_LEVELS);
+#endif
 }
 
 /* The Brick's indicator (port/brick.c draw_gain_bar), scaled from its 768
  * rows to this panel's: a scrim across the top with a bar in it, in the
  * launcher's two colors, so the tint says which key was pressed. */
-static void draw_osd(void)
+static void draw_osd_on(int win, int sw, int sh)
 {
-	int sw = g_sw, sh = g_sh, pad, bar, fill;
+	int pad, bar, fill;
 	diatom_rect r;
 
-	if (diatom_port_now_us() >= g_osd_until) return;
+	if (diatom_port_now_us() >= g_osd_until || win != g_osd_win) return;
 	pad = 3 * sh / 768;
 	bar = 6 * sh / 768;
 	fill = g_osd_max > 0 ? sw * g_osd_level / g_osd_max : 0;
@@ -1699,6 +1827,8 @@ static void draw_osd(void)
 	if (g_osd_kind) gkdgl_fill(sw, sh, r, 255, 206, 128, 255);
 	else            gkdgl_fill(sw, sh, r,  61, 214, 255, 255);
 }
+
+static void draw_osd(void) { draw_osd_on(1, g_sw, g_sh); }
 
 static void levels_init(void)
 {
@@ -1746,6 +1876,14 @@ bool diatom_port_level_get(diatom_level_kind kind, int *index, int *count)
 		*index = g_bright;
 		*count = BRIGHT_LEVELS + 1;
 		return true;
+#if defined(DIATOM_PORT_RGDS)
+	case DIATOM_LEVEL_BRIGHTNESS2:
+		bright_ensure();
+		if (g_bright2 < 0) return false;
+		*index = g_bright2;
+		*count = BRIGHT_LEVELS + 1;
+		return true;
+#endif
 	default:
 		return false;
 	}
@@ -1761,8 +1899,19 @@ bool diatom_port_level_set(diatom_level_kind kind, int index, int count)
 	case DIATOM_LEVEL_BRIGHTNESS:
 		if (!g_bl_path[0]) return false;
 		g_bright = rescale(index, count, BRIGHT_LEVELS + 1);
+#if defined(DIATOM_PORT_RGDS)
+		if (g_bright < 1) g_bright = 1;
+		if (g_bright2 < 0) bright_ensure();
+#endif
 		bright_apply();
 		return true;
+#if defined(DIATOM_PORT_RGDS)
+	case DIATOM_LEVEL_BRIGHTNESS2:
+		g_bright2 = rescale(index, count, BRIGHT_LEVELS + 1);
+		if (g_bright < 0) bright_ensure();
+		bright_apply();
+		return true;
+#endif
 	default:
 		return false;
 	}
@@ -1775,6 +1924,9 @@ void diatom_port_level_invalidate(void)
 
 	g_level  = -1;
 	g_bright = -1;
+#if defined(DIATOM_PORT_RGDS)
+	g_bright2 = -1;
+#endif
 
 	/* Called at every handover back to a game, so it is also where the volume
 	 * keys pressed while the launcher had the screen - on the shelf, in its
@@ -1785,6 +1937,15 @@ void diatom_port_level_invalidate(void)
 	 * when it overflows meanwhile, pad_read resyncs from the kernel. */
 	if (g_keys_fd >= 0)
 		while (read(g_keys_fd, ev, sizeof ev) > 0) { }
+#if defined(DIATOM_PORT_RGDS)
+	/* The RG DS's Menu is held back to its release as the Rotate's (below):
+	 * one pressed and let go on the launcher's screens would replay here as
+	 * a tap and open this game's menu. What is still held survives. */
+	if (g_pad_fd >= 0) {
+		while (read(g_pad_fd, ev, sizeof ev) > 0) { }
+		pad_resync();
+	}
+#endif
 #if defined(DIATOM_PORT_ROTATE)
 	/* And the pad's, then what is held now asked of the kernel: a Menu held
 	 * for the launcher's switcher, or pressed and released on its screens,

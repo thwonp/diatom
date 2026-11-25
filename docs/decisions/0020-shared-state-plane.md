@@ -142,6 +142,12 @@ Diatom   → LEVELS count=2                               then one LEVEL each
 launcher → SETLEVEL kind=brightness index=7 count=12
 ```
 
+`kind=brightness2` is a second panel's backlight, on a port with two panels lit
+apart (the RG DS, TortOS plorpos-rgds.27; added 2026-11). `brightness` is then
+the primary panel's, the one a one-screen game is on; the port learns which
+panel that is from the launcher out of band (port/gkd.c `RGDS_PRIMARY`), so
+this plane stays panel-agnostic. Every other port answers it `false`.
+
 `LEVELS count=0` is the answer on a port with no level control of its own, such
 as the desktop backend, and tells a launcher not to expect events rather than
 leaving it to infer that from silence.

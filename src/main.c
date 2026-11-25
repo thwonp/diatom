@@ -1444,7 +1444,7 @@ static void turbo_assign_trigger(uint32_t buttons)
 /* ---- ADR-0020's state plane ------------------------------------------- */
 
 static const char *const level_kind_name[DIATOM_LEVEL_COUNT] = {
-	"volume", "brightness"
+	"volume", "brightness", "brightness2"
 };
 static int g_last_index[DIATOM_LEVEL_COUNT];
 static int g_last_count[DIATOM_LEVEL_COUNT];
