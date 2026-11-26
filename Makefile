@@ -35,6 +35,9 @@ PORT_EXTRA_brick := port/gkd_gl.c
 # The MagicX Zero 40 on oakMOSS (TortOS plorpos-auv): the Brick's port file, DIATOM_PORT_ZERO40.
 PORT_SRC_zero40  := port/brick.c
 PORT_EXTRA_zero40 := port/gkd_gl.c
+# The MagicX Zero 28 on oakMOSS (TortOS plorpos-08c): the same, DIATOM_PORT_ZERO28.
+PORT_SRC_zero28  := port/brick.c
+PORT_EXTRA_zero28 := port/gkd_gl.c
 # The GL window while a shader is set, as the Brick (port/h700.c).
 PORT_EXTRA_h700  := port/gkd_gl.c
 # The Rotate is the GKD's session (sway, PipeWire): the same port file.
@@ -165,11 +168,15 @@ ifeq ($(PORT),miyoo)
   CFLAGS  += -DDIATOM_PORT_SOFTROTATE
   LDFLAGS += -lm -ldl -lpthread
 endif
-ifneq ($(filter brick zero40,$(PORT)),)
+ifneq ($(filter brick zero40 zero28,$(PORT)),)
+  # The MagicX boards on oakMOSS: same A133P, GE8300, disp2 fbdev and TrimUI
+  # SDL2 (oakMOSS ships it in /usr/magicx/lib); the pad, the sticks and the
+  # panel differ (port/brick.c).
   ifeq ($(PORT),zero40)
-    # Same A133P, GE8300, disp2 fbdev and TrimUI SDL2 (oakMOSS ships it in
-    # /usr/magicx/lib); the pad, the stick and the panel differ (port/brick.c).
-    CFLAGS += -DDIATOM_PORT_ZERO40
+    CFLAGS += -DDIATOM_PORT_OAKMOSS -DDIATOM_PORT_ZERO40
+  endif
+  ifeq ($(PORT),zero28)
+    CFLAGS += -DDIATOM_PORT_OAKMOSS -DDIATOM_PORT_ZERO28
   endif
   # TrimUI Brick (TG3040) - ADR-0012. Stock Debian cross-compiler; SDL2 is the
   # device's own library plus version-matched upstream headers, assembled into
