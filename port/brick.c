@@ -2123,6 +2123,34 @@ static const struct { int idx; int btn; } joymap[] = {
 #define JOY_FN_R   (-1)
 #define JOY_PRO_FN_L (-1)
 #define JOY_PRO_FN_R (-1)
+#elif defined(DIATOM_PORT_ZERO28)
+/* The MagicX Zero 28's "magicx-input" (oakMOSS simplepad, TortOS
+ * plorpos-08c): the Zero 40's codes plus R3 (318), which SDL numbers after
+ * L3, so everything from the d-pad on sits one higher:
+ *
+ *   0 304 B   4 310 L1   8 314 SELECT  12 103 UP     16 114 VOL_DN
+ *   1 305 A   5 311 R1   9 315 START   13 105 LEFT   17 115 VOL_UP
+ *   2 307 Y   6 312 L2  10 317 L3      14 106 RIGHT  18 158 MENU
+ *   3 308 X   7 313 R2  11 318 R3      15 108 DOWN
+ *
+ * L3/R3 are hotkey choices, never core inputs (ADR-0044), as on the Pro. */
+static const struct { int idx; int btn; } joymap[] = {
+	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
+	{ 2, DIATOM_BTN_Y },      { 3, DIATOM_BTN_X },
+	{ 4, DIATOM_BTN_L1 },     { 5, DIATOM_BTN_R1 },
+	{ 6, DIATOM_BTN_L2 },     { 7, DIATOM_BTN_R2 },
+	{ 8, DIATOM_BTN_SELECT }, { 9, DIATOM_BTN_START },
+	{ 10, DIATOM_BTN_L3 },    { 11, DIATOM_BTN_R3 },
+	{ 12, DIATOM_BTN_UP },    { 13, DIATOM_BTN_LEFT },
+	{ 14, DIATOM_BTN_RIGHT }, { 15, DIATOM_BTN_DOWN },
+	{ 18, DIATOM_BTN_MENU },
+};
+#define JOY_VOL_DN 16
+#define JOY_VOL_UP 17
+#define JOY_FN_L   (-1)    /* no function keys */
+#define JOY_FN_R   (-1)
+#define JOY_PRO_FN_L (-1)
+#define JOY_PRO_FN_R (-1)
 #else
 static const struct { int idx; int btn; } joymap[] = {
 	{ 0, DIATOM_BTN_B },      { 1, DIATOM_BTN_A },
@@ -2191,6 +2219,12 @@ static bool is_brick_pro(void)
 #define AXIS_LY 0
 #define AXIS_RX 252        /* none: an axis number SDL never sends */
 #define AXIS_RY 253
+#elif defined(DIATOM_PORT_ZERO28)
+/* Two plain sticks: left ABS_X/Y, right ABS_Z/RZ - SDL axes 0-3. */
+#define AXIS_LX 0
+#define AXIS_LY 1
+#define AXIS_RX 2
+#define AXIS_RY 3
 #else
 #define AXIS_LX 0
 #define AXIS_LY 1
@@ -2225,7 +2259,7 @@ static void stick_axis(int value, int neg_btn, int pos_btn)
 	g_stick_bits = (g_stick_bits & ~(neg | pos)) | (n ? neg : 0) | (p ? pos : 0);
 }
 
-#ifdef DIATOM_PORT_ZERO40
+#ifdef DIATOM_PORT_OAKMOSS
 #define AXIS_L2 250        /* buttons 6 and 7 there */
 #define AXIS_R2 251
 #else
