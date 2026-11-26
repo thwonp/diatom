@@ -2162,7 +2162,7 @@ static const struct { int idx; int btn; } joymap[] = {
 /* Which one, from cpuinfo's hwserial - the line the boot script checks. */
 static bool is_brick_pro(void)
 {
-#ifdef DIATOM_PORT_ZERO40
+#ifdef DIATOM_PORT_OAKMOSS
 	return false;
 #endif
 	static int pro = -1;
