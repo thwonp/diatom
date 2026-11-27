@@ -46,7 +46,7 @@ PORT_EXTRA_rotate := port/gkd_gl.c
 # The RG DS runs ROCKNIX as the GKD does: the same port file.
 PORT_SRC_rgds    := port/gkd.c
 PORT_EXTRA_rgds  := port/gkd_gl.c
-SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/turboassign.c src/stylus.c src/shot.c $(or $(PORT_SRC_$(PORT)),port/$(PORT).c) $(PORT_EXTRA_$(PORT))
+SRC   := src/main.c src/cheevos.c src/core.c src/env.c src/scale.c src/audio.c src/save.c src/proto.c src/options.c src/zip.c src/rewind.c src/hotkeys.c src/stylus.c src/shot.c $(or $(PORT_SRC_$(PORT)),port/$(PORT).c) $(PORT_EXTRA_$(PORT))
 OBJ   := $(SRC:%.c=$(BUILD)/%.o)
 BIN   := $(BUILD)/diatom
 CONFORM := $(BUILD)/diatom-conform
@@ -428,7 +428,7 @@ $(BUILD)/%.o: %.c
 # fails when it is broken. check-seam has held since day one for exactly that
 # reason; the register drifted 418 -> 992 lines in three days because nothing
 # ever complained.
-check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-turboassign check-stylus check-dslayout check-options
+check: check-seam check-register check-corefacts check-rates check-cheevos check-proto check-port check-stateplane check-rewind check-stylus check-dslayout check-options
 
 # Does a RetroAchievements address reach the byte it names? Offline, needs no
 # core and no ROM, and links only cheevos.c plus the vendored runtime - so it
@@ -482,14 +482,6 @@ $(BUILD)/options-test: test/options_test.c src/options.c src/diatom.h
 .PHONY: check-options
 
 # Turbo Assign's decisions (ADR-0045), on a fake clock. Host compiler.
-check-turboassign: $(BUILD)/turboassign-test
-	@./$(BUILD)/turboassign-test
-
-$(BUILD)/turboassign-test: test/turboassign_test.c src/turboassign.c src/turboassign.h
-	@mkdir -p $(BUILD)
-	cc -std=gnu11 -Wall -Wextra -O1 -g -Iinclude -Isrc $(SAN_AU) \
-	   -fno-sanitize-recover=all -o $@ test/turboassign_test.c src/turboassign.c
-.PHONY: check-turboassign
 
 # Stylus Mode's cursor (TortOS plorpos-reo.21), on a fake clock. Host compiler.
 check-stylus: $(BUILD)/stylus-test
