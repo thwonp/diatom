@@ -53,6 +53,7 @@ static char        g_run_save[1024];
 typedef struct diatom_session {
 	const char   *core, *rom, *shot, *state_load, *state_exit;
 	const char   *preview;    /* BMP of the frame, written on pause and exit */
+	const char   *exit_preview; /* state_exit's picture: a save hotkey writes it too (TortOS plorpos-rgds.43) */
 	const char   *shots;      /* the screenshot hotkey's folder, plorpos-gkd.86.2 */
 	const char   *firmware;   /* what the launcher says this content needs */
 	const char   *cheevos;    /* an achievement set to watch, ADR-0026 */
@@ -1320,8 +1321,11 @@ static uint32_t hotkey_chord(uint32_t buttons, uint32_t prev, const diatom_sessi
 		case HK_SAVEQUIT: if (pressed & bit) g_hk_quit = true; break;
 		case HK_STYLUSMODE: if (pressed & bit) sty_toggle(); break;
 		case HK_SAVESTATE:
-			if ((pressed & bit) && sn->state_exit)
-				diatom_state_save(g_core, sn->state_exit);
+			/* The state's card gets its picture with it, so it shows what
+			 * the save holds (TortOS plorpos-rgds.43). */
+			if ((pressed & bit) && sn->state_exit &&
+			    diatom_state_save(g_core, sn->state_exit) && sn->exit_preview)
+				write_preview(sn->exit_preview);
 			break;
 		case HK_LOADSTATE:
 			if ((pressed & bit) && sn->state_exit) {
@@ -3268,6 +3272,7 @@ int main(int argc, char **argv)
 			         m.save[0] ? m.save : g_save_default);
 			g_policy.save_dir = g_run_save;
 			sn.preview    = m.preview[0]    ? m.preview    : NULL;
+			sn.exit_preview = m.exit_preview[0] ? m.exit_preview : NULL;
 			sn.shots      = m.shots[0]      ? m.shots      : NULL;
 			sn.cheevos    = m.cheevos[0]    ? m.cheevos    : NULL;
 			sn.console    = m.console;

@@ -280,6 +280,7 @@ typedef struct {
 	bool lazy;             /* STOP: the exit state may reach the card after EXIT (menu Quit only) */
 	char save[1024];       /* RUN: this game's save dir; absent = --save */
 	char preview[1024];    /* RUN: BMP of the frame, on pause and on exit */
+	char exit_preview[1024]; /* RUN: exit_state's picture, beside a hotkey save (TortOS plorpos-rgds.43) */
 	char shots[512];       /* RUN: the screenshot hotkey's folder, made if missing */
 	/* Achievements, ADR-0026. `console` is a RetroAchievements console id and
 	 * is not optional for them: an RA address is an offset into a per-console

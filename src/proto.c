@@ -246,6 +246,8 @@ static void parse_line(char *line, diatom_msg *out)
 			snprintf(out->exit_state, sizeof out->exit_state, "%s", v);
 		else if (!strcmp(field, "preview"))
 			snprintf(out->preview, sizeof out->preview, "%s", v);
+		else if (!strcmp(field, "exit_preview"))
+			snprintf(out->exit_preview, sizeof out->exit_preview, "%s", v);
 		else if (!strcmp(field, "shots"))
 			snprintf(out->shots, sizeof out->shots, "%s", v);
 		else if (!strcmp(field, "path")) snprintf(out->path,  sizeof out->path,  "%s", v);
