@@ -234,6 +234,9 @@ check_that("final alone keeps the shader",
 send("LEVELS"); check("desktop has no levels", drain(), ["LEVELS\tcount=0"])
 send("SETLEVEL\tkind=brightness\tindex=3\tcount=12")
 check("setlevel refused with no control", drain(), ["ERROR\tcode=bad_level\tmsg=brightness"])
+# A ceiling (TortOS plorpos-bn9.20) rides along and changes nothing here.
+send("SETLEVEL\tkind=volume\tindex=20\tcount=21\tmax=12")
+check("setlevel with max refused the same", drain(), ["ERROR\tcode=bad_level\tmsg=volume"])
 
 send("RESET"); check("reset while running", drain(), ["RESETDONE"])
 

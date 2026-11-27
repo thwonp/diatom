@@ -1764,11 +1764,14 @@ static void osd_show(int kind, int level, int max)
 
 static void gain_nudge(int dir)
 {
+	int top = diatom_volume_top(GAIN_LEVELS + 1);   /* TortOS plorpos-bn9.20 */
+
 	gain_ensure();
 	if (g_level < 0) return;
 	g_level += dir;
 	if (g_level < 0)           g_level = 0;
 	if (g_level > GAIN_LEVELS) g_level = GAIN_LEVELS;
+	if (g_level > top) g_level = top;   /* the launcher's Volume Limiter */
 	gain_apply();
 	osd_show(0, g_level, GAIN_LEVELS);
 }

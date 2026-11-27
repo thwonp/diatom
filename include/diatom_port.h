@@ -417,6 +417,11 @@ bool diatom_port_take_switcher(void);
 #define DIATOM_SKIP_TOGGLE 2
 int  diatom_port_take_skip(void);
 bool diatom_audio_quiet_get(void);
+/* The highest volume level on a ladder of `positions` that the launcher allows
+ * (SETLEVEL max=, TortOS plorpos-bn9.20): a volume key stops there, and the
+ * bar never shows above it. positions - 1 when there is no ceiling. The
+ * host's; a port with volume keys asks it at each step. */
+int  diatom_volume_top(int positions);
 /* Whether a hold of volume key `key` (0 Vol+, 1 Vol-) is a skip now: quiet,
  * and the launcher has not given that hold back to the volume (SETSKIP). */
 bool diatom_skip_hold_get(int key);

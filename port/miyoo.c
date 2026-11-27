@@ -1465,6 +1465,8 @@ void diatom_port_input_poll(void)
 			int to = g_vol_idx + step;
 			if (to < 0) to = 0;
 			if (to > g_vol_cnt - 1) to = g_vol_cnt - 1;
+			/* The launcher's Volume Limiter (TortOS plorpos-bn9.20). */
+			if (to > diatom_volume_top(g_vol_cnt)) to = diatom_volume_top(g_vol_cnt);
 			if (to != g_vol_idx) {
 				g_vol_idx = to;
 				volume_apply();

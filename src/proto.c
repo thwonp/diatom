@@ -161,6 +161,7 @@ static void parse_line(char *line, diatom_msg *out)
 	memset(out, 0, sizeof *out);
 	out->every = -1;   /* absent is not 0, which means off */
 	out->disc  = -1;   /* absent is not 0, which is the first disc */
+	out->lmax  = -1;   /* absent is no ceiling, not a ceiling of 0 */
 	field = strtok_r(line, "\t", &save);
 	if (!field) { out->kind = DIATOM_MSG_NONE; return; }
 
@@ -260,6 +261,10 @@ static void parse_line(char *line, diatom_msg *out)
 		else if (!strcmp(field, "kind")) snprintf(out->lkind, sizeof out->lkind, "%s", v);
 		else if (!strcmp(field, "index")) out->index = (int)strtol(v, NULL, 10);
 		else if (!strcmp(field, "count")) out->count = (int)strtol(v, NULL, 10);
+		/* SETLEVEL's ceiling (TortOS plorpos-bn9.20). An older Diatom skips
+		 * the key and still sets the level, so the launcher keeps its own
+		 * clamp as the fallback. */
+		else if (!strcmp(field, "max"))   out->lmax  = (int)strtol(v, NULL, 10);
 		/* OVERLAY's duration, into the same int. A second integer field whose
 		 * only difference is which verb reads it would be two names for one
 		 * slot, which is how the launcher ends up setting the wrong one. */

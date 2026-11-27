@@ -1587,15 +1587,35 @@ static void quiet_set(const diatom_msg *m)
 	quiet_emit();
 }
 
+/* The launcher's volume ceiling, on its own ladder: SETLEVEL max= (TortOS
+ * plorpos-bn9.20, its Volume Limiter). Every volume SETLEVEL restates it, and
+ * one without max= clears it, so an old launcher never leaves one behind. */
+static int g_vol_max = -1, g_vol_max_count;
+
+int diatom_volume_top(int positions)
+{
+	if (positions < 2) return 0;
+	if (g_vol_max < 0 || g_vol_max_count < 2) return positions - 1;
+	/* The ports' rescale, so a SETLEVEL at the ceiling lands on this rung. */
+	return (g_vol_max * (positions - 1) + (g_vol_max_count - 1) / 2) /
+	       (g_vol_max_count - 1);
+}
+
 static void level_set(const diatom_msg *m)
 {
-	int k, idx, cnt;
+	int k, idx, cnt, index = m->index;
 
 	for (k = 0; k < DIATOM_LEVEL_COUNT; k++)
 		if (!strcmp(level_kind_name[k], m->lkind)) break;
 
+	/* Before the level, which it may lower: never set above the ceiling. */
+	if (k == DIATOM_LEVEL_VOLUME && m->count > 0) {
+		g_vol_max = m->lmax < 0 ? -1 : m->lmax > m->count - 1 ? m->count - 1 : m->lmax;
+		g_vol_max_count = m->count;
+		if (g_vol_max >= 0 && index > g_vol_max) index = g_vol_max;
+	}
 	if (k == DIATOM_LEVEL_COUNT || m->count <= 0 ||
-	    !diatom_port_level_set((diatom_level_kind)k, m->index, m->count)) {
+	    !diatom_port_level_set((diatom_level_kind)k, index, m->count)) {
 		diatom_proto_send("ERROR\tcode=bad_level\tmsg=%s", m->lkind);
 		return;
 	}

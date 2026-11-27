@@ -266,3 +266,13 @@ has a UI for.
   too weak rather than merely abstract.
 - A second state item turns out to be genuinely contested the way levels are.
   One such row is a decision; three would mean the ownership model is wrong.
+
+## Amendment 2026-11-27: a volume ceiling on SETLEVEL (TortOS plorpos-bn9.20)
+
+`SETLEVEL kind=volume` takes an optional `max=`, an index on the same ladder as
+`index=`: the launcher's Volume Limiter for the output in use. Diatom never sets
+a level above it - a larger `index=` lands on `max` - and its volume keys stop
+there, so the bar never shows more. Every volume `SETLEVEL` restates it; one
+without `max=` means no ceiling, which is what an older launcher gets. An older
+Diatom ignores the key (ADR-0009) and sets the level as before, so a launcher
+keeps clamping from outside as the fallback. No version bump.

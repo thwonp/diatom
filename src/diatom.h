@@ -291,6 +291,10 @@ typedef struct {
 	char value[128];       /* SETOPT */
 	char map[512];         /* SETMAP */
 	char lkind[32];        /* SETLEVEL: volume | brightness */
+	/* SETLEVEL, volume only (TortOS plorpos-bn9.20): the highest `index` the
+	 * launcher allows, on the same ladder - its Volume Limiter. -1 when
+	 * absent, which is no ceiling. */
+	int  lmax;
 	/* SETMUTE, ADR-0031, and SETQUIET, ADR-0032. Both booleans. The mute
 	 * is a cut measured inaudible at both ends, so nothing ramps it; quiet is
 	 * a step in the samples, so audio.c fades it. */
