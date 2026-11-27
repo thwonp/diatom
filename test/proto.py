@@ -247,6 +247,12 @@ def main():
         ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu",
            "and keeps the bindings it had")
 
+        # What a Menu hold does (TortOS plorpos-bn9.21): a key beside the
+        # bindings, never a reason to refuse them.
+        d.send("SETHOTKEYS\thotkeys=" + spec + "\thold=off")
+        ck(d.line("HOTKEYS") == "HOTKEYS\thotkeys=" + spec + "\tmodifier=menu",
+           "hold=off takes the bindings as they are")
+
         d.send("NOSUCHVERB\tdevice=x")
         d.send("AUDIO")
         ck(d.line("AUDIO") is not None, "an unknown verb is ignored, not fatal")

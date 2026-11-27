@@ -265,6 +265,8 @@ static void parse_line(char *line, diatom_msg *out)
 		 * the key and still sets the level, so the launcher keeps its own
 		 * clamp as the fallback. */
 		else if (!strcmp(field, "max"))   out->lmax  = (int)strtol(v, NULL, 10);
+		/* SETHOTKEYS (TortOS plorpos-bn9.21): what a Menu hold does. */
+		else if (!strcmp(field, "hold"))  out->hold_off = !strcmp(v, "off");
 		/* OVERLAY's duration, into the same int. A second integer field whose
 		 * only difference is which verb reads it would be two names for one
 		 * slot, which is how the launcher ends up setting the wrong one. */

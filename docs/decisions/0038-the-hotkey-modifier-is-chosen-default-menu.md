@@ -62,3 +62,12 @@ plain Brick's front brightness key.
   they meant a chord.
 - A shipped core wants L3 as a game input. It would then need forwarding
   when L3 is not the modifier.
+
+## Amendment 2026-11-27: what a Menu hold does (TortOS plorpos-bn9.21)
+
+`SETHOTKEYS` takes an optional `hold=`. `hold=off` - the launcher's Menu Hold
+set to nothing - makes a lone Menu held 700 ms nothing at all: no
+`PAUSED for=switcher`, and its release is still no tap. Absent or any other
+value, the hold pauses for the launcher as before. Every `SETHOTKEYS` restates
+it, so an older launcher gets today's hold; an older Diatom ignores the key and
+pauses, and the launcher resumes it at once. No version bump.

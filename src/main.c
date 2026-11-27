@@ -70,6 +70,9 @@ static void apply_display(int mode, diatom_filter filter);
 /* Which DS screen is the big one: the swap hotkey's (plorpos-3yv.47). */
 /* Menu held 700 ms, seen by the main loop itself (plorpos-gl5.4). */
 static bool g_menu_held_switcher;
+/* SETHOTKEYS hold=off (TortOS plorpos-bn9.21): the launcher's Menu Hold is
+ * off, so a hold pauses nothing - no PAUSED for the launcher to RESUME. */
+static bool g_hold_off;
 
 static diatom_core     *g_core;   /* resident, never unloaded - ADR-0006 */
 
@@ -1855,6 +1858,10 @@ static bool state_plane_msg(const diatom_msg *m)
 		 * modifier keeps the current one. */
 		int mod = m->modifier[0] ? hotkeys_modifier_from_name(m->modifier) : -1;
 
+		/* Not part of the bindings' all-or-nothing: what a Menu hold does
+		 * (TortOS plorpos-bn9.21), restated by every SETHOTKEYS. */
+		g_hold_off = m->hold_off;
+
 		if ((m->modifier[0] && mod < 0) || !hotkeys_set(m->hotkeys))
 			diatom_proto_send("ERROR\tcode=bad_hotkeys\tmsg=%s", m->hotkeys);
 		else
@@ -2609,7 +2616,7 @@ static int run_session_inner(const diatom_session *sn)
 				else if (menu_tap && (buttons & menu_bit) && !(buttons & ~menu_bit) &&
 				         diatom_port_now_us() - menu_down_us >= DIATOM_SWITCHER_HOLD_US) {
 					menu_tap = false;          /* and its release is nothing */
-					g_menu_held_switcher = true;
+					g_menu_held_switcher = !g_hold_off;   /* off: no pause either */
 				}
 				if (pressed & menu_bit)
 					menu_tap = !(pressed & ~menu_bit);
@@ -2622,9 +2629,11 @@ static int run_session_inner(const diatom_session *sn)
 				if (menu_now) menu_tap = false;
 			}
 		}
-		/* Menu held 700 ms: the switcher, which only a launcher has. */
+		/* Menu held 700 ms: the switcher, which only a launcher has - and
+		 * nothing when its Menu Hold is off (plorpos-bn9.21). The port's is
+		 * taken either way, so an old one cannot fire later. */
 		bool switcher_now = (diatom_port_take_switcher() || g_menu_held_switcher) &&
-		                    diatom_proto_active();
+		                    diatom_proto_active() && !g_hold_off;
 
 		g_menu_held_switcher = false;
 

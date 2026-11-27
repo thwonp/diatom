@@ -320,6 +320,9 @@ typedef struct {
 	char hotkeys[320];     /* SETHOTKEYS: "l2:ff,r2:rewind,x:savestate,y:loadstate" */
 	char stick[8];         /* SETSTYLUSSTICK: "dpad"|"left"|"right" */
 	char modifier[16];     /* SETHOTKEYS: "menu"|"select"|"l3"|"home"; empty = keep */
+	/* SETHOTKEYS `hold=off` (TortOS plorpos-bn9.21): a Menu hold is nothing,
+	 * no PAUSED for=switcher. Absent or anything else: the hold pauses. */
+	bool hold_off;
 	int  every;            /* SETREWINDSPEED: capture cadence in frames, which
 	                        * is the rewind speed (5 = 5x); 0 = off. -1 when
 	                        * absent, so a bare verb is refused, not "off". */
