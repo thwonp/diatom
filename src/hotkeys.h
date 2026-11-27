@@ -22,7 +22,6 @@
 #include <stdbool.h>
 
 typedef enum { HK_NONE = 0, HK_FF, HK_REWIND, HK_SAVESTATE, HK_LOADSTATE, HK_SCREENSHOT,
-               HK_TURBO /* Turbo Assign, ADR-0045 */,
                HK_SWAP  /* DS Display Mode: the next layout (TortOS plorpos-3yv.47, .62) */,
                HK_STYLUS /* held: the DS stylus down where the port's cursor is
                           * (diatom_port_stylus; the GKD, TortOS plorpos-46o.4) */,

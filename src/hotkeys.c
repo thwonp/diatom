@@ -77,7 +77,6 @@ static hk_action hk_action_from_name(const char *s)
 	if (!strcmp(s, "savestate")) return HK_SAVESTATE;
 	if (!strcmp(s, "loadstate")) return HK_LOADSTATE;
 	if (!strcmp(s, "screenshot")) return HK_SCREENSHOT;
-	if (!strcmp(s, "turbo"))     return HK_TURBO;
 	if (!strcmp(s, "swap"))      return HK_SWAP;
 	if (!strcmp(s, "stylus"))    return HK_STYLUS;
 	if (!strcmp(s, "stylusmode")) return HK_STYLUSMODE;
@@ -116,6 +115,10 @@ bool hotkeys_set(const char *spec)
 		 * every binding it has. Before the HK_MAX check: a full set
 		 * plus a stale one is still a full set. */
 		if (!strcmp(colon + 1, "display") || !strcmp(colon + 1, "filter"))
+			continue;
+		/* Turbo Assign, retired the same way (TortOS plorpos-5tm.26): the
+		 * launcher's Turbo Assignments sets turbo now. */
+		if (!strcmp(colon + 1, "turbo"))
 			continue;
 		if (n >= HK_MAX) return false;
 		*colon = '\0';
