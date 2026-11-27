@@ -2190,6 +2190,43 @@ static const struct { int idx; int btn; } joymap[] = {
 #define JOY_PRO_FN_R 12
 #endif
 
+#ifdef DIATOM_PORT_ZERO40
+/* The Zero 40 image boots Dedicated OS's chain, whose device tree numbers the pad its own way
+ * (TortOS launch.sh sets MAGICX_PAD=dedicated, plorpos-d98.19): A 304 and also 353, B 305, X 307,
+ * Y 308. SDL sorts the 353 in after L3, so from the d-pad on every index is one higher. This
+ * turns the chain's SDL index into the table's above; -1 is the 353, A's second code. */
+static const signed char dedicated_idx[] = { 1, 0, 3, 2, 4, 5, 6, 7, 8, 9, 10, -1, 11, 12, 13, 14, 15, 16, 17 };
+
+static bool pad_dedicated(void)
+{
+	static int v = -1;
+
+	if (v < 0) {
+		const char *e = getenv("MAGICX_PAD");
+
+		v = e && !strcmp(e, "dedicated");
+	}
+	return v;
+}
+
+static int joy_index(int sdl)
+{
+	if (!pad_dedicated()) return sdl;
+	return sdl >= 0 && sdl < (int)sizeof dedicated_idx ? dedicated_idx[sdl] : -1;
+}
+
+static int joy_sdl(int ours)
+{
+	if (!pad_dedicated()) return ours;
+	for (int i = 0; i < (int)sizeof dedicated_idx; i++)
+		if (dedicated_idx[i] == ours) return i;
+	return -1;
+}
+#else
+static inline int joy_index(int sdl) { return sdl; }
+static inline int joy_sdl(int ours) { return ours; }
+#endif
+
 /* Which one, from cpuinfo's hwserial - the line the boot script checks. */
 static bool is_brick_pro(void)
 {
@@ -2356,7 +2393,7 @@ static void levels_repeat(void)
 
 	for (k = 0; k < LEVEL_BUTTONS; k++) {
 		if (!g_level_next_us[k] || now < g_level_next_us[k]) continue;
-		if (!g_joy || !SDL_JoystickGetButton(g_joy, level_buttons[k].idx)) {
+		if (!g_joy || !SDL_JoystickGetButton(g_joy, joy_sdl(level_buttons[k].idx))) {
 			g_level_next_us[k] = 0;
 			level_chord();
 			continue;
@@ -2407,7 +2444,11 @@ void diatom_port_input_poll(void)
 		case SDL_JOYBUTTONDOWN:
 		case SDL_JOYBUTTONUP: {
 			bool down = (ev.type == SDL_JOYBUTTONDOWN);
+			int jb = joy_index(ev.jbutton.button);
+
 			debug_event("joy button", ev.jbutton.button, down);
+			if (jb < 0) break;
+			ev.jbutton.button = (Uint8)jb;   /* this table's index from here on */
 
 			/* Volume and brightness are the port's, and stop here.
 			 * Whoever owns the input loop during a game has to handle
@@ -2504,10 +2545,11 @@ static int rescale(int index, int from, int to)
 /* A level-key press, for dropping the ones queued while the launcher drove. */
 static int not_level_press(void *u, SDL_Event *e)
 {
-	int b = e->jbutton.button;
+	int b;
 
 	(void)u;
 	if (e->type != SDL_JOYBUTTONDOWN) return 1;
+	b = joy_index(e->jbutton.button);
 	return !(b == JOY_VOL_UP || b == JOY_VOL_DN);
 }
 
