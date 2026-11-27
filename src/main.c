@@ -2526,11 +2526,17 @@ static int run_session_inner(const diatom_session *sn)
 			/* Also honored while running, not only from the menu. ADR-0016
 			 * puts slot CHOICE in the launcher's menu, but nothing about that
 			 * requires the game to be paused to write a state. */
-			case DIATOM_MSG_SAVE:
-				diatom_proto_send(diatom_state_save(g_core, m.path)
-				                  ? "SAVED\tpath=%s"
-				                  : "ERROR\tcode=save_failed\tmsg=%s", m.path);
+			/* `preview=`: the frame beside it, the core's last one, so a
+			 * save made with the game running has a picture too - no pause
+			 * to get one (plorpos-rgds.38). */
+			case DIATOM_MSG_SAVE: {
+				bool ok = diatom_state_save(g_core, m.path);
+
+				if (ok && m.preview[0]) write_preview(m.preview);
+				diatom_proto_send(ok ? "SAVED\tpath=%s"
+				                     : "ERROR\tcode=save_failed\tmsg=%s", m.path);
 				break;
+			}
 			case DIATOM_MSG_LOAD:
 				g_ff_toggled = false;   /* off on a load (plorpos-73b) */
 				diatom_proto_send(diatom_state_load(g_core, m.path)
