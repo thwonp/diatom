@@ -908,6 +908,9 @@ static void home_read(void)
 		for (i = 0; i < (size_t)n / sizeof ev[0]; i++) {
 			if (ev[i].type != EV_KEY || ev[i].code != KEY_F1 || ev[i].value == 2) continue;
 			g_home = ev[i].value;
+			/* Anbernic + Home swaps the screens (TortOS plorpos-rgds.33.2,
+			 * the launcher does it): Anbernic's release is no Menu then. */
+			if (g_home && g_anb && !g_menu_sent) g_menu_spent = true;
 			if (g_home) g_pad_buttons |=  DIATOM_BIT(DIATOM_BTN_HOTKEY);
 			else        g_pad_buttons &= ~DIATOM_BIT(DIATOM_BTN_HOTKEY);
 		}
@@ -1040,6 +1043,8 @@ static void pad_read(void)
 					g_menu_sent = g_menu_spent = false;
 #if defined(DIATOM_PORT_ROTATE)
 					g_menu_t0_us = diatom_port_now_us();
+#else
+					g_menu_spent = g_home;   /* Home first: the screens' swap */
 #endif
 					continue;
 				}
